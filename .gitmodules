@@ -1,11 +1,9 @@
 [submodule "src/sandboxd"]
 	path = src/sandboxd
-	url = https://github.com/akernel-dev/sandboxd.git
-	branch = main
+	url = https://github.com/inclusionAI/sandboxd.git
 [submodule "src/distill-fs"]
 	path = src/distill-fs
-	url = https://github.com/akernel-dev/distill-fs.git
-	branch = main
+	url = https://github.com/inclusionAI/distill-fs.git
 [submodule "src/yuanrong"]
 	path = src/yuanrong
 	url = https://github.com/openYuanrong-mirror/yuanrong.git

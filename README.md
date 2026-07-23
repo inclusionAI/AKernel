@@ -32,11 +32,11 @@ One all-in-one image, multiple deployment targets — deploy in under 10 minutes
 
 ### Secure Isolation with Extreme Performance
 
-- **40 ms cold start\***: Fork-based launch with lazy loading for near-zero startup latency
-- **Sandbox isolation**: [gVisor](https://github.com/google/gvisor) today, with Kata Containers support\* planned
-- **Checkpoint/Restore\***: Save and restore sandbox state for fast recovery
+- **40 ms cold start**: Fork-based launch with lazy loading for near-zero startup latency
+- **Sandbox isolation**: [gVisor](https://github.com/google/gvisor) today, with Kata Containers support planned
+- **Checkpoint/Restore**: Save and restore sandbox state for fast recovery
 
-\* Planned for an open-source release and not available in AKernel v0.1.0.
+Planned for an open-source release and not available in AKernel v0.1.0.
 
 ### AI-Native Development and Operations
 
