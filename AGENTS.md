@@ -9,6 +9,8 @@ project guidance.
 AKernel provides cluster-backed remote sandbox environments for agents and
 developer workflows. The current public user-facing surface is the Python
 `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI.
+The default sandbox runtime is gVisor runsc; callers may select Kata
+Containers when the cluster has a KVM-capable node.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -37,7 +39,9 @@ build tooling, and examples. Node runtime components such as `sandboxd` and
 `distill-fs` are maintained in their own upstream repositories. The all-in-one
 Docker build copies and compiles their pinned Git submodules in dedicated
 builder stages. It also downloads `runsc` from the official gVisor release
-bucket and verifies its published SHA-512 checksum.
+bucket and verifies its published SHA-512 checksum. The node image packages
+the checksum-pinned Kata Containers 4.0 runtime-rs shim, Dragonball
+configuration, guest kernel, guest images, license, and sandbox logger.
 
 ## Common Commands
 
@@ -107,9 +111,10 @@ AKernel all-in-one image using that runtime image.
 
 Initialize submodules with `git submodule update --init --recursive` before
 building. The all-in-one image builds `sandboxd` and `sbox` from
-`src/sandboxd`, builds `distill_fs` from `src/distill-fs`, and
-downloads the official gVisor `runsc` release pinned by `GVISOR_RELEASE` in
-the image build.
+`src/sandboxd`, builds `sandbox-logger`, builds `distill_fs` from
+`src/distill-fs`, downloads the official gVisor `runsc` release pinned by
+`GVISOR_RELEASE`, and extracts the required amd64 artifacts from the
+checksum-pinned Kata release.
 
 The submodule gitlinks are the single source of truth for the sandboxd and
 distill-fs revisions included in a clean release. `make build` always compiles
@@ -149,6 +154,13 @@ make print-env
 AKernel `v0.1.0` node runtime currently requires Linux x86-64 nodes with
 cgroup v1. Do not deploy it to cgroup v2 nodes or assume bootstrap will detect
 an incompatible host before sandboxd starts.
+
+Kata is present in the default AKernel runtime configuration but is an
+optional node capability. It additionally requires `/dev/kvm` to be usable
+from the node container. A node without KVM remains ready and advertises only
+runsc; a Kata request fails scheduling with a no-resource error when no
+eligible node exists. Do not treat a configured runtime as an advertised
+runtime.
 
 Dragonfly distribution is optional and disabled by default. Enable it during
 profile generation with `make config INSTALL_DRAGONFLY=true`. This installs the
@@ -223,6 +235,13 @@ with Sandbox(cpu=2000, memory=4096) as sb:
     print(result.stdout)
 ```
 
+Select Kata explicitly only when the cluster has an eligible node:
+
+```python
+with Sandbox(runtime="kata", cpu=2000, memory=4096) as sb:
+    print(sb.commands.run("uname -s").stdout)
+```
+
 Required environment:
 
 ```bash
@@ -291,6 +310,17 @@ Run the basic e2e example against a deployed cluster with:
 
 ```bash
 make e2e
+```
+
+The SDK integration and pressure tests are runtime-selectable. Kata tests
+require a KVM-capable standalone or cluster node:
+
+```bash
+AKERNEL_RUN_INTEGRATION=1 \
+AKERNEL_TEST_RUNTIME=kata \
+python -m pytest sdk/python/tests/integration/test_sandbox.py
+
+python sdk/python/benchmarks/sandbox_pressure.py --runtime kata
 ```
 
 ## Maintenance Rules

@@ -200,6 +200,13 @@ node:
 
         [plugin.runtime.runtime_binary]
         runsc="/usr/local/bin/runsc"
+        kata="/usr/local/bin/containerd-shim-kata-v2"
+
+        [plugin.runtime.kata]
+        config_path="/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-dragonball.toml"
+        kvm_device="/dev/kvm"
+        dan_config_dir="/run/kata-containers/dans"
+        logger_binary="/usr/local/bin/sandbox-logger"
 
         # image-manager config. root holds image-manager runtime state
         # (daemons/, mount_records.db) and is wiped on pod change; input

@@ -35,6 +35,7 @@ from .types import HttpReverseTunnel, Mount, NodeInfo, S3Config
 logger = logging.getLogger(__name__)
 
 _NAMESPACE = "akernel"
+_DEFAULT_LOCAL_ROOTFS = "/home/yuanrong/yr-runtime-rootfs.img"
 _initialized = False
 _init_lock = threading.Lock()
 
@@ -104,7 +105,16 @@ def _rootfs_json(
                 "runtime": runtime,
                 "type": "s3",
                 "readonly": False,
-                "s3_config": rootfs.to_dict(),
+                "storageInfo": rootfs.to_dict(),
+            }
+        )
+    if runtime != "runsc":
+        return json.dumps(
+            {
+                "runtime": runtime,
+                "type": "local",
+                "readonly": False,
+                "path": _DEFAULT_LOCAL_ROOTFS,
             }
         )
     return None

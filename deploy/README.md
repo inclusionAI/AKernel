@@ -30,6 +30,8 @@ support cgroup v2, and bootstrap does not reliably detect an incompatible host
 before sandboxd starts. Verify the node operating system and cgroup mode before
 deployment.
 
+Kata Containers is enabled in the default AKernel runtime configuration and adds one host requirement: `/dev/kvm` must be available to the node container. Nodes without a usable KVM device remain ready and advertise only runsc. If no node advertises Kata, `Sandbox(runtime="kata")` fails scheduling with a no-resource error.
+
 `make config` is interactive by default. It writes:
 
 - `.akernel/default/config.env`

@@ -9,10 +9,45 @@ ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.9.2
 ARG GVISOR_RELEASE=release-20260706.0
 ARG GVISOR_RELEASE_BASE_URL=https://storage.googleapis.com/gvisor/releases
+ARG KATA_BUILD_IMAGE=ubuntu:24.04
+ARG KATA_RELEASE=4.0.0
+ARG KATA_AMD64_SHA256=2c3b9dfeba355582b40aee462b12916c9740654d0230f696adf719d67b063a8c
+ARG KATA_RELEASE_BASE_URL=https://github.com/kata-containers/kata-containers/releases/download
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
 ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_amd64.tar.gz
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
+
+FROM ${KATA_BUILD_IMAGE} AS kata-runtime
+ARG KATA_RELEASE
+ARG KATA_AMD64_SHA256
+ARG KATA_RELEASE_BASE_URL
+ARG TARGETARCH
+RUN set -eux; \
+    test "${TARGETARCH:-amd64}" = "amd64"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl zstd; \
+    rm -rf /var/lib/apt/lists/*; \
+    archive="/tmp/kata-static-${KATA_RELEASE}-amd64.tar.zst"; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "${KATA_RELEASE_BASE_URL}/${KATA_RELEASE}/kata-static-${KATA_RELEASE}-amd64.tar.zst" \
+      -o "${archive}"; \
+    echo "${KATA_AMD64_SHA256}  ${archive}" | sha256sum -c -; \
+    mkdir -p /kata; \
+    tar --zstd -xf "${archive}" -C /kata \
+      ./opt/kata/runtime-rs/bin/containerd-shim-kata-v2 \
+      ./opt/kata/share/defaults/kata-containers/runtime-rs/configuration-dragonball.toml \
+      ./opt/kata/share/kata-containers/vmlinux-dragonball-experimental.container \
+      ./opt/kata/share/kata-containers/vmlinux-6.18.35-200-dragonball-experimental \
+      ./opt/kata/share/kata-containers/kata-containers.img \
+      ./opt/kata/share/kata-containers/kata-ubuntu-noble.image; \
+    ln -sfn configuration-dragonball.toml \
+      /kata/opt/kata/share/defaults/kata-containers/runtime-rs/configuration.toml; \
+    mkdir -p /kata/opt/kata/share/licenses/kata-containers; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "https://raw.githubusercontent.com/kata-containers/kata-containers/${KATA_RELEASE}/LICENSE" \
+      -o /kata/opt/kata/share/licenses/kata-containers/LICENSE; \
+    rm -f "${archive}"
 
 FROM ${AKERNEL_RUNTIME_IMAGE} AS runtime-image
 
@@ -144,7 +179,10 @@ COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runti
 
 COPY --from=sandboxd-builder /src/sandboxd/output/sandboxd /usr/local/bin/sandboxd
 COPY --from=sandboxd-builder /src/sandboxd/output/sbox /usr/local/bin/sbox
+COPY --from=sandboxd-builder /src/sandboxd/output/sandbox-logger /usr/local/bin/sandbox-logger
 COPY --from=distill-fs-builder /src/distill-fs/target/release/distill_fs /usr/local/bin/distill_fs
+COPY --from=kata-runtime /kata/opt/kata /opt/kata
+RUN ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
 
 COPY ./builder/scripts/akernel-entrypoint.sh /usr/local/bin/akernel-entrypoint
 COPY ./builder/scripts/ensure-component-cert.sh /usr/local/bin/ensure-component-cert
@@ -152,7 +190,9 @@ RUN chmod 0755 \
         /usr/local/bin/runsc \
         /usr/local/bin/sandboxd \
         /usr/local/bin/sbox \
+        /usr/local/bin/sandbox-logger \
         /usr/local/bin/distill_fs \
+        /usr/local/bin/containerd-shim-kata-v2 \
         /usr/local/bin/akernel-entrypoint \
         /usr/local/bin/ensure-component-cert
 

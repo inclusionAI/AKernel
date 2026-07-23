@@ -11,6 +11,8 @@ Keeping the gateway in a separate network namespace allows sandboxd's normal
 `PREROUTING` port-forwarding rules to handle traffic without standalone-only
 NAT synchronization logic.
 
+The default runtime is gVisor `runsc`. `Sandbox(runtime="kata")` additionally requires `/dev/kvm` and hardware or nested virtualization on the Docker host. Nodes without KVM remain usable with runsc and do not advertise Kata to the scheduler.
+
 ## Directory Structure
 
 ```

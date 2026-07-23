@@ -23,6 +23,7 @@ _ENABLED = (
     and bool(os.environ.get("AKERNEL_SERVER_ADDRESS"))
     and bool(os.environ.get("AKERNEL_TOKEN"))
 )
+_RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
 
 
 @unittest.skipUnless(
@@ -32,7 +33,7 @@ _ENABLED = (
 class SandboxIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.sandbox = Sandbox(cpu=1000, memory=2048)
+        cls.sandbox = Sandbox(cpu=1000, memory=2048, runtime=_RUNTIME)
 
     @classmethod
     def tearDownClass(cls):

@@ -59,6 +59,7 @@ from akernel_sdk import HttpReverseTunnel, Sandbox
 
 # Empty => don't configure an image; the cluster default image is used.
 DEFAULT_IMAGE = os.environ.get("AKERNEL_PRESSURE_IMAGE", "")
+DEFAULT_RUNTIME = os.environ.get("AKERNEL_PRESSURE_RUNTIME", "runsc")
 
 # Keep the default workload independent of optional image tools and external
 # network availability. Callers can use --cmd for application-level pressure.
@@ -85,6 +86,7 @@ def _safe_kill(sb):
 
 def _build_sandbox_kwargs(
     image,
+    runtime,
     cpu,
     memory,
     cpu_limit,
@@ -95,6 +97,7 @@ def _build_sandbox_kwargs(
     listen_port,
 ):
     kwargs = {
+        "runtime": runtime,
         "cpu": cpu,
         "memory": memory,
         "cpu_limit": cpu_limit,
@@ -160,6 +163,7 @@ def worker_process(
     threads_per_proc,
     duration,
     image,
+    runtime,
     cpu,
     memory,
     cpu_limit,
@@ -183,6 +187,7 @@ def worker_process(
     }
     sb_kwargs = _build_sandbox_kwargs(
         image,
+        runtime,
         cpu,
         memory,
         cpu_limit,
@@ -258,6 +263,7 @@ def main(args):
         f"   threads/proc   : {args.threads}\n"
         f"   total parallel : {args.processes * args.threads}\n"
         f"   duration       : {args.duration}s\n"
+        f"   runtime        : {args.runtime}\n"
         f"   image (rootfs) : {args.image or '<cluster default>'}\n"
         f"   cpu req/limit  : {args.cpu}m / {args.cpu_limit}m\n"
         f"   mem req/limit  : {args.memory}MiB / {args.mem_limit}MiB\n"
@@ -279,6 +285,7 @@ def main(args):
                 args.threads,
                 args.duration,
                 args.image,
+                args.runtime,
                 args.cpu,
                 args.memory,
                 args.cpu_limit,
@@ -377,6 +384,12 @@ if __name__ == "__main__":
         help="custom rootfs image (empty = use cluster default image)",
     )
     parser.add_argument(
+        "--runtime",
+        choices=("runsc", "kata"),
+        default=DEFAULT_RUNTIME,
+        help="sandbox runtime (default: AKERNEL_PRESSURE_RUNTIME or runsc)",
+    )
+    parser.add_argument(
         "--cpu", type=int, default=100, help="cpu request, milli-cores (100=0.1c)"
     )
     parser.add_argument(
@@ -413,7 +426,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cmd",
         default=DEFAULT_CMD,
-        help=f"workload command (use {TUNNEL_URL_PLACEHOLDER} for tunnel-url substitution)",
+        help=(
+            f"workload command (use {TUNNEL_URL_PLACEHOLDER} for "
+            "tunnel-url substitution)"
+        ),
     )
     parser.add_argument("--cmd-timeout", type=int, default=20)
     args = parser.parse_args()

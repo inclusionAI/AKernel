@@ -75,6 +75,12 @@ check_prerequisites() {
 
     log_info "${DOCKER_CMD} is available"
 
+    if [[ ! -c /dev/kvm ]]; then
+        log_warn "/dev/kvm is unavailable; standalone will support runsc but will not advertise the Kata runtime"
+    elif [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+        log_warn "/dev/kvm is not accessible to the current user; verify that the privileged node container can access it before using Kata"
+    fi
+
     if ! command -v curl &> /dev/null; then
         log_error "curl is required to verify the standalone endpoint"
         exit 1

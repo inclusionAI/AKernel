@@ -63,7 +63,19 @@ class OpenYuanRongAdapterTest(unittest.TestCase):
                 "runtime": "runsc",
                 "type": "s3",
                 "readonly": False,
-                "s3_config": config.to_dict(),
+                "storageInfo": config.to_dict(),
+            },
+        )
+
+    def test_kata_uses_the_default_local_rootfs(self):
+        options = self.build_options(runtime="kata")
+        self.assertEqual(
+            json.loads(options.custom_extensions["rootfs"]),
+            {
+                "runtime": "kata",
+                "type": "local",
+                "readonly": False,
+                "path": "/home/yuanrong/yr-runtime-rootfs.img",
             },
         )
 

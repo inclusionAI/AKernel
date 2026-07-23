@@ -33,7 +33,7 @@ One all-in-one image, multiple deployment targets — deploy in under 10 minutes
 ### Secure Isolation with Extreme Performance
 
 - **40 ms cold start\***: Fork-based launch with lazy loading for near-zero startup latency
-- **Sandbox isolation**: [gVisor](https://github.com/google/gvisor) today, with Kata Containers support\* planned
+- **Sandbox isolation**: [gVisor](https://github.com/google/gvisor) by default, with [Kata Containers](https://github.com/kata-containers/kata-containers) available on KVM-capable nodes
 - **Checkpoint/Restore\***: Save and restore sandbox state for fast recovery
 
 \* Planned for an open-source release and not available in AKernel v0.1.0.
@@ -135,7 +135,7 @@ with Sandbox(cpu=1000, memory=2048) as sandbox:
     print(sandbox.files.read("/tmp/hello.txt"))
 ```
 
-See the complete [basic usage example](./sdk/python/examples/basic_usage.py) and the other [SDK examples](./sdk/python/examples/) for more operations.
+See the complete [basic usage example](./sdk/python/examples/basic_usage.py), the [sandbox runtime example](./sdk/python/examples/sandbox_runtime.py), and the other [SDK examples](./sdk/python/examples/) for more operations.
 
 ## Architecture
 
@@ -144,7 +144,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py) and
 ### System Components
 
 **Node-Level Infrastructure**
-- **gVisor**: Secure sandboxed container runtime
+- **Sandbox runtimes**: gVisor by default and Kata Containers on KVM-capable nodes
 - **sandboxd**: Sandbox lifecycle daemon with pluggable sandbox runtime integration
 - **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication
 
@@ -158,17 +158,17 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py) and
 
 1. **Agent Submits Workload**: Through unified API or SDK
 2. **Scheduler Places Sandbox**: Selects a worker based on requested CPU, memory, and available capacity
-3. **Sandbox Created**: Prepares the rootfs and network and starts gVisor on the selected worker
+3. **Sandbox Created**: Prepares the rootfs and network and starts the selected sandbox runtime on the worker
 4. **Workload Executes**: In secure, isolated sandboxes
 5. **Resources Recycled**: Deletes the sandbox and returns its capacity to the cluster
 
 ## Roadmap
 
-- Fork-based sandbox launch based on gVisor
-- Kata Containers sandbox runtimes
-- Sandbox checkpoint and restore
-- Support for GKE and AWS
-- Cgroup v2 node support
+- [x] Kata Containers runtime on KVM-capable nodes
+- [ ] Fork-based sandbox launch based on gVisor
+- [ ] Sandbox checkpoint and restore
+- [ ] Support for GKE and AWS
+- [ ] Cgroup v2 node support
 
 ## License
 

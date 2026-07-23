@@ -82,12 +82,21 @@ Sandbox(
 )
 ```
 
-`cpu` is measured in millicores and `memory` in MiB. A zero CPU or memory
-limit means the limit follows the corresponding request. A positive limit
-must not be smaller than its request.
+`cpu` is measured in millicores and `memory` in MiB. A zero CPU or memory limit means the limit follows the corresponding request. A positive limit must not be smaller than its request.
 
-AKernel 0.1.0 supports the gVisor `runsc` runtime. The independent `runtime`
-parameter leaves room for future Kata support without changing the rootfs API.
+## Sandbox runtimes
+
+AKernel uses the gVisor `runsc` runtime when `runtime` is omitted. Callers may also select `runsc` explicitly or request Kata Containers:
+
+```python
+default_sandbox = Sandbox()
+runsc_sandbox = Sandbox(runtime="runsc")
+kata_sandbox = Sandbox(runtime="kata")
+```
+
+Kata requires at least one cluster node whose sandboxd instance successfully initialized the Kata runtime with a usable `/dev/kvm` device. Nodes without KVM remain available for runsc workloads and do not advertise Kata; when no eligible Kata node exists, the scheduler returns a no-resource error.
+
+See [`examples/sandbox_runtime.py`](./examples/sandbox_runtime.py) for a runnable example.
 
 ## Commands
 

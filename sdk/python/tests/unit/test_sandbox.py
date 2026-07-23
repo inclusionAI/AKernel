@@ -83,9 +83,11 @@ class SandboxTest(unittest.TestCase):
                 rootfs=S3Config("https://s3.example.com", "rootfs", "rootfs.img"),
             )
 
-    def test_only_runsc_is_supported(self):
+    def test_supported_runtimes(self):
+        Sandbox(runtime="kata")
+
         with self.assertRaisesRegex(ValueError, "unsupported runtime"):
-            Sandbox(runtime="kata")
+            Sandbox(runtime="unknown")
 
     def test_port_forwardings_are_integer_ports(self):
         with self.assertRaisesRegex(TypeError, "integer"):

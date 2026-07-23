@@ -29,7 +29,7 @@ from .filesystem import Filesystem
 from .pty import Pty
 from .types import HttpReverseTunnel, Mount, S3Config, SandboxInfo
 
-_SUPPORTED_RUNTIMES = ("runsc",)
+_SUPPORTED_RUNTIMES = ("runsc", "kata")
 _traefik_internal_ip_cache: str | None = None
 
 
@@ -91,8 +91,8 @@ def _get_traefik_internal_ip(gateway: Endpoint) -> tuple[str, int]:
 class Sandbox:
     """A remote AKernel sandbox.
 
-    The public API is backend-neutral. AKernel 0.1.0 currently implements it
-    with the openYuanrong backend adapter and the gVisor ``runsc`` runtime.
+    The public API is backend-neutral. AKernel supports the gVisor ``runsc``
+    runtime and Kata Containers on KVM-capable nodes.
     """
 
     def __init__(
@@ -120,7 +120,7 @@ class Sandbox:
         Args:
             image: OCI image used as the sandbox root filesystem.
             rootfs: S3-compatible EROFS root filesystem configuration.
-            runtime: Sandbox runtime name. AKernel 0.1.0 supports ``runsc``.
+            runtime: Sandbox runtime name: ``runsc`` or ``kata``.
             cpu: Requested CPU in millicores.
             memory: Requested memory in MiB.
             cpu_limit: CPU limit in millicores, or zero to follow ``cpu``.
