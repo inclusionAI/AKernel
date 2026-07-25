@@ -8,6 +8,21 @@ set -eu
 
 RUNTIME_ENV=${YR_LANGUAGE:-python3.12}
 
+case "$(uname -m)" in
+    x86_64)
+        MULTIARCH=x86_64-linux-gnu
+        RUNTIME_LOADER=ld-linux-x86-64.so.2
+        ;;
+    aarch64|arm64)
+        MULTIARCH=aarch64-linux-gnu
+        RUNTIME_LOADER=ld-linux-aarch64.so.1
+        ;;
+    *)
+        echo "unsupported runtime architecture: $(uname -m)" >&2
+        exit 127
+        ;;
+esac
+
 case "$RUNTIME_ENV" in
     python3.10)
         PY_VERSION=3.10
@@ -45,10 +60,10 @@ if [ ! -x "${RUNTIME_BIN}" ]; then
     RUNTIME_BIN="${RUNTIME_PREFIX}/opt/venv-py${PY_VERSION}/bin/python"
 fi
 
-RUNTIME_LIBRARY_PATH="${RUNTIME_PREFIX}/usr/lib/x86_64-linux-gnu:${RUNTIME_PREFIX}/usr/local/lib:${RUNTIME_PREFIX}/usr/lib64:${RUNTIME_PREFIX}/lib/x86_64-linux-gnu:${RUNTIME_PREFIX}/lib64:${RUNTIME_PREFIX}/lib"
+RUNTIME_LIBRARY_PATH="${RUNTIME_PREFIX}/usr/lib/${MULTIARCH}:${RUNTIME_PREFIX}/usr/local/lib:${RUNTIME_PREFIX}/usr/lib64:${RUNTIME_PREFIX}/lib/${MULTIARCH}:${RUNTIME_PREFIX}/lib64:${RUNTIME_PREFIX}/lib"
 
 if [ ! -x "${RUNTIME_BIN}" ]; then
-	echo "missing runtime interpreter: ${RUNTIME_BIN}" >&2
+    echo "missing runtime interpreter: ${RUNTIME_BIN}" >&2
     exit 127
 fi
 
@@ -60,10 +75,16 @@ fi
 export PYTHONPATH="${SITE_PACKAGES}${PYTHONPATH:+:${PYTHONPATH}}"
 
 if [ -n "${RUNTIME_PREFIX}" ]; then
-    RUNTIME_LD="${RUNTIME_PREFIX}/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"
-    if [ ! -x "${RUNTIME_LD}" ]; then
-        RUNTIME_LD="${RUNTIME_PREFIX}/lib64/ld-linux-x86-64.so.2"
-    fi
+    RUNTIME_LD=""
+    for candidate in \
+        "${RUNTIME_PREFIX}/lib/${MULTIARCH}/${RUNTIME_LOADER}" \
+        "${RUNTIME_PREFIX}/lib64/${RUNTIME_LOADER}" \
+        "${RUNTIME_PREFIX}/lib/${RUNTIME_LOADER}"; do
+        if [ -x "${candidate}" ]; then
+            RUNTIME_LD="${candidate}"
+            break
+        fi
+    done
     if [ ! -x "${RUNTIME_LD}" ]; then
         echo "missing runtime dynamic linker under ${RUNTIME_PREFIX}" >&2
         exit 127
@@ -76,7 +97,7 @@ if [ -n "${RUNTIME_PREFIX}" ]; then
         "$@"
 fi
 
-export LD_LIBRARY_PATH="${RUNTIME_LIBRARY_PATH}:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/lib64:/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+export LD_LIBRARY_PATH="${RUNTIME_LIBRARY_PATH}:/usr/lib/${MULTIARCH}:/usr/local/lib:/usr/lib64:/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 exec "${RUNTIME_BIN}" \
     "${SITE_PACKAGES}/yr/main/yr_runtime_main.py" \

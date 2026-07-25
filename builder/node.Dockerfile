@@ -7,10 +7,11 @@ ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.9.1
+ARG OPEN_YR_RELEASE_BASE_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download
 ARG GVISOR_RELEASE=release-20260706.0
 ARG GVISOR_RELEASE_BASE_URL=https://storage.googleapis.com/gvisor/releases
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
-ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_amd64.tar.gz
+ARG OTELCOL_CONTRIB_URL=
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 
@@ -52,8 +53,10 @@ FROM ${AKERNEL_NODE_BASE_IMAGE}
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
 ARG OPEN_YR_VERSION
+ARG OPEN_YR_RELEASE_BASE_URL
 ARG GVISOR_RELEASE
 ARG GVISOR_RELEASE_BASE_URL
+ARG OTELCOL_CONTRIB_VERSION
 ARG OTELCOL_CONTRIB_URL
 ARG TARGETARCH
 ARG PIP_INDEX_URL=https://pypi.org/simple
@@ -90,9 +93,13 @@ RUN if command -v update-alternatives >/dev/null 2>&1; then \
 RUN set -eux; \
     case "${TARGETARCH:-}" in \
         amd64) gvisor_arch="x86_64" ;; \
+        arm64) gvisor_arch="aarch64" ;; \
         "") \
-            [ "$(uname -m)" = "x86_64" ] || { echo "unsupported gVisor target architecture: $(uname -m)" >&2; exit 1; }; \
-            gvisor_arch="x86_64" ;; \
+            case "$(uname -m)" in \
+                x86_64) gvisor_arch="x86_64" ;; \
+                aarch64|arm64) gvisor_arch="aarch64" ;; \
+                *) echo "unsupported gVisor target architecture: $(uname -m)" >&2; exit 1 ;; \
+            esac ;; \
         *) echo "unsupported gVisor target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     gvisor_version="${GVISOR_RELEASE#release-}"; \
@@ -130,11 +137,16 @@ ENV YR_INSTALLATION_DIR=/home/yuanrong
 # release mirror. The .sha256 sidecar verifies the download before unpacking.
 RUN mkdir -p "${YR_INSTALLATION_DIR}" /tmp/yr-release && \
     cd /tmp/yr-release && \
-    yr_tarball="openyuanrong-${OPEN_YR_VERSION}-linux-amd64.tar.gz" && \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+      amd64) artifact_arch="amd64" ;; \
+      arm64) artifact_arch="arm64" ;; \
+      *) echo "unsupported openYuanrong target architecture: ${TARGETARCH:-$(dpkg --print-architecture)}" >&2; exit 1 ;; \
+    esac && \
+    yr_tarball="openyuanrong-${OPEN_YR_VERSION}-linux-${artifact_arch}.tar.gz" && \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors -O \
-      "https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/${yr_tarball}" && \
+      "${OPEN_YR_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/${yr_tarball}" && \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors -O \
-      "https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/${yr_tarball}.sha256" && \
+      "${OPEN_YR_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/${yr_tarball}.sha256" && \
     sha256sum -c "${yr_tarball}.sha256" && \
     tar -xzf "${yr_tarball}" -C "${YR_INSTALLATION_DIR}" --strip-components=1 && \
     cd / && rm -rf /tmp/yr-release && \
@@ -168,8 +180,15 @@ COPY ./builder/scripts/master_entrypoint.sh ${YR_INSTALLATION_DIR}/entrypoint.sh
 COPY ./builder/scripts/*.sh /root/
 COPY ./builder/systemd_services/*.service /etc/systemd/system/
 
-RUN curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-        "${OTELCOL_CONTRIB_URL}" \
+RUN set -eux; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+      amd64) artifact_arch="amd64" ;; \
+      arm64) artifact_arch="arm64" ;; \
+      *) echo "unsupported OpenTelemetry target architecture: ${TARGETARCH:-$(dpkg --print-architecture)}" >&2; exit 1 ;; \
+    esac; \
+    otelcol_url="${OTELCOL_CONTRIB_URL:-https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_${artifact_arch}.tar.gz}"; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+        "${otelcol_url}" \
     | tar -xz -C /usr/local/bin otelcol-contrib && \
     chmod 0755 /usr/local/bin/otelcol-contrib
 

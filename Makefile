@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-SHELL := /usr/bin/bash
+SHELL := /bin/bash
 
 VENDOR ?= aliyun
 ENV ?= default
@@ -10,6 +10,8 @@ IMAGE_TAG ?=
 IMAGE_REPOSITORY ?=
 GVISOR_RELEASE ?=
 GVISOR_RELEASE_BASE_URL ?=
+OPEN_YR_RELEASE_BASE_URL ?=
+PLATFORM ?=
 TOKEN_TTL ?= $(if $(TTL),$(TTL),24h)
 TENANT ?= default
 ROLE ?= developer
@@ -46,6 +48,7 @@ help:
 	@echo "  make config NON_INTERACTIVE=1 ...  Generate config from Make variables"
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
 	@echo "  make build IMAGE_TAG=<tag>          Build the all-in-one image"
+	@echo "  make build PLATFORM=linux/arm64     Build for a selected OCI platform"
 	@echo "  make build GVISOR_RELEASE=<tag>     Override the pinned official gVisor tag"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
@@ -95,8 +98,10 @@ build:
 	args=(--env "$(ENV)"); \
 	if [[ -n "$(IMAGE_REPOSITORY)" ]]; then args+=(--repository "$(IMAGE_REPOSITORY)"); fi; \
 	if [[ -n "$(IMAGE_TAG)" ]]; then args+=(--tag "$(IMAGE_TAG)"); fi; \
+	if [[ -n "$(PLATFORM)" ]]; then args+=(--platform "$(PLATFORM)"); fi; \
 	if [[ -n "$(GVISOR_RELEASE)" ]]; then args+=(--gvisor-release "$(GVISOR_RELEASE)"); fi; \
 	if [[ -n "$(GVISOR_RELEASE_BASE_URL)" ]]; then args+=(--gvisor-release-base-url "$(GVISOR_RELEASE_BASE_URL)"); fi; \
+	if [[ -n "$(OPEN_YR_RELEASE_BASE_URL)" ]]; then args+=(--open-yr-release-base-url "$(OPEN_YR_RELEASE_BASE_URL)"); fi; \
 	./deploy/scripts/build-image.sh "$${args[@]}"
 
 .PHONY: versions

@@ -144,9 +144,10 @@ make deploy
 make print-env
 ```
 
-AKernel `v0.1.0` node runtime currently requires Linux x86-64 nodes with
-cgroup v1. Do not deploy it to cgroup v2 nodes or assume bootstrap will detect
-an incompatible host before sandboxd starts.
+AKernel's node runtime supports Linux x86-64 and ARM64 nodes with cgroup v1.
+Do not deploy it to cgroup v2 nodes or assume bootstrap will detect an
+incompatible host before sandboxd starts. Apple Silicon development runs the
+ARM64 image inside Docker Desktop's Linux VM rather than natively on macOS.
 
 Dragonfly distribution is optional and disabled by default. Enable it during
 profile generation with `make config INSTALL_DRAGONFLY=true`. This installs the

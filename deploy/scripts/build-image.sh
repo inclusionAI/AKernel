@@ -15,8 +15,10 @@ repository=""
 tag=""
 env_name=""
 runtime_image=""
+platform=""
 gvisor_release=""
 gvisor_release_base_url=""
+open_yr_release_base_url=""
 print_component_versions=0
 
 component_revision() {
@@ -77,12 +79,20 @@ while [[ $# -gt 0 ]]; do
       runtime_image="$2"
       shift 2
       ;;
+    --platform)
+      platform="$2"
+      shift 2
+      ;;
     --gvisor-release)
       gvisor_release="$2"
       shift 2
       ;;
     --gvisor-release-base-url)
       gvisor_release_base_url="$2"
+      shift 2
+      ;;
+    --open-yr-release-base-url)
+      open_yr_release_base_url="$2"
       shift 2
       ;;
     --print-component-versions)
@@ -108,6 +118,7 @@ tag="${tag:-$(git -C "${AKERNEL_REPO_ROOT}" rev-parse --short HEAD)-$(date +%Y%m
 
 runtime_image="${runtime_image:-akernel-runtime:${tag}}"
 all_in_one_image="${repository}:${tag}"
+platform="${platform:-${AKERNEL_BUILD_PLATFORM:-}}"
 
 cd "${AKERNEL_REPO_ROOT}"
 
@@ -138,7 +149,12 @@ if [[ "${print_component_versions}" == "1" ]]; then
 fi
 
 info "building ${runtime_image}"
+platform_args=()
+if [[ -n "${platform}" ]]; then
+  platform_args+=(--platform "${platform}")
+fi
 docker build \
+  "${platform_args[@]}" \
   -f builder/runtime.Dockerfile \
   -t "${runtime_image}" \
   .
@@ -155,7 +171,11 @@ fi
 if [[ -n "${gvisor_release_base_url}" ]]; then
   node_build_args+=(--build-arg "GVISOR_RELEASE_BASE_URL=${gvisor_release_base_url}")
 fi
+if [[ -n "${open_yr_release_base_url}" ]]; then
+  node_build_args+=(--build-arg "OPEN_YR_RELEASE_BASE_URL=${open_yr_release_base_url}")
+fi
 docker build \
+  "${platform_args[@]}" \
   -f builder/node.Dockerfile \
   "${node_build_args[@]}" \
   -t "${all_in_one_image}" \

@@ -65,9 +65,11 @@ RUN set -eux; \
         py="${spec%%:*}"; \
         version="${spec#*:}"; \
         uv venv "/opt/venv-py${py}" --python "${version}" --seed; \
-        ln -sfn \
-            "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-            "/opt/python${py}"; \
+        python_path="$(readlink -f "/opt/venv-py${py}/bin/python")"; \
+        case "${python_path}" in \
+            /opt/*) ln -sfn "${python_path#/opt/}" "/opt/python${py}" ;; \
+            *) echo "unexpected uv Python path: ${python_path}" >&2; exit 1 ;; \
+        esac; \
     done; \
     rm -rf "${UV_CACHE_DIR}"
 
@@ -112,9 +114,11 @@ RUN set -eux; \
         sleep $((attempt * 5)); \
         attempt=$((attempt + 1)); \
     done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
+    python_path="$(readlink -f "/opt/venv-py${py}/bin/python")"; \
+    case "${python_path}" in \
+        /opt/*) ln -sfn "${python_path#/opt/}" "/opt/python${py}" ;; \
+        *) echo "unexpected uv Python path: ${python_path}" >&2; exit 1 ;; \
+    esac; \
     rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
 
 RUN set -eux; \
@@ -133,9 +137,11 @@ RUN set -eux; \
         sleep $((attempt * 5)); \
         attempt=$((attempt + 1)); \
     done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
+    python_path="$(readlink -f "/opt/venv-py${py}/bin/python")"; \
+    case "${python_path}" in \
+        /opt/*) ln -sfn "${python_path#/opt/}" "/opt/python${py}" ;; \
+        *) echo "unexpected uv Python path: ${python_path}" >&2; exit 1 ;; \
+    esac; \
     rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
 
 RUN set -eux; \
@@ -154,9 +160,11 @@ RUN set -eux; \
         sleep $((attempt * 5)); \
         attempt=$((attempt + 1)); \
     done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
+    python_path="$(readlink -f "/opt/venv-py${py}/bin/python")"; \
+    case "${python_path}" in \
+        /opt/*) ln -sfn "${python_path#/opt/}" "/opt/python${py}" ;; \
+        *) echo "unexpected uv Python path: ${python_path}" >&2; exit 1 ;; \
+    esac; \
     rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
 
 RUN set -eux; \
@@ -175,9 +183,11 @@ RUN set -eux; \
         sleep $((attempt * 5)); \
         attempt=$((attempt + 1)); \
     done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
+    python_path="$(readlink -f "/opt/venv-py${py}/bin/python")"; \
+    case "${python_path}" in \
+        /opt/*) ln -sfn "${python_path#/opt/}" "/opt/python${py}" ;; \
+        *) echo "unexpected uv Python path: ${python_path}" >&2; exit 1 ;; \
+    esac; \
     rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
 
 COPY ./builder/scripts/entryfile.sh /home/entryfile.sh

@@ -10,7 +10,7 @@ set -e
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${SCRIPT_DIR}/config"
-DATA_DIR="${SCRIPT_DIR}/data"
+DATA_DIR="${AKERNEL_DATA_DIR:-${SCRIPT_DIR}/data}"
 FRONTEND_PORT="8888"
 ETCD_PORT="${ETCD_PORT:-2379}"
 ETCD_PEER_PORT="${ETCD_PEER_PORT:-2378}"
@@ -21,11 +21,19 @@ TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.6.8}"
 IAM_SEED_FILE="${DATA_DIR}/iam-seed"
 TOKEN_FILE="${DATA_DIR}/token"
 LITEBUS_DATA_KEY=""
+DATA_VOLUME="${AKERNEL_DATA_VOLUME:-}"
+PUBLISH_HOST_PORTS="${AKERNEL_PUBLISH_HOST_PORTS:-auto}"
+HOST_BIND_ADDRESS="${AKERNEL_HOST_BIND_ADDRESS:-127.0.0.1}"
+SDK_SERVER_ADDRESS=""
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
 DOCKER_PREFIX=()
 PROXY_RUN_ARGS=()
+NODE_RUNTIME_ARGS=()
+DATA_MOUNT_ARGS=()
+AUTH_MOUNT_ARGS=()
+TRAEFIK_RUN_ARGS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -116,6 +124,64 @@ check_prerequisites() {
     mkdir -p "${DATA_DIR}/sandboxd/config" "${DATA_DIR}/sandboxd/image_manager"
 
     log_info "All config files found"
+}
+
+configure_local_runtime() {
+    local host_os
+    host_os="$(uname -s)"
+
+    if [[ "${PUBLISH_HOST_PORTS}" == "auto" ]]; then
+        if [[ "${host_os}" == "Darwin" && "${DOCKER_CMD}" == "docker" ]]; then
+            PUBLISH_HOST_PORTS="true"
+        else
+            PUBLISH_HOST_PORTS="false"
+        fi
+    fi
+
+    case "${PUBLISH_HOST_PORTS}" in
+        true|false) ;;
+        *)
+            log_error "AKERNEL_PUBLISH_HOST_PORTS must be auto, true, or false"
+            exit 1
+            ;;
+    esac
+
+    if [[ "${DOCKER_CMD}" == "docker" ]]; then
+        NODE_RUNTIME_ARGS=(
+            --cgroupns=host
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw
+        )
+    fi
+
+    if [[ -z "${DATA_VOLUME}" && "${host_os}" == "Darwin" && "${DOCKER_CMD}" == "docker" ]]; then
+        DATA_VOLUME="akernel-standalone-data"
+    fi
+
+    if [[ -n "${DATA_VOLUME}" ]]; then
+        if ! "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} volume inspect "${DATA_VOLUME}" &> /dev/null; then
+            "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} volume create "${DATA_VOLUME}" > /dev/null
+            log_info "Created data volume: ${DATA_VOLUME}"
+        else
+            log_info "Using data volume: ${DATA_VOLUME}"
+        fi
+        DATA_MOUNT_ARGS=(-v "${DATA_VOLUME}:/home/akernel")
+        AUTH_MOUNT_ARGS=(-v "${IAM_SEED_FILE}:/home/akernel/iam-seed:ro")
+    else
+        DATA_MOUNT_ARGS=(-v "${DATA_DIR}:/home/akernel")
+    fi
+
+    if [[ "${PUBLISH_HOST_PORTS}" == "true" ]]; then
+        TRAEFIK_RUN_ARGS=(
+            -p "${HOST_BIND_ADDRESS}:80:80"
+            -p "${HOST_BIND_ADDRESS}:443:443"
+        )
+        if [[ "${HOST_BIND_ADDRESS}" == "0.0.0.0" ]]; then
+            SDK_SERVER_ADDRESS="127.0.0.1"
+        else
+            SDK_SERVER_ADDRESS="${HOST_BIND_ADDRESS}"
+        fi
+        log_info "Publishing gateway ports 80 and 443 on ${HOST_BIND_ADDRESS}"
+    fi
 }
 
 configure_auth() {
@@ -209,6 +275,7 @@ start_node_container() {
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
         --name "${NODE_CONTAINER_NAME}" \
         --privileged \
+        "${NODE_RUNTIME_ARGS[@]}" \
         --net bridge \
         --restart always \
         -e AKS_LOCAL_MODE="true" \
@@ -225,7 +292,8 @@ start_node_container() {
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
         "${PROXY_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
-        -v "${DATA_DIR}:/home/akernel" \
+        "${DATA_MOUNT_ARGS[@]}" \
+        "${AUTH_MOUNT_ARGS[@]}" \
         -v "${CONFIG_DIR}/oss_auths.json:/home/akernel/sandboxd/config/oss_auths.json:ro" \
         -v "${CONFIG_DIR}/oss.json:/home/akernel/sandboxd/config/oss.json:ro" \
         -v "${CONFIG_DIR}/registry_auths.json:/home/akernel/sandboxd/config/registry_auths.json:ro" \
@@ -243,13 +311,18 @@ wait_for_ready() {
     local delay=2
 
     for i in $(seq 1 $retries); do
-        if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} exec "${NODE_CONTAINER_NAME}" systemctl is-system-running &> /dev/null; then
-            log_info "AKernel container is ready"
+        if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} exec "${NODE_CONTAINER_NAME}" \
+            systemctl is-active --quiet yuanrong.service &> /dev/null && \
+           "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} exec "${NODE_CONTAINER_NAME}" \
+            systemctl is-active --quiet sandboxd.service &> /dev/null; then
+            log_info "AKernel node services are ready"
             return 0
         fi
 
         if [[ $i -eq $retries ]]; then
-            log_warn "AKernel may not be fully ready; check ${DOCKER_CMD} logs ${NODE_CONTAINER_NAME}"
+            log_error "AKernel node services did not become ready"
+            "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} exec "${NODE_CONTAINER_NAME}" \
+                systemctl --no-pager --full status yuanrong.service sandboxd.service || true
             return 1
         fi
 
@@ -300,6 +373,7 @@ start_traefik_container() {
         --name "${TRAEFIK_CONTAINER_NAME}" \
         --net bridge \
         --restart always \
+        "${TRAEFIK_RUN_ARGS[@]}" \
         -v "${dynamic_config}:/etc/traefik/dynamic.yml:ro" \
         "${TRAEFIK_IMAGE}" \
         --entryPoints.web.address=:80 \
@@ -320,7 +394,7 @@ wait_for_gateway() {
 
     log_info "Waiting for Traefik at ${traefik_ip}"
     for i in $(seq 1 ${retries}); do
-        if curl --noproxy '*' -fkSs "https://${traefik_ip}/healthz" > /dev/null; then
+        if curl --noproxy '*' -fks "https://${traefik_ip}/healthz" > /dev/null 2>&1; then
             log_info "Traefik gateway is ready"
             return 0
         fi
@@ -345,6 +419,7 @@ wait_for_gateway() {
 show_status() {
     local node_ip="$1"
     local traefik_ip="$2"
+    local sdk_address="$3"
 
     echo ""
     log_info "Container status:"
@@ -359,12 +434,14 @@ show_status() {
     echo "  Enter AKernel: ${DOCKER_CMD} exec -it ${NODE_CONTAINER_NAME} bash"
     echo "  AKernel IP:    ${node_ip}"
     echo "  Traefik IP:    ${traefik_ip}"
+    echo "  SDK address:   ${sdk_address}"
     echo "  SDK token:     ${TOKEN_FILE}"
 }
 
 # Main
 check_prerequisites
 cleanup_existing
+configure_local_runtime
 configure_auth
 ensure_image "${IMAGE}"
 ensure_image "${TRAEFIK_IMAGE}"
@@ -385,9 +462,12 @@ if [[ -z "${TRAEFIK_IP}" ]]; then
     log_error "Could not determine the Traefik container IP"
     exit 1
 fi
-wait_for_gateway "${TRAEFIK_IP}"
-show_status "${NODE_IP}" "${TRAEFIK_IP}"
+if [[ -z "${SDK_SERVER_ADDRESS}" ]]; then
+    SDK_SERVER_ADDRESS="${TRAEFIK_IP}"
+fi
+wait_for_gateway "${SDK_SERVER_ADDRESS}"
+show_status "${NODE_IP}" "${TRAEFIK_IP}" "${SDK_SERVER_ADDRESS}"
 
 log_info "AKernel started successfully in standalone mode"
-log_info "Set AKERNEL_SERVER_ADDRESS=${TRAEFIK_IP}"
+log_info "Set AKERNEL_SERVER_ADDRESS=${SDK_SERVER_ADDRESS}"
 log_info "Set AKERNEL_TOKEN=\$(cat ${TOKEN_FILE})"

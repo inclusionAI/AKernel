@@ -25,10 +25,11 @@ make print-env
 make e2e
 ```
 
-The current node runtime requires Linux x86-64 with cgroup v1. It does not yet
+The node runtime supports Linux x86-64 and ARM64 with cgroup v1. It does not
 support cgroup v2, and bootstrap does not reliably detect an incompatible host
 before sandboxd starts. Verify the node operating system and cgroup mode before
-deployment.
+deployment. On Apple Silicon, this means running the ARM64 image inside Docker
+Desktop's Linux VM; macOS itself is not a native node target.
 
 `make config` is interactive by default. It writes:
 
