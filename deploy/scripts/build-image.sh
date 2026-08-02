@@ -17,6 +17,8 @@ env_name=""
 runtime_image=""
 gvisor_release=""
 gvisor_release_base_url=""
+open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
+open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
 print_component_versions=0
 
 component_revision() {
@@ -83,6 +85,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --gvisor-release-base-url)
       gvisor_release_base_url="$2"
+      shift 2
+      ;;
+    --open-yr-core-wheel-url)
+      open_yr_core_wheel_url="$2"
+      shift 2
+      ;;
+    --open-yr-core-wheel-sha256)
+      open_yr_core_wheel_sha256="$2"
       shift 2
       ;;
     --print-component-versions)
@@ -154,6 +164,15 @@ if [[ -n "${gvisor_release}" ]]; then
 fi
 if [[ -n "${gvisor_release_base_url}" ]]; then
   node_build_args+=(--build-arg "GVISOR_RELEASE_BASE_URL=${gvisor_release_base_url}")
+fi
+if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; then
+  if [[ -z "${open_yr_core_wheel_url}" || -z "${open_yr_core_wheel_sha256}" ]]; then
+    die "OPEN_YR_CORE_WHEEL_URL and OPEN_YR_CORE_WHEEL_SHA256 must be set together"
+  fi
+  node_build_args+=(
+    --build-arg "OPEN_YR_CORE_WHEEL_URL=${open_yr_core_wheel_url}"
+    --build-arg "OPEN_YR_CORE_WHEEL_SHA256=${open_yr_core_wheel_sha256}"
+  )
 fi
 docker build \
   -f builder/node.Dockerfile \

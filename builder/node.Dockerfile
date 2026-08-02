@@ -7,6 +7,11 @@ ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.9.3
+ARG OPEN_YR_CORE_WHEEL_URL=
+ARG OPEN_YR_CORE_WHEEL_SHA256=
+ARG OPEN_YR_RELEASE_BASE_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download
+ARG OPEN_YR_CORE_AMD64_SHA256=dd472bfa60d3d934056801ae011db7b1993cb19c5681da2395e7f1e2d84e58c3
+ARG OPEN_YR_CORE_ARM64_SHA256=4a3468d189e155e1759e2b47ace4b468d9036e76b4b750a1d47d7d13d143563e
 ARG GVISOR_RELEASE=release-20260706.0
 ARG GVISOR_RELEASE_BASE_URL=https://storage.googleapis.com/gvisor/releases
 ARG LIBNVIDIA_CONTAINER_VERSION=1.19.1-1
@@ -88,6 +93,11 @@ FROM ${AKERNEL_NODE_BASE_IMAGE}
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
 ARG OPEN_YR_VERSION
+ARG OPEN_YR_CORE_WHEEL_URL
+ARG OPEN_YR_CORE_WHEEL_SHA256
+ARG OPEN_YR_RELEASE_BASE_URL
+ARG OPEN_YR_CORE_AMD64_SHA256
+ARG OPEN_YR_CORE_ARM64_SHA256
 ARG GVISOR_RELEASE
 ARG GVISOR_RELEASE_BASE_URL
 ARG LIBNVIDIA_CONTAINER_VERSION
@@ -179,19 +189,49 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 ENV YR_INSTALLATION_DIR=/home/yuanrong
 
-# Download and unpack the openyuanrong runtime tarball from the GitHub
-# release mirror. The .sha256 sidecar verifies the download before unpacking.
-RUN mkdir -p "${YR_INSTALLATION_DIR}" /tmp/yr-release && \
-    cd /tmp/yr-release && \
-    yr_tarball="openyuanrong-${OPEN_YR_VERSION}-linux-amd64.tar.gz" && \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors -O \
-      "https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/${yr_tarball}" && \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors -O \
-      "https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/${yr_tarball}.sha256" && \
-    sha256sum -c "${yr_tarball}.sha256" && \
-    tar -xzf "${yr_tarball}" -C "${YR_INSTALLATION_DIR}" --strip-components=1 && \
-    cd / && rm -rf /tmp/yr-release && \
-    ln -sf "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
+# Install the complete, language-runtime-free openYuanRong control plane from
+# its checksum-pinned core wheel. A URL and checksum pair may override the
+# release asset when validating an unreleased daily build.
+RUN set -eux; \
+    case "${TARGETARCH:-}" in \
+      amd64) wheel_arch=x86_64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
+      arm64) wheel_arch=aarch64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
+      "") \
+        case "$(uname -m)" in \
+          x86_64) wheel_arch=x86_64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
+          aarch64) wheel_arch=aarch64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
+          *) echo "unsupported openYuanRong target architecture: $(uname -m)" >&2; exit 1 ;; \
+        esac ;; \
+      *) echo "unsupported openYuanRong target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    wheel_name="openyuanrong_core-${OPEN_YR_VERSION}-py3-none-manylinux_2_31_${wheel_arch}.whl"; \
+    wheel_url="${OPEN_YR_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/${wheel_name}"; \
+    wheel_sha="${release_sha}"; \
+    if [ -n "${OPEN_YR_CORE_WHEEL_URL}" ]; then \
+      test -n "${OPEN_YR_CORE_WHEEL_SHA256}"; \
+      wheel_name="$(python3 -c 'import os, sys, urllib.parse; print(os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path)))' "${OPEN_YR_CORE_WHEEL_URL}")"; \
+      case "${wheel_name}" in *.whl) ;; *) echo "OPEN_YR_CORE_WHEEL_URL must reference a .whl file" >&2; exit 1 ;; esac; \
+      wheel_url="${OPEN_YR_CORE_WHEEL_URL}"; \
+      wheel_sha="${OPEN_YR_CORE_WHEEL_SHA256}"; \
+    else \
+      test -z "${OPEN_YR_CORE_WHEEL_SHA256}"; \
+    fi; \
+    wheel="/tmp/${wheel_name}"; \
+    target=/tmp/openyuanrong-core; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "${wheel_url}" -o "${wheel}"; \
+    echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
+    python3 -m pip install \
+      --break-system-packages \
+      --no-cache-dir \
+      --no-deps \
+      --target "${target}" \
+      "${wheel}"; \
+    test -x "${target}/yr/functionsystem/bin/yr"; \
+    mkdir -p "${YR_INSTALLATION_DIR}"; \
+    cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
+    rm -rf "${target}" "${wheel}"; \
+    ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
 
 COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img
 

@@ -43,9 +43,11 @@ Docker build copies and compiles their pinned Git submodules in dedicated
 builder stages. It also downloads `runsc` from the official gVisor release
 bucket and verifies its published SHA-512 checksum. The node image includes
 the pinned `nvidia-container-cli` userspace tooling for experimental gVisor
-GPU sandboxes; NVIDIA kernel drivers remain host-provided. The image packages
-the checksum-pinned Kata Containers 4.0 runtime-rs shim, Dragonball
-configuration, guest kernel, guest images, license, and sandbox logger.
+GPU sandboxes; NVIDIA kernel drivers remain host-provided.
+It installs the checksum-pinned openYuanRong core wheel as the control plane
+and packages the checksum-pinned Kata Containers 4.0 runtime-rs shim,
+Dragonball configuration, guest kernel, guest images, license, and sandbox
+logger.
 
 ## Common Commands
 
@@ -128,6 +130,11 @@ maintains and embeds its own semantic version: sandboxd uses
 `version/VERSION`, while distill-fs uses the package version in `Cargo.toml`.
 AKernel does not inject parent-repository version metadata into component
 compilation.
+
+To test an unreleased openYuanRong core wheel without rebuilding YuanRong,
+provide both `OPEN_YR_CORE_WHEEL_URL` and `OPEN_YR_CORE_WHEEL_SHA256` to
+`make build`. The complete wheel is verified before it replaces the pinned
+release control plane.
 
 Inspect the selected local versions without building an image:
 
