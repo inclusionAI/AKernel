@@ -6,9 +6,10 @@ ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
-ARG OPEN_YR_VERSION=0.9.2
+ARG OPEN_YR_VERSION=0.9.3
 ARG GVISOR_RELEASE=release-20260706.0
 ARG GVISOR_RELEASE_BASE_URL=https://storage.googleapis.com/gvisor/releases
+ARG LIBNVIDIA_CONTAINER_VERSION=1.19.1-1
 ARG KATA_BUILD_IMAGE=ubuntu:24.04
 ARG KATA_RELEASE=4.0.0
 ARG KATA_AMD64_SHA256=2c3b9dfeba355582b40aee462b12916c9740654d0230f696adf719d67b063a8c
@@ -89,6 +90,7 @@ ARG AKERNEL_REVISION
 ARG OPEN_YR_VERSION
 ARG GVISOR_RELEASE
 ARG GVISOR_RELEASE_BASE_URL
+ARG LIBNVIDIA_CONTAINER_VERSION
 ARG OTELCOL_CONTRIB_URL
 ARG TARGETARCH
 ARG PIP_INDEX_URL=https://pypi.org/simple
@@ -100,6 +102,7 @@ RUN apt-get update && \
         curl \
         e2fsprogs \
         fuse3 \
+        gnupg \
         iproute2 \
         iptables \
         jq \
@@ -115,6 +118,21 @@ RUN apt-get update && \
         systemd-sysv \
         tzdata \
         xfsprogs && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    curl -fsSL --retry 10 --retry-delay 2 --retry-all-errors \
+      https://nvidia.github.io/libnvidia-container/gpgkey \
+      | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg; \
+    curl -fsSL --retry 10 --retry-delay 2 --retry-all-errors \
+      https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed \
+        's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+      > /etc/apt/sources.list.d/nvidia-container-toolkit.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      "libnvidia-container1=${LIBNVIDIA_CONTAINER_VERSION}" \
+      "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}"; \
     rm -rf /var/lib/apt/lists/*
 
 RUN if command -v update-alternatives >/dev/null 2>&1; then \

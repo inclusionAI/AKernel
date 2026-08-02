@@ -135,6 +135,18 @@ with Sandbox(cpu=1000, memory=2048) as sandbox:
     print(sandbox.files.read("/tmp/hello.txt"))
 ```
 
+Experimental gVisor sandboxes can request an exact NVIDIA GPU model and a
+disk-backed writable root filesystem quota:
+
+```python
+with Sandbox(xpu="gpu:l20:1", storage_mb=20 * 1024) as sandbox:
+    print(sandbox.commands.run("nvidia-smi -L").stdout)
+```
+
+GPU sandboxes require a compatible NVIDIA node and currently support only the
+gVisor `runsc` runtime. `storage_mb` is measured in MiB and also currently
+requires `runsc`.
+
 See the complete [basic usage example](./sdk/python/examples/basic_usage.py), the [sandbox runtime example](./sdk/python/examples/sandbox_runtime.py), and the other [SDK examples](./sdk/python/examples/) for more operations.
 
 ## Architecture
@@ -144,7 +156,8 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 ### System Components
 
 **Node-Level Infrastructure**
-- **Sandbox runtimes**: gVisor by default and Kata Containers on KVM-capable nodes
+- **Sandbox runtimes**: gVisor by default, including experimental NVIDIA GPU
+  and writable-storage support, and Kata Containers on KVM-capable nodes
 - **sandboxd**: Sandbox lifecycle daemon with pluggable sandbox runtime integration
 - **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication
 
@@ -157,7 +170,8 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 ### How It Works
 
 1. **Agent Submits Workload**: Through unified API or SDK
-2. **Scheduler Places Sandbox**: Selects a worker based on requested CPU, memory, and available capacity
+2. **Scheduler Places Sandbox**: Selects a worker based on requested CPU,
+   memory, storage, accelerator model, and available capacity
 3. **Sandbox Created**: Prepares the rootfs and network and starts the selected sandbox runtime on the worker
 4. **Workload Executes**: In secure, isolated sandboxes
 5. **Resources Recycled**: Deletes the sandbox and returns its capacity to the cluster

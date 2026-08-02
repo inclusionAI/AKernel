@@ -55,6 +55,8 @@ class SandboxTest(unittest.TestCase):
         self.assertTrue(sandbox.is_running())
         self.assertEqual(sandbox.get_info().id, "physical-id")
         self.assertEqual(sandbox.get_info().cpu, 2000)
+        self.assertIsNone(sandbox.get_info().xpu)
+        self.assertIsNone(sandbox.get_info().storage_mb)
         self.backend.build_options.assert_called_once()
         sandbox.kill()
         self.backend.terminate_instance.assert_called_once_with(self.handle)
@@ -88,6 +90,49 @@ class SandboxTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unsupported runtime"):
             Sandbox(runtime="unknown")
+
+    def test_xpu_request_is_normalized_and_passed_to_backend(self):
+        sandbox = Sandbox(xpu=" GPU:L20:02 ")
+        self.assertEqual(sandbox.get_info().xpu, "gpu:l20:2")
+        self.assertEqual(
+            self.backend.build_options.call_args.kwargs["xpu"],
+            "gpu:l20:2",
+        )
+        sandbox.kill()
+
+    def test_xpu_request_validation(self):
+        invalid = (
+            (1, TypeError),
+            ("gpu", ValueError),
+            ("gpu::1", ValueError),
+            ("npu:l20:1", ValueError),
+            ("gpu:l20:0", ValueError),
+            ("gpu:l20:1.5", ValueError),
+            ("gpu:l20/evil:1", ValueError),
+        )
+        for value, error_type in invalid:
+            with self.subTest(value=value), self.assertRaises(error_type):
+                Sandbox(xpu=value)
+        with self.assertRaisesRegex(ValueError, "xpu.*runsc"):
+            Sandbox(runtime="kata", xpu="gpu:l20:1")
+        self.backend.ensure_initialized.assert_not_called()
+
+    def test_storage_request_is_passed_to_backend(self):
+        sandbox = Sandbox(storage_mb=256)
+        self.assertEqual(sandbox.get_info().storage_mb, 256)
+        self.assertEqual(
+            self.backend.build_options.call_args.kwargs["storage_mb"],
+            256,
+        )
+        sandbox.kill()
+
+    def test_storage_request_validation(self):
+        for value in (True, 0, -1, 1.5):
+            with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
+                Sandbox(storage_mb=value)
+        with self.assertRaisesRegex(ValueError, "storage_mb.*runsc"):
+            Sandbox(runtime="kata", storage_mb=256)
+        self.backend.ensure_initialized.assert_not_called()
 
     def test_port_forwardings_are_integer_ports(self):
         with self.assertRaisesRegex(TypeError, "integer"):

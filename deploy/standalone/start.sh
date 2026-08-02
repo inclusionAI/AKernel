@@ -26,6 +26,7 @@ LITEBUS_DATA_KEY=""
 DOCKER_CMD=""
 DOCKER_PREFIX=()
 PROXY_RUN_ARGS=()
+GPU_RUN_ARGS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -207,6 +208,22 @@ EOF
     )
 }
 
+configure_gpu() {
+    if [[ "${AKERNEL_ENABLE_GPU:-false}" != "true" ]]; then
+        return 0
+    fi
+    if [[ "${DOCKER_CMD}" != "docker" ]]; then
+        log_error "AKERNEL_ENABLE_GPU currently requires Docker"
+        exit 1
+    fi
+
+    GPU_RUN_ARGS=(
+        --gpus "${AKERNEL_GPU_DEVICES:-all}"
+        -e NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}"
+    )
+    log_info "Enabling NVIDIA GPU access for the AKernel node container"
+}
+
 # Start the AKernel all-in-one container. Traefik runs separately so traffic
 # from the gateway enters this network namespace through PREROUTING.
 start_node_container() {
@@ -230,6 +247,7 @@ start_node_container() {
         -e ENABLE_TRACE="${ENABLE_TRACE:-false}" \
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
         "${PROXY_RUN_ARGS[@]}" \
+        "${GPU_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
         -v "${DATA_DIR}:/home/akernel" \
         -v "${CONFIG_DIR}/oss_auths.json:/home/akernel/sandboxd/config/oss_auths.json:ro" \
@@ -375,6 +393,7 @@ configure_auth
 ensure_image "${IMAGE}"
 ensure_image "${TRAEFIK_IMAGE}"
 configure_container_proxy
+configure_gpu
 start_node_container
 wait_for_ready
 NODE_IP="$(container_ip "${NODE_CONTAINER_NAME}")"

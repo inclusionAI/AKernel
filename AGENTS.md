@@ -10,7 +10,9 @@ AKernel provides cluster-backed remote sandbox environments for agents and
 developer workflows. The current public user-facing surface is the Python
 `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI.
 The default sandbox runtime is gVisor runsc; callers may select Kata
-Containers when the cluster has a KVM-capable node.
+Containers when the cluster has a KVM-capable node. Experimental whole-device
+NVIDIA GPU and configurable writable-storage requests currently require
+runsc.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -39,7 +41,9 @@ build tooling, and examples. Node runtime components such as `sandboxd` and
 `distill-fs` are maintained in their own upstream repositories. The all-in-one
 Docker build copies and compiles their pinned Git submodules in dedicated
 builder stages. It also downloads `runsc` from the official gVisor release
-bucket and verifies its published SHA-512 checksum. The node image packages
+bucket and verifies its published SHA-512 checksum. The node image includes
+the pinned `nvidia-container-cli` userspace tooling for experimental gVisor
+GPU sandboxes; NVIDIA kernel drivers remain host-provided. The image packages
 the checksum-pinned Kata Containers 4.0 runtime-rs shim, Dragonball
 configuration, guest kernel, guest images, license, and sandbox logger.
 
@@ -238,6 +242,13 @@ with Sandbox(runtime="kata", cpu=2000, memory=4096) as sb:
     print(sb.commands.run("uname -s").stdout)
 ```
 
+Request experimental gVisor GPU and disk-backed writable storage resources:
+
+```python
+with Sandbox(xpu="gpu:l20:1", storage_mb=20 * 1024) as sb:
+    print(sb.commands.run("nvidia-smi -L").stdout)
+```
+
 Required environment:
 
 ```bash
@@ -257,6 +268,17 @@ export AKERNEL_SERVER_ADDRESS=<traefik-container-ip>
 No separate `AKERNEL_GATEWAY_ADDRESS` is required for the default standalone
 layout. Standalone uses `akerneldev/all-in-one:latest` by default; pass `IMAGE`
 to test a locally built or differently tagged image.
+
+Standalone GPU testing additionally requires NVIDIA Container Toolkit on the
+host and `AKERNEL_ENABLE_GPU=true`. sandboxd uses the read-only cgroup
+node-resource provider in standalone mode; Kubernetes deployments retain the
+Kubernetes provider. Standalone explicitly enables local DNAT because the
+frontend shares the node network namespace.
+
+The standalone sandboxd filestore is a loop-mounted XFS image under the
+bind-mounted `deploy/standalone/data/` directory. Explicit `storage_mb` quotas
+use this local-disk filestore; omitting `storage_mb` retains the configured
+memory-backed writable overlay.
 
 Keep detailed SDK reference material with the SDK. The root README should
 contain only the project-level entry points and representative examples:
@@ -317,6 +339,10 @@ AKERNEL_TEST_RUNTIME=kata \
 python -m pytest sdk/python/tests/integration/test_sandbox.py
 
 python sdk/python/benchmarks/sandbox_pressure.py --runtime kata
+
+python sdk/python/benchmarks/sandbox_pressure.py --storage-mb 256
+python sdk/python/benchmarks/sandbox_pressure.py \
+  --xpu gpu:a10:1 --storage-mb 256 --processes 1 --threads 1
 ```
 
 ## Maintenance Rules

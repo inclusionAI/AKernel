@@ -79,10 +79,40 @@ Sandbox(
     reverse_tunnel: HttpReverseTunnel | None = None,
     detached: bool = False,
     node_id: str | None = None,
+    *,
+    xpu: str | None = None,
+    storage_mb: int | None = None,
 )
 ```
 
 `cpu` is measured in millicores and `memory` in MiB. A zero CPU or memory limit means the limit follows the corresponding request. A positive limit must not be smaller than its request.
+
+### Experimental GPU and writable storage
+
+Request a whole NVIDIA GPU by type, exact product model, and count:
+
+```python
+with Sandbox(xpu="gpu:l20:1") as sandbox:
+    print(sandbox.commands.run("nvidia-smi -L").stdout)
+```
+
+The `type:model:count` value is case-insensitive and canonicalized to lower
+case. The model is required and matched exactly; wildcard models are not
+supported. GPU sandboxes currently require the gVisor `runsc` runtime and a
+node configured for gVisor nvproxy.
+
+Set the writable root filesystem quota in MiB:
+
+```python
+with Sandbox(storage_mb=20 * 1024) as sandbox:
+    print(sandbox.commands.run("df -h /").stdout)
+```
+
+An explicit `storage_mb` quota currently requires `runsc` and uses sandboxd's
+disk-backed XFS filestore. When it is omitted, sandboxd retains its configured
+default 10 GiB memory-backed writable overlay. See
+[`examples/gpu_sandbox.py`](./examples/gpu_sandbox.py) and
+[`examples/storage_sandbox.py`](./examples/storage_sandbox.py).
 
 ## Sandbox runtimes
 
@@ -294,6 +324,10 @@ for node in resources():
     print(node.id, node.status, node.capacity, node.allocatable, node.labels)
 ```
 
+Accelerators appear under keys such as `GPU/l20`. Capacity is the total card
+count and allocatable is the currently free count. `ak resources` renders the
+same information as, for example, `gpu/l20 1/4`.
+
 Use the context manager for ordinary sandboxes. For a named detached sandbox,
 explicitly delete it when it is no longer needed:
 
@@ -304,8 +338,8 @@ Sandbox.delete("worker")   # terminates the named remote sandbox
 ```
 
 `sandbox.id` is the physical ID shown by `ak list`. `get_info()` returns a
-`SandboxInfo` containing `id`, state, requested CPU and memory, and the OCI
-image when one was configured.
+`SandboxInfo` containing `id`, state, requested CPU, memory, XPU and storage,
+and the OCI image when one was configured.
 
 ## CLI
 
@@ -330,11 +364,13 @@ Maintained examples are under [`examples/`](./examples):
 - `basic_usage.py`
 - `command_stdin.py`
 - `custom_image.py`
+- `gpu_sandbox.py`
 - `named_sandbox.py`
 - `pty.py`
 - `port_forwarding.py`
 - `reverse_tunnel.py`
 - `s3_rootfs_and_mounts.py`
+- `storage_sandbox.py`
 
 Run unit tests without a deployment:
 

@@ -92,6 +92,8 @@ def _build_sandbox_kwargs(
     cpu_limit,
     mem_limit,
     idle_timeout,
+    xpu,
+    storage_mb,
     upstream,
     reverse_port,
     listen_port,
@@ -104,6 +106,10 @@ def _build_sandbox_kwargs(
         "mem_limit": mem_limit,
         "idle_timeout": idle_timeout,
     }
+    if xpu:
+        kwargs["xpu"] = xpu
+    if storage_mb is not None:
+        kwargs["storage_mb"] = storage_mb
     if image:
         kwargs["image"] = image
     if upstream:
@@ -141,7 +147,10 @@ def run_single_request(stats, term_pool, sb_kwargs, cmd, cmd_timeout, tunnel_mod
             stats["latencies"].append(elapsed)
             stats["create_latencies"].append(t_created - t0)
 
-        term_pool.submit(_safe_kill, sb)
+        if sb_kwargs.get("xpu"):
+            _safe_kill(sb)
+        else:
+            term_pool.submit(_safe_kill, sb)
         sb = None
     except Exception as e:
         with stats["lock"]:
@@ -169,6 +178,8 @@ def worker_process(
     cpu_limit,
     mem_limit,
     idle_timeout,
+    xpu,
+    storage_mb,
     upstream,
     reverse_port,
     listen_port,
@@ -193,6 +204,8 @@ def worker_process(
         cpu_limit,
         mem_limit,
         idle_timeout,
+        xpu,
+        storage_mb,
         upstream,
         reverse_port,
         listen_port,
@@ -267,6 +280,8 @@ def main(args):
         f"   image (rootfs) : {args.image or '<cluster default>'}\n"
         f"   cpu req/limit  : {args.cpu}m / {args.cpu_limit}m\n"
         f"   mem req/limit  : {args.memory}MiB / {args.mem_limit}MiB\n"
+        f"   xpu request    : {args.xpu or '<none>'}\n"
+        f"   storage quota  : {args.storage_mb or '<default>'} MiB\n"
         f"   tunnel mode    : {bool(args.upstream)}"
         + (
             f" (upstream={args.upstream}, reverse_port={args.reverse_port}, "
@@ -291,6 +306,8 @@ def main(args):
                 args.cpu_limit,
                 args.mem_limit,
                 args.idle_timeout,
+                args.xpu,
+                args.storage_mb,
                 args.upstream,
                 args.reverse_port,
                 args.listen_port,
@@ -356,7 +373,7 @@ def main(args):
                 print(f"  • {err}")
 
         pool.shutdown(wait=True)
-        if merged["failed"] and merged["success"] == 0:
+        if merged["failed"]:
             raise SystemExit(1)
     finally:
         if local_proc is not None:
@@ -406,6 +423,17 @@ if __name__ == "__main__":
         help="memory cgroup limit, MiB (0=disabled, 4096=4G)",
     )
     parser.add_argument("--idle-timeout", type=int, default=120, help="seconds")
+    parser.add_argument(
+        "--xpu",
+        default="",
+        help="optional type:model:count accelerator request",
+    )
+    parser.add_argument(
+        "--storage-mb",
+        type=int,
+        default=None,
+        help="optional writable root filesystem quota in MiB",
+    )
     parser.add_argument(
         "--tunnel",
         action="store_true",

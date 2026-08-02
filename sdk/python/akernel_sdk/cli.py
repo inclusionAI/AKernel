@@ -25,6 +25,16 @@ from urllib import request
 from urllib.error import HTTPError, URLError
 
 from ._addresses import Endpoint, api_endpoint_from_env
+from ._resource_api import (
+    ResourceAPIError,
+    query_resource_view,
+)
+from ._resource_api import (
+    extract_labels as _extract_labels,
+)
+from ._resource_api import (
+    extract_resources as _extract_resources,
+)
 from .pty import Pty, PtyError
 
 DEFAULT_COMMAND = "/bin/bash"
@@ -115,88 +125,32 @@ def _fmt_mem(mb: float) -> str:
     return f"{mb / 1024:.1f}G"
 
 
-def _extract_scalar_value(proto_scalar) -> float:
-    """Extract a numeric value from a protobuf-JSON scalar field.
-
-    The scalar may be ``{"value": 16000.0}`` (when nested inside Resources),
-    a plain number ``16000``, or a string ``"16000"``.
-    """
-    if isinstance(proto_scalar, dict):
-        return float(proto_scalar.get("value", 0))
-    if isinstance(proto_scalar, str):
-        return float(proto_scalar)
-    return float(proto_scalar)
+def _fmt_resource_count(value: float) -> str:
+    return str(int(value)) if value.is_integer() else f"{value:g}"
 
 
-def _extract_resources(proto_resources: dict) -> dict:
-    """Convert a protobuf-JSON ``Resources`` map to ``{name: value}`` dict.
-
-    Protobuf shape::
-
-        {"CPU": {"scalar": {"value": 16000.0}}, "Memory": {...}}
-
-    Returns a flat dict like ``{"CPU": 16000.0, "Memory": 32116.0}``.
-    """
-    result: dict[str, float] = {}
-    if not proto_resources:
-        return result
-    # Resources message uses a nested "resources" map
-    inner = proto_resources.get("resources", proto_resources)
-    for name, r in inner.items():
-        if isinstance(r, dict):
-            result[name] = _extract_scalar_value(r.get("scalar", r))
-        elif isinstance(r, (int, float)):
-            result[name] = float(r)
-        else:
-            result[name] = float(r)
-    return result
-
-
-def _extract_labels(proto_labels: dict) -> dict:
-    """Convert protobuf-JSON nodeLabels to ``{key: [values...]}`` dict.
-
-    Protobuf shape::
-
-        {"NODE_ID": {"items": {"7d90...": 1}}, "HOST_IP": {"items": {"192.168...": 1}}}
-    """
-    result: dict[str, list[str]] = {}
-    if not proto_labels:
-        return result
-    for key, counter in proto_labels.items():
-        items = counter.get("items", {}) if isinstance(counter, dict) else {}
-        result[key] = list(items.keys())
-    return result
+def _fmt_xpu(capacity: dict[str, float], allocatable: dict[str, float]) -> str:
+    values = []
+    for name, total in sorted(capacity.items()):
+        fields = name.split("/", 1)
+        if len(fields) != 2 or fields[0].upper() not in {"GPU", "NPU", "TPU"}:
+            continue
+        available = allocatable.get(name, 0.0)
+        values.append(
+            f"{fields[0].lower()}/{fields[1]} "
+            f"{_fmt_resource_count(available)}/{_fmt_resource_count(total)}"
+        )
+    return ", ".join(values) or "-"
 
 
 def handle_resources(debug: bool = False):
     """Query cluster resource information and display in table format."""
-    endpoint = _get_endpoint(api_endpoint_from_env)
-    token = _get_auth_token()
-
-    url = f"{endpoint.base_url()}/global-scheduler/resources"
-    req = request.Request(url, method="GET", headers={"X-Auth": token, "Type": "json"})
-    ssl_context = _create_ssl_context()
-
     try:
-        with request.urlopen(req, context=ssl_context) as response:
-            body = response.read().decode("utf-8")
-            status = response.status
-    except HTTPError as e:
-        body = e.read().decode("utf-8")
-        status = e.code
-    except URLError as e:
-        print(f"Error: failed to send request: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    if status != 200:
-        print(f"Error: server returned status {status}", file=sys.stderr)
-        print(f"Response: {body}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as e:
-        print(f"Error: failed to parse response: {e}", file=sys.stderr)
+        data = query_resource_view()
+    except (ResourceAPIError, RuntimeError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        if isinstance(error, ResourceAPIError) and error.body:
+            print(f"Response: {error.body}", file=sys.stderr)
         sys.exit(1)
 
     if debug:
@@ -225,8 +179,18 @@ def handle_resources(debug: bool = False):
     total_mem_used = 0.0
 
     # ── Build per-node rows ──
-    headers = ["ID", "STATUS", "CPU", "CPU USED", "CPU%",
-               "MEM", "MEM USED", "MEM%", "HOST IP"]
+    headers = [
+        "ID",
+        "STATUS",
+        "CPU",
+        "CPU USED",
+        "CPU%",
+        "MEM",
+        "MEM USED",
+        "MEM%",
+        "XPU",
+        "HOST IP",
+    ]
     rows = []
     for u in units:
         nid = u.get("id", "-")
@@ -237,9 +201,9 @@ def handle_resources(debug: bool = False):
         allocatable = _extract_resources(u.get("allocatable", {}))
         labels = _extract_labels(u.get("nodeLabels", {}))
 
-        cpu_total = capacity.get("CPU", 0)       # millicores
-        cpu_al = allocatable.get("CPU", 0)       # millicores
-        cpu_used = cpu_total - cpu_al            # millicores
+        cpu_total = capacity.get("CPU", 0)  # millicores
+        cpu_al = allocatable.get("CPU", 0)  # millicores
+        cpu_used = cpu_total - cpu_al  # millicores
 
         # Skip nodes with less than 1 core capacity
         if cpu_total < 1000:
@@ -259,14 +223,20 @@ def handle_resources(debug: bool = False):
         cpu_usage = (cpu_used / cpu_total) * 100 if cpu_total > 0 else 0
         mem_usage = (mem_used / mem_total) * 100 if mem_total > 0 else 0
 
-        rows.append([
-            nid, st,
-            _fmt_cpu(cpu_total), _fmt_cpu(cpu_used),
-            f"{cpu_usage:.1f}%",
-            _fmt_mem(mem_total), _fmt_mem(mem_used),
-            f"{mem_usage:.1f}%",
-            host_ip,
-        ])
+        rows.append(
+            [
+                nid,
+                st,
+                _fmt_cpu(cpu_total),
+                _fmt_cpu(cpu_used),
+                f"{cpu_usage:.1f}%",
+                _fmt_mem(mem_total),
+                _fmt_mem(mem_used),
+                f"{mem_usage:.1f}%",
+                _fmt_xpu(capacity, allocatable),
+                host_ip,
+            ]
+        )
 
     # Calculate column widths
     col_widths = [len(h) for h in headers]

@@ -38,6 +38,8 @@ class OpenYuanRongAdapterTest(unittest.TestCase):
             "reverse_tunnel": None,
             "detached": False,
             "node_id": None,
+            "xpu": None,
+            "storage_mb": None,
         }
         values.update(overrides)
         return _openyuanrong.build_options(**values)
@@ -101,6 +103,22 @@ class OpenYuanRongAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mem_limit"):
             self.build_options(memory=4096, mem_limit=2048)
 
+    def test_xpu_and_storage_translation(self):
+        options = self.build_options(xpu="GPU:L20:2", storage_mb=256)
+        self.assertEqual(
+            options.custom_resources,
+            {
+                "GPU/l20/count": 2.0,
+                "storage": float(256 * 1024 * 1024),
+            },
+        )
+
+    def test_xpu_and_storage_require_runsc(self):
+        with self.assertRaisesRegex(ValueError, "xpu.*runsc"):
+            self.build_options(runtime="kata", xpu="gpu:l20:1")
+        with self.assertRaisesRegex(ValueError, "storage_mb.*runsc"):
+            self.build_options(runtime="kata", storage_mb=256)
+
     def test_node_info_conversion(self):
         node = _openyuanrong._to_node_info(
             {
@@ -116,24 +134,58 @@ class OpenYuanRongAdapterTest(unittest.TestCase):
         self.assertEqual(node.capacity["Memory"], 16384.0)
         self.assertEqual(node.allocatable["CPU"], 6000.0)
 
-    def test_resources_wrap_backend_values(self):
-        with patch.object(_openyuanrong, "ensure_initialized"):
-            with patch.object(
-                _openyuanrong.yr,
-                "resources",
-                return_value=[
-                    {
+    def test_resources_parse_vector_allocatable_counts(self):
+        response = {
+            "resource": {
+                "fragment": {
+                    "node-1": {
                         "id": "node-1",
                         "status": 0,
-                        "capacity": {"CPU": 4000},
-                        "allocatable": {"CPU": 3000},
-                        "labels": {},
+                        "capacity": {
+                            "resources": {
+                                "CPU": {"scalar": {"value": 4000}},
+                                "GPU/l20": {
+                                    "vectors": {
+                                        "values": {
+                                            "count": {
+                                                "vectors": {
+                                                    "node-1": {"values": [1, 1]}
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        "allocatable": {
+                            "resources": {
+                                "CPU": {"scalar": {"value": 3000}},
+                                "GPU/l20": {
+                                    "vectors": {
+                                        "values": {
+                                            "count": {
+                                                "vectors": {
+                                                    "node-1": {"values": [0, 1]}
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                        },
                     }
-                ],
-            ):
-                result = _openyuanrong.resources()
+                }
+            }
+        }
+        with (
+            patch.object(_openyuanrong, "ensure_initialized"),
+            patch.object(_openyuanrong, "query_resource_view", return_value=response),
+        ):
+            result = _openyuanrong.resources()
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].id, "node-1")
+        self.assertEqual(result[0].capacity["GPU/l20"], 2.0)
+        self.assertEqual(result[0].allocatable["GPU/l20"], 1.0)
 
 
 if __name__ == "__main__":

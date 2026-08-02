@@ -225,6 +225,7 @@ node:
         # node-resource config. sock_path matches what yuanrong's C++
         # external_system_collector reads, so it must stay /var/run/...
         [plugin.node_resource]
+        provider="kubernetes"
         sock_path="/var/run/resource.sock"
 
 traefik:

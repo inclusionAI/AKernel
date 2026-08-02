@@ -22,6 +22,60 @@ from akernel_sdk._addresses import Endpoint
 
 
 class CliTest(unittest.TestCase):
+    def test_resources_display_xpu_allocatable_and_capacity(self):
+        output = io.StringIO()
+        response = {
+            "resource": {
+                "fragment": {
+                    "node-1": {
+                        "id": "node-1",
+                        "capacity": {
+                            "resources": {
+                                "CPU": {"scalar": {"value": 4000}},
+                                "Memory": {"scalar": {"value": 8192}},
+                                "GPU/l20": {
+                                    "vectors": {
+                                        "values": {
+                                            "count": {
+                                                "vectors": {
+                                                    "node-1": {"values": [1, 1]}
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                        "allocatable": {
+                            "resources": {
+                                "CPU": {"scalar": {"value": 3000}},
+                                "Memory": {"scalar": {"value": 4096}},
+                                "GPU/l20": {
+                                    "vectors": {
+                                        "values": {
+                                            "count": {
+                                                "vectors": {
+                                                    "node-1": {"values": [0, 1]}
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                    }
+                }
+            }
+        }
+        with (
+            patch("akernel_sdk.cli.query_resource_view", return_value=response),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.handle_resources()
+
+        self.assertIn("XPU", output.getvalue())
+        self.assertIn("gpu/l20 1/2", output.getvalue())
+
     def test_delete_uses_frontend_actor_api(self):
         output = io.StringIO()
         endpoint = Endpoint("akernel.example", 443, "https", False)
@@ -46,8 +100,7 @@ class CliTest(unittest.TestCase):
         )
         self.assertTrue(
             all(
-                call.args[0]
-                == "https://akernel.example/frontend/v1/instance/kill"
+                call.args[0] == "https://akernel.example/frontend/v1/instance/kill"
                 for call in make_request.call_args_list
             )
         )

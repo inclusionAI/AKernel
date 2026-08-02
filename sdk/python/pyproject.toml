@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
-    "openyuanrong-sdk==0.9.2",
+    "openyuanrong-sdk==0.9.3",
     "websockets>=10.0",
 ]
 

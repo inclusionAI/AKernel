@@ -8,10 +8,29 @@ two containers on the default container bridge:
 - `akernel-traefik` runs the official Traefik image as the external gateway.
 
 Keeping the gateway in a separate network namespace allows sandboxd's normal
-`PREROUTING` port-forwarding rules to handle traffic without standalone-only
-NAT synchronization logic.
+`PREROUTING` rules to handle gateway traffic. The all-in-one frontend sends
+traffic from the node network namespace, so the standalone sandboxd config
+also enables its local-output DNAT support.
 
 The default runtime is gVisor `runsc`. `Sandbox(runtime="kata")` additionally requires `/dev/kvm` and hardware or nested virtualization on the Docker host. Nodes without KVM remain usable with runsc and do not advertise Kata to the scheduler.
+
+Experimental NVIDIA GPU sandboxes use gVisor nvproxy. The host must provide a
+compatible NVIDIA driver and NVIDIA Container Toolkit. Enable GPU access to
+the node container with:
+
+```bash
+AKERNEL_ENABLE_GPU=true ./start.sh
+```
+
+The all-in-one image contains `nvidia-container-cli`, but not the host driver.
+Use `AKERNEL_GPU_DEVICES` to override Docker's `--gpus` value when only a
+device subset should be assigned.
+
+Explicit sandbox storage quotas use the XFS filestore mounted at
+`/home/akernel/xfs`. The standalone data directory is bind-mounted from the
+host, and sandboxd creates `data/xfs.img` as a loop-backed XFS filesystem when
+needed; quota-backed writable layers therefore use local disk rather than
+tmpfs.
 
 ## Directory Structure
 

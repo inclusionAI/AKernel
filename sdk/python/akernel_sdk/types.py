@@ -67,6 +67,8 @@ class SandboxInfo:
     cpu: int | None
     memory: int | None
     image: str | None
+    xpu: str | None = None
+    storage_mb: int | None = None
 
 
 @dataclass(frozen=True)

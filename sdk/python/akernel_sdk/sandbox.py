@@ -24,6 +24,7 @@ from typing import Any
 
 from . import _openyuanrong
 from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_env
+from ._sandbox_resources import normalize_xpu, validate_storage_mb
 from .commands import Commands
 from .filesystem import Filesystem
 from .pty import Pty
@@ -114,6 +115,9 @@ class Sandbox:
         reverse_tunnel: HttpReverseTunnel | None = None,
         detached: bool = False,
         node_id: str | None = None,
+        *,
+        xpu: str | None = None,
+        storage_mb: int | None = None,
     ) -> None:
         """Create and wait for a sandbox to become ready.
 
@@ -136,6 +140,12 @@ class Sandbox:
             reverse_tunnel: SDK-side HTTP service exposed inside the sandbox.
             detached: Keep the sandbox alive when this client closes.
             node_id: Require placement on a specific AKernel node.
+            xpu: Experimental whole-device accelerator request in
+                ``type:model:count`` format. Currently only exact-model NVIDIA
+                GPU requests with the ``runsc`` runtime are supported.
+            storage_mb: Experimental writable root filesystem quota in MiB.
+                When omitted, the configured default is used. Explicit quotas
+                currently require the ``runsc`` runtime.
 
         Raises:
             TypeError: An argument has an invalid type.
@@ -154,6 +164,12 @@ class Sandbox:
                 f"unsupported runtime {runtime!r}; "
                 f"supported runtimes: {', '.join(_SUPPORTED_RUNTIMES)}"
             )
+        normalized_xpu = normalize_xpu(xpu)
+        validate_storage_mb(storage_mb)
+        if normalized_xpu is not None and runtime != "runsc":
+            raise ValueError("xpu is currently supported only by runsc")
+        if storage_mb is not None and runtime != "runsc":
+            raise ValueError("storage_mb is currently supported only by runsc")
         if env is not None:
             if not isinstance(env, Mapping) or not all(
                 isinstance(key, str) and isinstance(value, str)
@@ -180,8 +196,7 @@ class Sandbox:
             if conflicts:
                 rendered = ", ".join(str(port) for port in sorted(conflicts))
                 raise ValueError(
-                    "reverse tunnel ports conflict with port_forwardings: "
-                    f"{rendered}"
+                    f"reverse tunnel ports conflict with port_forwardings: {rendered}"
                 )
 
         self._instance: Any = None
@@ -194,6 +209,8 @@ class Sandbox:
         self._image = image
         self._cpu = cpu
         self._memory = memory
+        self._xpu = normalized_xpu
+        self._storage_mb = storage_mb
         self._id = ""
 
         _openyuanrong.ensure_initialized()
@@ -214,6 +231,8 @@ class Sandbox:
             reverse_tunnel=reverse_tunnel,
             detached=detached,
             node_id=node_id,
+            xpu=normalized_xpu,
+            storage_mb=storage_mb,
         )
         self._instance = _openyuanrong.create_instance(options, cwd=cwd)
         self._id = _openyuanrong.real_instance_id(self._instance)
@@ -312,6 +331,8 @@ class Sandbox:
             cpu=self._cpu,
             memory=self._memory,
             image=self._image,
+            xpu=self._xpu,
+            storage_mb=self._storage_mb,
         )
 
     def kill(self) -> None:

@@ -6,8 +6,8 @@ Description=yuanrong.service
 PIDFile=/run/yuanrong.pid
 PassEnvironment=ETCD_PORT ETCD_PEER_PORT ETCD_ADDRESS HOSTNAME AKS_LOCAL_MODE LITEBUS_DATA_KEY YR_LOG_PATH YR_INSTALLATION_DIR ENABLE_METRICS ENABLE_TRACE TRAEFIK_MODE TRAEFIK_ENABLE_TLS TRAEFIK_HTTP_ENTRYPOINT
 Environment="CONTAINER_EP=unix:///run/sandboxd/sandboxd.sock"
-Environment="YR_ENV_FILE=/dev/function/config"
 Environment="RUNTIME_HOME_DIR=/home/yuanrong/runtime"
+Environment="YR_NOSET_CUDA_VISIBLE_DEVICES=1"
 ExecStartPre=-/bin/mkdir -p /home/yuanrong/runtime
 ExecStart=/usr/bin/bash /home/yuanrong/yr_node_bootstrap.sh
 

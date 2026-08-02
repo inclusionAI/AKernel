@@ -43,6 +43,7 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --enable_inherit_env false \
         --npu_collection_mode off \
         --enable_distributed_master false \
+        --metrics_collector_type external \
         --enable_traefik_registry=${ENABLE_TRAEFIK_REGISTRY} \
         --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \
         --traefik_etcd_prefix=traefik \

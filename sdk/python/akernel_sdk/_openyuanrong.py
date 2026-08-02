@@ -30,6 +30,13 @@ from yr.sandbox.sandbox import _sanitize_instance_id
 
 from ._addresses import api_endpoint_from_env, gateway_endpoint_from_env
 from ._instance import _SandboxInstance
+from ._resource_api import parse_resource_nodes, query_resource_view
+from ._sandbox_resources import (
+    normalize_xpu,
+    storage_bytes,
+    validate_storage_mb,
+    xpu_custom_resource,
+)
 from .types import HttpReverseTunnel, Mount, NodeInfo, S3Config
 
 logger = logging.getLogger(__name__)
@@ -138,6 +145,8 @@ def build_options(
     reverse_tunnel: HttpReverseTunnel | None,
     detached: bool,
     node_id: str | None,
+    xpu: str | None,
+    storage_mb: int | None,
 ) -> Any:
     """Translate the stable SDK configuration to openYuanrong options."""
 
@@ -152,6 +161,12 @@ def build_options(
         raise ValueError("cpu_limit must be 0 or greater than or equal to cpu")
     if mem_limit and mem_limit < memory:
         raise ValueError("mem_limit must be 0 or greater than or equal to memory")
+    normalized_xpu = normalize_xpu(xpu)
+    validate_storage_mb(storage_mb)
+    if normalized_xpu is not None and runtime != "runsc":
+        raise ValueError("xpu is currently supported only by runsc")
+    if storage_mb is not None and runtime != "runsc":
+        raise ValueError("storage_mb is currently supported only by runsc")
 
     options = yr.InvokeOptions()
     # A Sandbox is driven by one sequential SDK client. Disabling ordered RPC
@@ -180,6 +195,11 @@ def build_options(
         options.custom_extensions["mounts"] = json.dumps(
             [mount.to_dict() for mount in mounts]
         )
+    if normalized_xpu is not None:
+        resource_name, count = xpu_custom_resource(normalized_xpu)
+        options.custom_resources[resource_name] = count
+    if storage_mb is not None:
+        options.custom_resources["storage"] = storage_bytes(storage_mb)
 
     forwarded = list(port_forwardings)
     if reverse_tunnel is not None:
@@ -322,9 +342,4 @@ def resources() -> list[NodeInfo]:
     """Return cluster resources through stable AKernel value types."""
 
     ensure_initialized()
-    raw = yr.resources()
-    if raw is None:
-        return []
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
-        raise TypeError("openYuanrong resources() returned a non-list value")
-    return [_to_node_info(item) for item in raw]
+    return parse_resource_nodes(query_resource_view())
