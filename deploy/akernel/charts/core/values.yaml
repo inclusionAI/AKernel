@@ -346,7 +346,7 @@ node:
               "path": "rootfs",
               "readonly": false
           },
-          "hostname": "runsc",
+          "hostname": "akernel",
           "mounts": [
               {
                   "destination": "/proc",
@@ -476,6 +476,7 @@ node:
 
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
+        resolv_conf_path="/etc/resolv_akernel.conf"
         # filestore_dir must reside on an XFS filesystem with reflink support.
         # sandboxd will automatically create an XFS image at /home/akernel/xfs.img
         # and mount it here if the mount point does not already exist as XFS.

@@ -28,6 +28,7 @@ enable_cache_in_stock_mode=true
 
 [plugin.runtime]
 image_lib_dir="/home/akernel/images"
+resolv_conf_path="/etc/resolv.conf"
 # filestore_dir must reside on an XFS filesystem with reflink support.
 # sandboxd will automatically create an XFS image at /home/akernel/xfs.img
 # and mount it here if the mount point does not already exist as XFS.
