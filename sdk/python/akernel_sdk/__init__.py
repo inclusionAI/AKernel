@@ -56,6 +56,17 @@ __all__ = [
     "BackendNotInstalledError",
     "UnsupportedBackendFeatureError",
     "BackendOperationError",
+    "DockerContext",
+    "LocalDockerContext",
+    "parse_dockerfile",
+    "check_direct_launch",
+    "apply_dockerfile",
+    "ParsedDockerfile",
+    "DockerfileApplyResult",
+    "DockerfileCheckResult",
+    "DockerfileBuildError",
+    "DockerfileParseError",
+    "BuildInstruction",
 ]
 
 _LAZY_IMPORTS = {
@@ -65,6 +76,17 @@ _LAZY_IMPORTS = {
     "PtySession": (".pty", "PtySession"),
     "PtyError": (".pty", "PtyError"),
     "resources": ("._resources", "resources"),
+    "DockerContext": ("._dockercontext", "DockerContext"),
+    "LocalDockerContext": ("._dockercontext", "LocalDockerContext"),
+    "parse_dockerfile": ("._dockerfile", "parse_dockerfile"),
+    "check_direct_launch": ("._dockerfile", "check_direct_launch"),
+    "ParsedDockerfile": ("._dockerfile", "ParsedDockerfile"),
+    "DockerfileCheckResult": ("._dockerfile", "DockerfileCheckResult"),
+    "DockerfileParseError": ("._dockerfile", "DockerfileParseError"),
+    "BuildInstruction": ("._dockerfile", "BuildInstruction"),
+    "apply_dockerfile": ("._dockerfile_runner", "apply_dockerfile"),
+    "DockerfileApplyResult": ("._dockerfile_runner", "DockerfileApplyResult"),
+    "DockerfileBuildError": ("._dockerfile", "DockerfileBuildError"),
 }
 
 

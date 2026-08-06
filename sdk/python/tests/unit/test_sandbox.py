@@ -18,6 +18,9 @@ from unittest.mock import MagicMock, patch
 
 from akernel_sdk import HttpReverseTunnel, NetworkPolicy, S3Config, Sandbox
 from akernel_sdk import sandbox as sandbox_module
+from akernel_sdk._dockercontext import LocalDockerContext
+from akernel_sdk._dockerfile import DockerfileBuildError, DockerfileParseError
+from akernel_sdk._dockerfile_runner import DockerfileApplyResult
 from akernel_sdk.types import SandboxInfo
 
 
@@ -54,6 +57,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(sandbox.get_info().cpu, 2000)
         self.assertIsNone(sandbox.get_info().xpu)
         self.assertIsNone(sandbox.get_info().storage_mb)
+        self.assertIsNone(sandbox.startup_command)
 
         spec = self.backend.create.call_args.args[0]
         self.assertEqual(spec.cpu, 2000)
@@ -317,6 +321,127 @@ class SandboxTest(unittest.TestCase):
             Sandbox(name="worker", detached=True)
 
         self.assertIs(raised.exception, initialization_error)
+        self.session.terminate.assert_called_once_with()
+        self.session.close.assert_called_once_with()
+
+    def test_dockerfile_context_is_strict_before_backend_creation(self):
+        unsupported = (
+            "ADD https://example.test/a /opt/",
+            'COPY ["a b", "/dest/"]',
+            'ADD ["a b", "/dest/"]',
+            'RUN ["printf", "%s", "x"]',
+            "WORKDIR app",
+            "ARG VERSION=1",
+            "COPY --chmod=755 a /dest/",
+            "COPY --link a /dest/",
+            "COPY --parents a /dest/",
+            "FROM --platform=linux/amd64 ubuntu",
+        )
+        for instruction in unsupported:
+            with self.subTest(instruction=instruction):
+                dockerfile = (
+                    instruction
+                    if instruction.startswith("FROM")
+                    else f"FROM ubuntu\n{instruction}\n"
+                )
+                with self.assertRaises(DockerfileParseError):
+                    Sandbox(context=LocalDockerContext(dockerfile))
+        self.backend.create.assert_not_called()
+
+    def test_dockerfile_context_uses_base_image_and_applies_after_facades(self):
+        context = LocalDockerContext("FROM ubuntu:24.04\nRUN true\n")
+        apply_result = DockerfileApplyResult(
+            start_cmd=None,
+            startup_command=None,
+            entrypoint=None,
+            warnings=(),
+        )
+        with patch(
+            "akernel_sdk._dockerfile_runner.apply_dockerfile",
+            return_value=apply_result,
+        ) as apply:
+            sandbox = Sandbox(context=context)
+
+        spec = self.backend.create.call_args.args[0]
+        self.assertEqual(spec.image, "ubuntu:24.04")
+        self.assertIs(apply.call_args.args[0], sandbox)
+        self.assertIsNotNone(sandbox._files)
+        self.assertIsNotNone(sandbox._commands)
+        self.assertIsNotNone(sandbox._pty)
+        self.assertIs(apply.call_args.args[2], context)
+        self.assertTrue(apply.call_args.kwargs["auto_start_cmd"])
+        self.assertEqual(apply.call_args.kwargs["run_timeout"], 600)
+        self.assertIsNone(sandbox.startup_command)
+        sandbox.kill()
+
+    def test_dockerfile_context_exposes_startup_command_handle(self):
+        context = LocalDockerContext('FROM ubuntu:24.04\nCMD ["server"]\n')
+        startup_handle = object()
+        apply_result = DockerfileApplyResult(
+            start_cmd=("server",),
+            startup_command=startup_handle,
+            entrypoint=None,
+            warnings=(),
+        )
+        with patch(
+            "akernel_sdk._dockerfile_runner.apply_dockerfile",
+            return_value=apply_result,
+        ):
+            sandbox = Sandbox(context=context)
+
+        self.assertIs(sandbox.startup_command, startup_handle)
+        sandbox.kill()
+
+    def test_dockerfile_context_without_dispatched_command_has_no_startup_handle(self):
+        context = LocalDockerContext("FROM ubuntu:24.04\n")
+        for auto_start_cmd in (False, True):
+            with self.subTest(auto_start_cmd=auto_start_cmd):
+                apply_result = DockerfileApplyResult(
+                    start_cmd=None,
+                    startup_command=None,
+                    entrypoint=None,
+                    warnings=(),
+                )
+                with patch(
+                    "akernel_sdk._dockerfile_runner.apply_dockerfile",
+                    return_value=apply_result,
+                ):
+                    sandbox = Sandbox(context=context, auto_start_cmd=auto_start_cmd)
+                self.assertIsNone(sandbox.startup_command)
+                sandbox.kill()
+
+    def test_dockerfile_startup_dispatch_failure_terminates_and_closes_session(self):
+        startup_error = DockerfileBuildError(
+            "Failed to dispatch startup command",
+            instruction="CMD",
+        )
+        with patch(
+            "akernel_sdk._dockerfile_runner.apply_dockerfile",
+            side_effect=startup_error,
+        ):
+            with self.assertRaises(DockerfileBuildError) as raised:
+                Sandbox(
+                    context=LocalDockerContext('FROM ubuntu\nCMD ["server"]\n'),
+                    detached=True,
+                )
+
+        self.assertIs(raised.exception, startup_error)
+        self.session.terminate.assert_called_once_with()
+        self.session.close.assert_called_once_with()
+
+    def test_dockerfile_build_failure_terminates_and_closes_detached_session(self):
+        build_error = DockerfileBuildError("RUN failed")
+        with patch(
+            "akernel_sdk._dockerfile_runner.apply_dockerfile",
+            side_effect=build_error,
+        ):
+            with self.assertRaises(DockerfileBuildError) as raised:
+                Sandbox(
+                    context=LocalDockerContext("FROM ubuntu\nRUN false\n"),
+                    detached=True,
+                )
+
+        self.assertIs(raised.exception, build_error)
         self.session.terminate.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
