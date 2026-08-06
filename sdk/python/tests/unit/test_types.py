@@ -70,6 +70,17 @@ assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
                 "BackendNotInstalledError",
                 "UnsupportedBackendFeatureError",
                 "BackendOperationError",
+                "DockerContext",
+                "LocalDockerContext",
+                "parse_dockerfile",
+                "check_direct_launch",
+                "apply_dockerfile",
+                "ParsedDockerfile",
+                "DockerfileApplyResult",
+                "DockerfileCheckResult",
+                "DockerfileBuildError",
+                "DockerfileParseError",
+                "BuildInstruction",
             },
         )
         for removed in (

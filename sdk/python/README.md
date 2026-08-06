@@ -101,8 +101,94 @@ Sandbox(
     xpu: str | None = None,
     storage_mb: int | None = None,
     network_policy: NetworkPolicy | None = None,
+    context: DockerContext | None = None,
+    auto_start_cmd: bool = True,
+    build_run_timeout: int = 600,
 )
 ```
+
+### Launch a sandbox from a Dockerfile
+
+`image`, `rootfs`, and `context` are mutually exclusive. `Sandbox(context=...)`
+implements a deliberately narrow, direct-launch subset of Dockerfile syntax
+through the public `Sandbox`, `Commands`, and `Filesystem` facades. It needs no
+BuildKit, Docker daemon, or registry push.
+
+**`FROM` is rootfs-only.** The selected image supplies the sandbox root
+filesystem only. Its OCI `ENV`, `USER`, `WORKDIR`, `CMD`, and `ENTRYPOINT`
+configuration is not inherited. Declare every required runtime setting in the
+Dockerfile passed to `DockerContext`.
+
+Pre-check the Dockerfile before creating a sandbox. A check returning `False`
+means direct launch will fail closed; pre-build externally instead. This example
+creates one context instance, reports diagnostic warnings, launches it, and
+inspects the optional startup handle:
+
+```python
+from akernel_sdk import LocalDockerContext, Sandbox, check_direct_launch
+
+context = LocalDockerContext("Dockerfile", context_dir=".")
+check = check_direct_launch(context)
+for warning in check.warnings:
+    print(f"Dockerfile warning: {warning}")
+
+if check.direct_launchable:
+    with Sandbox(context=context, build_run_timeout=300) as sandbox:
+        startup = sandbox.startup_command
+        if startup is not None:
+            result = startup.wait(timeout=60)
+            print(result.exit_code, result.stderr)
+        # Perform the application's own health check here when it is long-lived.
+else:
+    image = build_image_externally("Dockerfile")
+    with Sandbox(image=image) as sandbox:
+        # An image launch does not auto-start its configured CMD or ENTRYPOINT.
+        sandbox.commands.run("/srv/app --serve", background=True)
+```
+
+`check_direct_launch()` is diagnostic and returns reason codes such as
+`multi_stage`, `remote_add`, `no_from`, `unsupported_instruction`, and
+`unsupported_syntax`. `Sandbox(context=...)` parses strictly, while
+`parse_dockerfile(strict=False)` is diagnostic only. `apply_dockerfile()` also
+rejects a parsed result containing unsupported syntax.
+
+| Supported direct-launch subset | Rejected and requires an external build |
+| --- | --- |
+| Exactly one literal `FROM`, optionally `AS alias`; shell-form `RUN` | Multiple stages, `COPY --from`, `FROM` flags or variables, and exec-form `RUN` |
+| Shell-form local `COPY` and `ADD` paths: files, directories, `.`, and wildcards; literal `--chown`; literal local tar extraction for `ADD` | JSON-form `COPY`/`ADD`, remote `ADD` URLs, `--chmod`, `--link`, unknown flags, or build-time variable expansion |
+| Literal `ENV`, absolute `WORKDIR`, literal `USER`, and `EXPOSE` metadata | Any `ARG`, relative `WORKDIR`, and `VOLUME`, `LABEL`, `HEALTHCHECK`, `SHELL`, `STOPSIGNAL`, `ONBUILD`, `MAINTAINER`, or unknown instructions |
+| Exec- or shell-form `CMD` and `ENTRYPOINT`, normalized and combined | — |
+
+A `DockerContext` exposes Dockerfile text plus context files. `LocalDockerContext`
+uses a local directory; custom contexts may implement the same abstraction.
+Before any sandbox operation, direct launch walks and validates the context
+manifest, applies root `.dockerignore` rules, excludes `Dockerfile` and
+`.dockerignore` from selection, plans every `COPY`/`ADD`, and materializes all
+selected files. Local context symbolic links are rejected, and paths and target
+collisions fail closed. `--chown` affects only files and directories created by
+the current instruction. Local tar `ADD` accepts only regular files and
+directories with safe paths. Remote `ADD` URLs are rejected; the SDK never
+fetches them. Secure local context opening requires platform support for
+directory-relative file descriptors and no-follow flags; unsupported platforms
+fail closed.
+
+Each launch executes `RUN`, `COPY`, and `ADD` again in a new sandbox. There is
+no snapshot or build cache. After instructions finish, the SDK polls **sandbox
+readiness** and dispatches the resolved `CMD`/`ENTRYPOINT` in the background.
+`Sandbox.startup_command` is a `CommandHandle | None`; use `wait()` for finite
+commands or `kill()` when needed. Construction confirms dispatch, not that an
+application remains running or passes a health check. Callers own
+application-specific readiness checks.
+
+For Dockerfiles outside this subset, or for build-once reuse, pre-build the
+image with your chosen build system and use `Sandbox(image=...)`. Then launch
+the desired command explicitly with `sandbox.commands.run(..., background=True)`;
+image configuration does not auto-start a process in this SDK path.
+
+Parsing uses [`dockerfile-parse`](https://github.com/containerbuildsystem/dockerfile-parse)
+(BSD-3-Clause), and context matching uses [`pathspec`](https://github.com/cpburnz/python-path-specification)
+(MIT). The value post-processing approach was informed by the
+[E2B Python SDK](https://github.com/e2b-dev/E2B) (MIT).
 
 ### Experimental GPU and writable storage
 
@@ -461,6 +547,7 @@ Maintained examples are under [`examples/`](./examples):
 - `basic_usage.py`
 - `command_stdin.py`
 - `custom_image.py`
+- `dockerfile_launch.py`
 - `gpu_sandbox.py`
 - `named_sandbox.py`
 - `network_policy.py`
