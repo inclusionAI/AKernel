@@ -104,6 +104,8 @@ spec:
             fieldRef:
               apiVersion: v1
               fieldPath: status.podIP
+        - name: SANDBOXD_IP_RANGE
+          value: {{ .Values.node.sandboxIPRange | quote }}
         {{- if .Values.monitoring.prometheusEndpoint }}
         - name: PROMETHEUS_ENDPOINT
           value: {{ .Values.monitoring.prometheusEndpoint | quote }}

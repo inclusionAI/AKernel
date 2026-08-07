@@ -23,6 +23,7 @@ TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 LITEBUS_DATA_KEY=""
+SANDBOXD_IP_RANGE=""
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
@@ -148,6 +149,26 @@ configure_auth() {
         --write-file "${TOKEN_FILE}" > /dev/null
 }
 
+configure_sandbox_network() {
+    SANDBOXD_IP_RANGE="$(awk '
+        /^\[plugin\.network\][[:space:]]*$/ { in_network = 1; next }
+        /^\[/ { in_network = 0 }
+        in_network && /^[[:space:]]*ip_range[[:space:]]*=/ {
+            value = $0
+            sub(/^[^=]*=[[:space:]]*/, "", value)
+            gsub(/["[:space:]]/, "", value)
+            print value
+            exit
+        }
+    ' "${CONFIG_DIR}/sandboxd_config.toml")"
+
+    if [[ -z "${SANDBOXD_IP_RANGE}" || "${SANDBOXD_IP_RANGE}" != */* ]]; then
+        log_error "[plugin.network].ip_range must be set to a CIDR in sandboxd_config.toml"
+        exit 1
+    fi
+    log_info "Using sandbox network range: ${SANDBOXD_IP_RANGE}"
+}
+
 # Stop and remove existing container
 cleanup_existing() {
     local container
@@ -271,6 +292,7 @@ start_node_container() {
         -e TRAEFIK_ENABLE_TLS="false" \
         -e ETCD_PORT="${ETCD_PORT}" \
         -e ETCD_PEER_PORT="${ETCD_PEER_PORT}" \
+        -e SANDBOXD_IP_RANGE="${SANDBOXD_IP_RANGE}" \
         -e NODE_NAME="$(hostname)" \
         -e POD_NAME=akernel-node-local \
         -e POD_NAMESPACE=default \
@@ -421,6 +443,7 @@ show_status() {
 check_prerequisites
 cleanup_existing
 configure_auth
+configure_sandbox_network
 ensure_image "${IMAGE}"
 ensure_image "${TRAEFIK_IMAGE}"
 configure_container_proxy

@@ -5,7 +5,6 @@
 # SPDX-License-Identifier: Apache-2.0
 ulimit -n 32768
 export YR_RUNTIME_BACKEND=sandboxd
-
 resolve_node_ip() {
     local default_device
     local node_ip
@@ -42,6 +41,11 @@ resolve_node_ip() {
 YR_NODE_IP="$(resolve_node_ip)"
 echo "Using ${YR_NODE_IP} as the YuanRong node address"
 
+YR_LOCAL_IP="${SANDBOXD_IP_RANGE%%/*}"
+if [ -z "${YR_LOCAL_IP}" ] || [ "${YR_LOCAL_IP}" = "${SANDBOXD_IP_RANGE}" ]; then
+    echo "SANDBOXD_IP_RANGE must be a CIDR such as 172.17.0.1/16" >&2
+    exit 1
+fi
 # Set enable_traefik_registry based on TRAEFIK_MODE
 if [ "${TRAEFIK_MODE:-etcd}" = "etcd" ]; then
     ENABLE_TRAEFIK_REGISTRY=${ENABLE_TRAEFIK_REGISTRY:-true}
@@ -60,6 +64,7 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
     fi
     /usr/bin/yr start --master \
         --ip_address "${YR_NODE_IP}" \
+        --local_ip "${YR_LOCAL_IP}" \
         --port_policy FIX \
         --enable_function_scheduler=false \
         --enable_faas_frontend=true \
@@ -108,6 +113,7 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
 else
     /usr/bin/yr start \
         --ip_address "${YR_NODE_IP}" \
+        --local_ip "${YR_LOCAL_IP}" \
         --port_policy FIX \
         --ds_node_timeout_s 30 \
         --ds_client_dead_timeout_s 60 \

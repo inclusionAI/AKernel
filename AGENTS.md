@@ -290,6 +290,13 @@ the sandbox bridge. YuanRong receives `INSTANCE_IP` in Kubernetes or the
 default-route interface address in standalone mode; `AKERNEL_NODE_IP` is the
 explicit override for multi-homed environments.
 
+Node deployments keep openYuanRong's in-node address aligned with sandboxd's
+network range. Kubernetes sets `node.sandboxIPRange` once and renders it into
+both sandboxd's `ip_range` and the `SANDBOXD_IP_RANGE` environment variable;
+standalone reads the same value from `sandboxd_config.toml` before starting
+the container. The YuanRong bootstrap passes the CIDR's first address to
+`yr start --local_ip`.
+
 The standalone sandboxd filestore is a loop-mounted XFS image under the
 bind-mounted `deploy/standalone/data/` directory. Explicit `storage_mb` quotas
 use this local-disk filestore; omitting `storage_mb` retains the configured

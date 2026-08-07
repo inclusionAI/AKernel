@@ -13,7 +13,7 @@ data:
     CPUQuota={{ .Values.node.config.resourceControl.cpuQuota | default "800%" }}
 
   sandboxd_config.toml: |
-{{ .Values.node.config.sandboxd.config | indent 4 }}
+{{ tpl .Values.node.config.sandboxd.config . | indent 4 }}
 
   registry.json: |
 {{ .Values.node.config.registry | toPrettyJson | indent 4 }}
