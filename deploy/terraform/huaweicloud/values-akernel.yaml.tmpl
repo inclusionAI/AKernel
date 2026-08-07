@@ -68,6 +68,7 @@ frontend:
 %{ endif ~}
 
 node:
+  sandboxIPRange: "172.17.0.1/16"
   image:
     repository: "${node_image_repository}"
     tag: "${node_image_tag}"
@@ -135,7 +136,7 @@ node:
         stream_server_port=""
 
         [plugin.network]
-        ip_range="172.17.0.1/16"
+        ip_range="{{ .Values.node.sandboxIPRange }}"
         nat_backend="${sandboxd_nat_backend}"
 
         [plugin.resource]

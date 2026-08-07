@@ -124,6 +124,10 @@ This will:
   default)
 - Print the Traefik container IP to use as `AKERNEL_SERVER_ADDRESS`
 
+`start.sh` reads `[plugin.network].ip_range` from
+`config/sandboxd_config.toml`, passes it into the node container, and uses its
+first address as openYuanRong's `yr start --local_ip` value.
+
 No host ports are published. On Linux, the host accesses Traefik directly
 through its Docker bridge IP.
 
