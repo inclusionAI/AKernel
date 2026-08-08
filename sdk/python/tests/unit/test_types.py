@@ -53,6 +53,7 @@ assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
                 "Sandbox",
                 "S3Config",
                 "Mount",
+                "NetworkPolicy",
                 "HttpReverseTunnel",
                 "CommandResult",
                 "CommandInfo",

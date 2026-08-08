@@ -55,6 +55,14 @@ later creation of `sandbox0` cannot change the advertised node address. Set
 `AKERNEL_NODE_IP` only when a multi-homed deployment requires an explicit
 override.
 
+The standalone configuration enables per-sandbox network ACLs. Its privileged
+node container can mount bpffs and manage the required eBPF TC filters. TCP
+and UDP port 53 on the sandbox bridge must remain free for sandboxd's managed
+DNS proxy. Before upgrading an existing standalone data directory to an
+ACL-enabled image, terminate its sandboxes and stop the old node cleanly;
+sandboxd refuses to initialize ACLs while pre-ACL sandboxes remain in its
+store.
+
 ## Directory Structure
 
 ```

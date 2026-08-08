@@ -36,6 +36,7 @@ from akernel_sdk.types import (
     EntryInfo,
     HttpReverseTunnel,
     Mount,
+    NetworkPolicy,
     S3Config,
 )
 
@@ -61,6 +62,7 @@ def _spec(**overrides):
         "node_id": None,
         "xpu": None,
         "storage_mb": None,
+        "network": None,
     }
     values.update(overrides)
     return SandboxSpec(**values)
@@ -278,6 +280,25 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(session.get_info().id, "default-worker")
         session.close()
         native.kill.assert_called_once_with()
+
+    def test_create_converts_network_policy_to_native_sdk_type(self):
+        native = MagicMock()
+        native.id = "default-worker"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        policy = NetworkPolicy.deny_dns("github.com", "*.github.com")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(_spec(network=policy))
+
+        network = sandbox_type.call_args.kwargs["network"]
+        self.assertIsInstance(network, openyuanrong_sandbox.yr_sandbox.NetworkPolicy)
+        self.assertFalse(network.block_network)
+        self.assertEqual(network.dns_blacklist, ("github.com", "*.github.com"))
+        session.close()
 
     def test_terminate_forces_deletion_of_detached_native_sandbox(self):
         native = MagicMock()

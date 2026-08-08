@@ -179,6 +179,7 @@ node:
         [plugin.network]
         ip_range="172.17.0.1/16"
         nat_backend="${sandboxd_nat_backend}"
+        enable_network_acl=true
 
         [plugin.resource]
         cgroup_cache_size=800

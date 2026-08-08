@@ -34,6 +34,27 @@ The node must support TC eBPF and bpffs. bpfnat does not manage host firewall
 policy, so custom host-network deployments must allow forwarding to and from
 the sandbox bridge when their `FORWARD` policy is `DROP`.
 
+### Network ACLs
+
+The bundled standalone, Helm, and Terraform sandboxd configurations enable
+per-sandbox network ACLs. A sandbox created without a policy remains on the
+unrestricted fast path. ACL nodes require Linux eBPF `SCHED_CLS`, TC
+`clsact`, supported hash and array maps, a writable bpffs at
+`/sys/fs/bpf` (or permission to mount one), and permission to load BPF
+programs and manage TC filters. TCP and UDP port 53 on the sandbox bridge
+must be free, and sandboxd must have at least one usable upstream nameserver.
+AKernel's node container is privileged so it can meet these requirements.
+
+Drain all sandboxes from a node before enabling ACLs or upgrading an existing
+deployment to a release that enables them. Sandboxd deliberately refuses to
+start ACL support when its store contains pre-ACL sandboxes, preventing a
+silent fail-open migration. Start new sandboxes only after the upgraded
+sandboxd is healthy.
+
+ACL enforcement is independent of the selected `iptables` or `bpfnat` NAT
+backend. DNS policies manage each sandbox's `/etc/resolv.conf`; a caller
+mount that owns that path is rejected while ACL support is enabled.
+
 `make config` is interactive by default. It writes:
 
 - `.akernel/default/config.env`

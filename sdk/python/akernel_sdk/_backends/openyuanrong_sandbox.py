@@ -327,7 +327,7 @@ class OpenYuanRongSandboxBackend:
         self._validate(spec)
         sandbox_type = yr_sandbox.Sandbox
         if spec.runtime == "kata" and spec.image is None and spec.rootfs is None:
-            # openyuanrong-sandbox 0.9.3 forwards the isolation runtime only
+            # openyuanrong-sandbox forwards the isolation runtime only
             # through an explicit rootfs. Keep this aligned with the actor
             # backend until frontend can override the service rootfs runtime.
             sandbox_type = _LocalRootfsSandbox
@@ -339,6 +339,12 @@ class OpenYuanRongSandboxBackend:
                 object=spec.rootfs.object,
                 access_key=spec.rootfs.access_key,
                 secret_key=spec.rootfs.secret_key,
+            )
+        network = None
+        if spec.network is not None:
+            network = yr_sandbox.NetworkPolicy(
+                block_network=spec.network.block_network,
+                dns_blacklist=spec.network.dns_blacklist,
             )
         mounts = [
             yr_sandbox.Mount(
@@ -390,6 +396,7 @@ class OpenYuanRongSandboxBackend:
                 node_id=spec.node_id,
                 xpu=spec.xpu,
                 storage_mb=spec.storage_mb,
+                network=network,
                 create_timeout=create_timeout,
             )
         except Exception as error:

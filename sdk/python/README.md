@@ -16,6 +16,7 @@ It supports two backends:
   - [Install and configure](#install-and-configure)
   - [Create a sandbox](#create-a-sandbox)
     - [Experimental GPU and writable storage](#experimental-gpu-and-writable-storage)
+    - [Network ACLs](#network-acls)
   - [Sandbox runtimes](#sandbox-runtimes)
   - [Commands](#commands)
   - [Filesystem](#filesystem)
@@ -99,6 +100,7 @@ Sandbox(
     *,
     xpu: str | None = None,
     storage_mb: int | None = None,
+    network: NetworkPolicy | None = None,
 )
 ```
 
@@ -128,6 +130,63 @@ disk-backed XFS filestore. When it is omitted, sandboxd retains its configured
 default 10 GiB memory-backed writable overlay. See
 [`examples/gpu_sandbox.py`](./examples/gpu_sandbox.py) and
 [`examples/storage_sandbox.py`](./examples/storage_sandbox.py).
+
+### Network ACLs
+
+Omit `network` to leave all sandbox networking unrestricted. An empty
+`NetworkPolicy()` is equivalent and is omitted from the creation request:
+
+```python
+from akernel_sdk import NetworkPolicy, Sandbox
+
+with Sandbox() as unrestricted:
+    print(unrestricted.commands.run("python3 -c 'import socket; "
+                                    "socket.getaddrinfo(\"github.com\", 443)'"))
+```
+
+Block all sandbox traffic except the YuanRong control proxy:
+
+```python
+with Sandbox(network=NetworkPolicy.block()) as sandbox:
+    result = sandbox.commands.run("printf 'control plane still works'")
+    assert result.exit_code == 0
+```
+
+Commands and lifecycle operations continue to work in block mode. The SDK
+also falls back from its direct filesystem data path to RuntimeRPC transfers,
+so file reads, writes, and copies keep working but bulk transfers can be
+slower.
+
+Deny conventional DNS lookups for exact names or leading `*.` suffix
+patterns:
+
+```python
+policy = NetworkPolicy.deny_dns("github.com", "*.github.com")
+with Sandbox(network=policy) as sandbox:
+    blocked = sandbox.commands.run(
+        "python3 -c 'import socket; socket.getaddrinfo(\"github.com\", 443)'"
+    )
+    assert blocked.exit_code != 0
+```
+
+An exact pattern matches only that name. For example, `github.com` does not
+match `api.github.com`, while `*.github.com` matches descendants but not
+the apex. Supply both when both should be denied. Patterns are normalized to
+lower case without a trailing dot; international names must use ASCII
+punycode.
+
+Network policies are fixed when a sandbox is created. `block_network` and
+`dns_blacklist` cannot be combined in the current SDK. DNS blacklists cover
+ordinary UDP and TCP DNS and return a refused response for blocked queries;
+DNS-over-HTTPS and connections to a known IP are outside their scope. The
+packet ACL is currently IPv4 and stateless.
+
+See [`examples/network_policy.py`](./examples/network_policy.py) for all
+three modes. Deployment nodes must have network ACL support enabled; the
+bundled standalone, Helm, and Terraform configurations enable it. Drain
+existing sandboxes before upgrading a node to an ACL-enabled sandboxd
+configuration, as described in the
+[deployment guide](../../deploy/README.md#network-acls).
 
 ## Sandbox runtimes
 
@@ -389,6 +448,7 @@ Maintained examples are under [`examples/`](./examples):
 - `custom_image.py`
 - `gpu_sandbox.py`
 - `named_sandbox.py`
+- `network_policy.py`
 - `pty.py`
 - `port_forwarding.py`
 - `reverse_tunnel.py`
@@ -425,3 +485,4 @@ not part of the default test suite.
 | `S3Config` | `endpoint`, `bucket`, `object`, optional credentials |
 | `Mount` | `target`, one source, and `type` |
 | `HttpReverseTunnel` | `target`, `reverse_port`, `listen_port`, `connect_timeout` |
+| `NetworkPolicy` | `block_network`, `dns_blacklist` |

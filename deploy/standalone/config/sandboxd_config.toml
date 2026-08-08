@@ -14,6 +14,7 @@ stream_server_port=""
 ip_range="10.88.0.1/16"
 # start.sh overrides this value when AKERNEL_NAT_BACKEND is set.
 nat_backend="iptables"
+enable_network_acl=true
 # The all-in-one frontend shares this network namespace with sandboxd and
 # reaches forwarded sandbox ports through the node-local address.
 enable_local_dnat=true

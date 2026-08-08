@@ -464,6 +464,7 @@ node:
         [plugin.network]
         ip_range="172.17.0.1/16"
         nat_backend="iptables"
+        enable_network_acl=true
 
         [plugin.resource]
         cgroup_cache_size=800

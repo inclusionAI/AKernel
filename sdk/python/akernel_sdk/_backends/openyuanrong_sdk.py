@@ -290,6 +290,7 @@ class OpenYuanRongSdkBackend:
             node_id=spec.node_id,
             xpu=spec.xpu,
             storage_mb=spec.storage_mb,
+            network=spec.network,
         )
         try:
             instance = _impl.create_instance(

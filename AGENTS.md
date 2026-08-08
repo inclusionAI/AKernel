@@ -10,9 +10,11 @@ AKernel provides cluster-backed remote sandbox environments for agents and
 developer workflows. The current public user-facing surface is the Python
 `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI.
 The default sandbox runtime is gVisor runsc; callers may select Kata
-Containers when the cluster has a KVM-capable node. Experimental whole-device
-NVIDIA GPU and configurable writable-storage requests currently require
-runsc.
+Containers when the cluster has a KVM-capable node. Creation-time network
+policies support unrestricted networking, blocking all traffic except the
+YuanRong control proxy, or denying exact and leading-wildcard DNS names.
+Experimental whole-device NVIDIA GPU and configurable writable-storage
+requests currently require runsc.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -170,6 +172,15 @@ runsc; a Kata request fails scheduling with a no-resource error when no
 eligible node exists. Do not treat a configured runtime as an advertised
 runtime.
 
+The bundled sandboxd configuration enables per-sandbox network ACLs.
+ACL-capable nodes require eBPF `SCHED_CLS`, TC `clsact`, writable bpffs,
+permission to load BPF programs and manage TC filters, and free TCP/UDP port
+53 on the sandbox bridge. Drain existing sandboxes before enabling ACLs or
+upgrading a node from a pre-ACL configuration; sandboxd refuses to initialize
+ACLs when old sandbox records remain. A sandbox without a network policy stays
+unrestricted. See `deploy/README.md` for deployment requirements and
+`sdk/python/README.md` for API limits.
+
 Dragonfly distribution is optional and disabled by default. Enable it during
 profile generation with `make config INSTALL_DRAGONFLY=true`. This installs the
 pinned public chart and, by default, creates three seed nodes and one server
@@ -255,6 +266,15 @@ Request experimental gVisor GPU and disk-backed writable storage resources:
 ```python
 with Sandbox(xpu="gpu:l20:1", storage_mb=20 * 1024) as sb:
     print(sb.commands.run("nvidia-smi -L").stdout)
+```
+
+Configure a creation-time network policy:
+
+```python
+from akernel_sdk import NetworkPolicy, Sandbox
+
+with Sandbox(network=NetworkPolicy.block()) as sb:
+    print(sb.commands.run("echo control-plane-access").stdout)
 ```
 
 Required environment:

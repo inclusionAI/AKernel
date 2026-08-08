@@ -20,6 +20,16 @@ with Sandbox(cpu=2000, memory=4096) as sb:
     print(result.stdout)
 ```
 
+Creation-time network policies can either preserve unrestricted networking,
+block all traffic except the YuanRong control proxy, or deny selected DNS
+names:
+
+```python
+from akernel_sdk import NetworkPolicy
+
+sandbox = Sandbox(network=NetworkPolicy.deny_dns("github.com", "*.github.com"))
+```
+
 ### One-Click Deployment: From Laptop to Multi-Cloud
 
 One all-in-one image, multiple deployment targets — deploy in under 10 minutes:
