@@ -1,0 +1,77 @@
+- service: defaultservice # Service name. Required.
+  kind: yrlib # Function type. Required. Process deployment supports yrlib only.
+  description: this is the default service # Optional service description.
+  functions: # Function definitions. Required.
+    rrt:
+      runtime: rust
+      rootfs:
+        runtime: runsc
+        type: local
+        path: /home/yuanrong/yr-runtime-rootfs.img
+        readonly: false
+      bootstrap:
+        type: erofs
+        # FunctionSystem mounts this runtime bundle at /__yuanrong. It remains
+        # available when a sandbox request overrides the default rootfs.
+        root: "/home/yuanrong/yr-runtime-rootfs.img"
+        entrypoint: "/__yuanrong/usr/bin/tini-static -- /__yuanrong/usr/local/bin/rrt-runtime"
+    py311:
+      runtime: python3.11
+      rootfs:
+        runtime: runsc
+        type: local
+        path: /home/yuanrong/yr-runtime-rootfs.img
+        readonly: false
+        mountpoint: /var/task/code
+      bootstrap:
+        type: erofs
+        root: "/home/yuanrong/yr-runtime-rootfs.img"
+        entrypoint: "/__yuanrong/usr/bin/tini-static -- sh /__yuanrong/home/entryfile.sh"
+    py310:
+      runtime: python3.10
+      rootfs:
+        runtime: runsc
+        type: local
+        path: /home/yuanrong/yr-runtime-rootfs.img
+        readonly: false
+        mountpoint: /var/task/code
+      bootstrap:
+        type: erofs
+        root: "/home/yuanrong/yr-runtime-rootfs.img"
+        entrypoint: "/__yuanrong/usr/bin/tini-static -- sh /__yuanrong/home/entryfile.sh"
+    py312:
+      runtime: python3.12
+      rootfs:
+        runtime: runsc
+        type: local
+        path: /home/yuanrong/yr-runtime-rootfs.img
+        readonly: false
+        mountpoint: /var/task/code
+      bootstrap:
+        type: erofs
+        root: "/home/yuanrong/yr-runtime-rootfs.img"
+        entrypoint: "/__yuanrong/usr/bin/tini-static -- sh /__yuanrong/home/entryfile.sh"
+    py313:
+      runtime: python3.13
+      rootfs:
+        runtime: runsc
+        type: local
+        path: /home/yuanrong/yr-runtime-rootfs.img
+        readonly: false
+        mountpoint: /var/task/code
+      bootstrap:
+        type: erofs
+        root: "/home/yuanrong/yr-runtime-rootfs.img"
+        entrypoint: "/__yuanrong/usr/bin/tini-static -- sh /__yuanrong/home/entryfile.sh"
+    py314:
+      runtime: python3.14
+      rootfs:
+        runtime: runsc
+        type: local
+        path: /home/yuanrong/yr-runtime-rootfs.img
+        readonly: false
+        mountpoint: /var/task/code
+      bootstrap:
+        type: erofs
+        root: "/home/yuanrong/yr-runtime-rootfs.img"
+        entrypoint: "/__yuanrong/usr/bin/tini-static -- sh /__yuanrong/home/entryfile.sh"

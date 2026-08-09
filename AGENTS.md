@@ -102,6 +102,7 @@ deployment entrypoint and environment.
 
 ```bash
 make build
+make build RUNTIME_PROFILE=python
 ```
 
 For a build that will be pushed and deployed, set `IMAGE_REPOSITORY` and
@@ -111,10 +112,12 @@ The build creates only the selected image reference; it does not add a second
 `akernel-all-in-one` alias. `make push` pushes that selected reference directly.
 
 The build helper performs two Docker builds. `builder/runtime.Dockerfile`
-assembles the Python runtimes, installs the pinned openYuanRong RRT binary,
-and creates `yr-runtime-rootfs.img`.
-`builder/node.Dockerfile` then compiles the node components and produces the
-AKernel all-in-one image using that runtime image.
+creates `yr-runtime-rootfs.img`; the default `rrt` profile contains the
+pinned openYuanRong RRT binary without Python. Set
+`RUNTIME_PROFILE=python` to include the optional Python 3.10 through 3.14
+runtimes and `openyuanrong_sdk`. `builder/node.Dockerfile` then compiles the
+node components and produces the AKernel all-in-one image using the selected
+runtime image and its matching service configuration.
 
 Initialize submodules with `git submodule update --init --recursive` before
 building. The all-in-one image builds `sandboxd` and `sbox` from

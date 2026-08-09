@@ -9,8 +9,65 @@ ARG PYTHON_311_VERSION=3.11.13
 ARG PYTHON_312_VERSION=3.12.11
 ARG PYTHON_313_VERSION=3.13.5
 ARG PYTHON_314_VERSION=3.14.6
+ARG OPEN_YR_VERSION=0.9.3
 
-FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS python-runtime-base
+FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-download
+
+ARG OPEN_YR_VERSION
+ARG RRT_RUNTIME_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/rrt-runtime-amd64
+ARG RRT_RUNTIME_SHA256=89eb9271233e79f97b42b7b12cfd65e81404eb75b49d0e7a0b1ebe4977aae305
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    curl -fSL --retry 5 --retry-delay 2 --retry-all-errors \
+        -o /rrt-runtime "${RRT_RUNTIME_URL}"; \
+    echo "${RRT_RUNTIME_SHA256}  /rrt-runtime" | sha256sum -c -; \
+    chmod 0755 /rrt-runtime
+
+FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-runtime-rootfs
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgcc-s1 \
+        tini && \
+    rm -rf /var/lib/apt/lists/* && \
+    cp /usr/bin/tini /usr/bin/tini-static && \
+    /usr/bin/tini-static --version
+
+RUN mkdir -p /var/task/code /__yuanrong && \
+    ln -sfn /home /__yuanrong/home && \
+    ln -sfn /usr /__yuanrong/usr && \
+    ln -sfn /opt /__yuanrong/opt && \
+    ln -sfn /root /__yuanrong/root
+
+COPY --from=rrt-download /rrt-runtime /usr/local/bin/rrt-runtime
+
+FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS erofs-builder-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends erofs-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+FROM erofs-builder-base AS rrt-erofs-builder
+
+COPY --from=rrt-runtime-rootfs / /rootfs
+RUN mkfs.erofs -E noinline_data /yr-runtime-rootfs.img /rootfs && \
+    fsck.erofs /yr-runtime-rootfs.img
+
+FROM scratch AS runtime-rrt
+COPY --from=rrt-erofs-builder /yr-runtime-rootfs.img /yr-runtime-rootfs.img
+LABEL org.akernel.runtime.profile="rrt"
+
+FROM rrt-runtime-rootfs AS python-runtime-rootfs
 
 ARG UV_VERSION
 ARG PYTHON_310_VERSION
@@ -18,19 +75,21 @@ ARG PYTHON_311_VERSION
 ARG PYTHON_312_VERSION
 ARG PYTHON_313_VERSION
 ARG PYTHON_314_VERSION
+ARG OPEN_YR_VERSION
+ARG FASTAPI_VERSION=0.138.0
+ARG PYDANTIC_VERSION=2.13.4
+ARG UVICORN_VERSION=0.49.0
+ARG PIP_INDEX_URL=https://pypi.org/simple
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    UV_CACHE_DIR=/tmp/uv-cache \
+ENV UV_CACHE_DIR=/tmp/uv-cache \
     UV_HTTP_TIMEOUT=120 \
     UV_PYTHON_INSTALL_DIR=/opt/uv-python \
-    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/usr/local/lib \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates \
         curl \
         libbz2-1.0 \
         libffi8 \
@@ -47,6 +106,7 @@ RUN apt-get update && \
 RUN python3 -m pip install \
         --break-system-packages \
         --no-cache-dir \
+        --index-url "${PIP_INDEX_URL}" \
         --timeout 120 \
         --retries 10 \
         "uv==${UV_VERSION}"
@@ -75,146 +135,24 @@ RUN set -eux; \
     done; \
     rm -rf "${UV_CACHE_DIR}"
 
-FROM python-runtime-base AS runtime-rootfs
-
-ARG OPEN_YR_VERSION=0.9.3
-ARG FASTAPI_VERSION=0.138.0
-ARG PYDANTIC_VERSION=2.13.4
-ARG UVICORN_VERSION=0.49.0
-ARG PIP_INDEX_URL=https://pypi.org/simple
-ARG PYTHON_310_VERSION
-ARG PYTHON_311_VERSION
-ARG PYTHON_312_VERSION
-ARG PYTHON_313_VERSION
-ARG PYTHON_314_VERSION
-
-RUN mkdir -p /var/task/code /__yuanrong && \
-    ln -sfn /home /__yuanrong/home && \
-    ln -sfn /usr /__yuanrong/usr && \
-    ln -sfn /opt /__yuanrong/opt && \
-    ln -sfn /root /__yuanrong/root
-
 RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends tini; \
-    rm -rf /var/lib/apt/lists/*; \
-    cp /usr/bin/tini /usr/bin/tini-static; \
-    /usr/bin/tini-static --version
-
-ARG RRT_RUNTIME_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/rrt-runtime-amd64
-ARG RRT_RUNTIME_SHA256=89eb9271233e79f97b42b7b12cfd65e81404eb75b49d0e7a0b1ebe4977aae305
-
-RUN set -eux; \
-    curl -fSL --retry 5 --retry-delay 2 --retry-all-errors \
-        -o /tmp/rrt-runtime "${RRT_RUNTIME_URL}"; \
-    echo "${RRT_RUNTIME_SHA256}  /tmp/rrt-runtime" | sha256sum -c -; \
-    install -m 0755 /tmp/rrt-runtime /usr/local/bin/rrt-runtime; \
-    rm -f /tmp/rrt-runtime
-
-RUN set -eux; \
-    py="3.10"; version="${PYTHON_310_VERSION}"; \
-    attempt=1; \
-    while true; do \
-        uv pip install \
-            --no-cache-dir \
-            --index-url "${PIP_INDEX_URL}" \
-            --python "/opt/venv-py${py}/bin/python" \
-            "fastapi==${FASTAPI_VERSION}" \
-            "pydantic==${PYDANTIC_VERSION}" \
-            "uvicorn==${UVICORN_VERSION}" \
-            "openyuanrong_sdk==${OPEN_YR_VERSION}" && break; \
-        if [ "${attempt}" -ge 3 ]; then exit 1; fi; \
-        sleep $((attempt * 5)); \
-        attempt=$((attempt + 1)); \
+    for py in 3.10 3.11 3.12 3.13 3.14; do \
+        attempt=1; \
+        while true; do \
+            uv pip install \
+                --no-cache-dir \
+                --index-url "${PIP_INDEX_URL}" \
+                --python "/opt/venv-py${py}/bin/python" \
+                "fastapi==${FASTAPI_VERSION}" \
+                "pydantic==${PYDANTIC_VERSION}" \
+                "uvicorn==${UVICORN_VERSION}" \
+                "openyuanrong_sdk==${OPEN_YR_VERSION}" && break; \
+            if [ "${attempt}" -ge 3 ]; then exit 1; fi; \
+            sleep $((attempt * 5)); \
+            attempt=$((attempt + 1)); \
+        done; \
     done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
-    rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
-
-RUN set -eux; \
-    py="3.11"; version="${PYTHON_311_VERSION}"; \
-    attempt=1; \
-    while true; do \
-        uv pip install \
-            --no-cache-dir \
-            --index-url "${PIP_INDEX_URL}" \
-            --python "/opt/venv-py${py}/bin/python" \
-            "fastapi==${FASTAPI_VERSION}" \
-            "pydantic==${PYDANTIC_VERSION}" \
-            "uvicorn==${UVICORN_VERSION}" \
-            "openyuanrong_sdk==${OPEN_YR_VERSION}" && break; \
-        if [ "${attempt}" -ge 3 ]; then exit 1; fi; \
-        sleep $((attempt * 5)); \
-        attempt=$((attempt + 1)); \
-    done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
-    rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
-
-RUN set -eux; \
-    py="3.12"; version="${PYTHON_312_VERSION}"; \
-    attempt=1; \
-    while true; do \
-        uv pip install \
-            --no-cache-dir \
-            --index-url "${PIP_INDEX_URL}" \
-            --python "/opt/venv-py${py}/bin/python" \
-            "fastapi==${FASTAPI_VERSION}" \
-            "pydantic==${PYDANTIC_VERSION}" \
-            "uvicorn==${UVICORN_VERSION}" \
-            "openyuanrong_sdk==${OPEN_YR_VERSION}" && break; \
-        if [ "${attempt}" -ge 3 ]; then exit 1; fi; \
-        sleep $((attempt * 5)); \
-        attempt=$((attempt + 1)); \
-    done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
-    rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
-
-RUN set -eux; \
-    py="3.13"; version="${PYTHON_313_VERSION}"; \
-    attempt=1; \
-    while true; do \
-        uv pip install \
-            --no-cache-dir \
-            --index-url "${PIP_INDEX_URL}" \
-            --python "/opt/venv-py${py}/bin/python" \
-            "fastapi==${FASTAPI_VERSION}" \
-            "pydantic==${PYDANTIC_VERSION}" \
-            "uvicorn==${UVICORN_VERSION}" \
-            "openyuanrong_sdk==${OPEN_YR_VERSION}" && break; \
-        if [ "${attempt}" -ge 3 ]; then exit 1; fi; \
-        sleep $((attempt * 5)); \
-        attempt=$((attempt + 1)); \
-    done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
-    rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
-
-RUN set -eux; \
-    py="3.14"; version="${PYTHON_314_VERSION}"; \
-    attempt=1; \
-    while true; do \
-        uv pip install \
-            --no-cache-dir \
-            --index-url "${PIP_INDEX_URL}" \
-            --python "/opt/venv-py${py}/bin/python" \
-            "fastapi==${FASTAPI_VERSION}" \
-            "pydantic==${PYDANTIC_VERSION}" \
-            "uvicorn==${UVICORN_VERSION}" \
-            "openyuanrong_sdk==${OPEN_YR_VERSION}" && break; \
-        if [ "${attempt}" -ge 3 ]; then exit 1; fi; \
-        sleep $((attempt * 5)); \
-        attempt=$((attempt + 1)); \
-    done; \
-    ln -sfn \
-        "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
-        "/opt/python${py}"; \
-    rm -rf "${UV_CACHE_DIR:-/tmp/uv-cache}"
+    rm -rf "${UV_CACHE_DIR}"
 
 COPY ./builder/scripts/entryfile.sh /home/entryfile.sh
 RUN set -eux; \
@@ -224,17 +162,12 @@ RUN set -eux; \
             "/opt/venv-py${py}/lib/python${py}/site-packages"; \
     done
 
-FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS erofs-builder
+FROM erofs-builder-base AS python-erofs-builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends erofs-utils && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY --from=runtime-rootfs / /rootfs
+COPY --from=python-runtime-rootfs / /rootfs
 RUN mkfs.erofs -E noinline_data /yr-runtime-rootfs.img /rootfs && \
     fsck.erofs /yr-runtime-rootfs.img
 
-FROM scratch
-COPY --from=erofs-builder /yr-runtime-rootfs.img /yr-runtime-rootfs.img
+FROM scratch AS runtime-python
+COPY --from=python-erofs-builder /yr-runtime-rootfs.img /yr-runtime-rootfs.img
+LABEL org.akernel.runtime.profile="python"

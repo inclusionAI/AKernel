@@ -4,6 +4,7 @@
 
 ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
+ARG AKERNEL_RUNTIME_PROFILE=rrt
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.9.3
@@ -90,6 +91,7 @@ COPY ./src/distill-fs/ ./
 RUN cargo build --locked --release --bin distill_fs
 
 FROM ${AKERNEL_NODE_BASE_IMAGE}
+ARG AKERNEL_RUNTIME_PROFILE
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
 ARG OPEN_YR_VERSION
@@ -256,7 +258,16 @@ RUN chmod 0755 \
         /usr/local/bin/ensure-component-cert \
         /usr/local/bin/sandboxd-network-prepare
 
-COPY ./builder/config/yr_services.yaml ${YR_INSTALLATION_DIR}/deploy/process/services.yaml
+COPY ./builder/config/yr_services.yaml /tmp/yr_services_rrt.yaml
+COPY ./builder/config/yr_services_python.yaml /tmp/yr_services_python.yaml
+RUN set -eux; \
+    case "${AKERNEL_RUNTIME_PROFILE}" in \
+      rrt) services=/tmp/yr_services_rrt.yaml ;; \
+      python) services=/tmp/yr_services_python.yaml ;; \
+      *) echo "unsupported AKERNEL_RUNTIME_PROFILE: ${AKERNEL_RUNTIME_PROFILE}" >&2; exit 1 ;; \
+    esac; \
+    install -D -m 0644 "${services}" ${YR_INSTALLATION_DIR}/deploy/process/services.yaml; \
+    rm -f /tmp/yr_services_rrt.yaml /tmp/yr_services_python.yaml
 
 RUN mkdir -p ${YR_INSTALLATION_DIR}/metrics ${YR_INSTALLATION_DIR}/trace
 COPY ./builder/config/otel-collector-config.yaml ${YR_INSTALLATION_DIR}/otel_config.yaml
@@ -283,7 +294,8 @@ RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INS
     systemctl enable yuanrong.service
 
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
-      org.opencontainers.image.revision="${AKERNEL_REVISION}"
+      org.opencontainers.image.revision="${AKERNEL_REVISION}" \
+      org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}"
 
 ENV YR_LOG_PATH=${YR_INSTALLATION_DIR}/logs
 STOPSIGNAL SIGRTMIN+3

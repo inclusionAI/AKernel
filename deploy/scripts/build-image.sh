@@ -14,6 +14,7 @@ repository=""
 tag=""
 env_name=""
 runtime_image=""
+runtime_profile="${RUNTIME_PROFILE:-rrt}"
 gvisor_release=""
 gvisor_release_base_url=""
 open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
@@ -78,6 +79,10 @@ while [[ $# -gt 0 ]]; do
       runtime_image="$2"
       shift 2
       ;;
+    --runtime-profile)
+      runtime_profile="$2"
+      shift 2
+      ;;
     --gvisor-release)
       gvisor_release="$2"
       shift 2
@@ -103,6 +108,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "${runtime_profile}" in
+  rrt|python) ;;
+  *) die "unsupported runtime profile: ${runtime_profile}; expected rrt or python" ;;
+esac
 
 require_cmd docker
 
@@ -146,15 +156,17 @@ if [[ "${print_component_versions}" == "1" ]]; then
   exit 0
 fi
 
-info "building ${runtime_image}"
+info "building ${runtime_image} with runtime profile ${runtime_profile}"
 docker build \
   -f builder/runtime.Dockerfile \
+  --target "runtime-${runtime_profile}" \
   -t "${runtime_image}" \
   .
 
 info "building ${all_in_one_image}"
 node_build_args=(
   --build-arg "AKERNEL_RUNTIME_IMAGE=${runtime_image}"
+  --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"
 )
