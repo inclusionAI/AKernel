@@ -58,7 +58,7 @@ etcd:
     runAsUser: 0
     dataUser: 1001
   image:
-    repository: public.ecr.aws/bitnami/etcd
+    repository: akerneldev/etcd
     tag: 3.6.8
     pullPolicy: IfNotPresent
   resources:

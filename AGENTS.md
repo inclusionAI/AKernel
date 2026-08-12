@@ -31,7 +31,7 @@ tunnels. The project overview and deployment quick start are in
 - `src/yuanrong/` - pinned openYuanRong mirror checkout, including its
   recursive component submodules.
 - `builder/` - Dockerfiles, service configs, runtime rootfs build, and image
-  entrypoint scripts for the public all-in-one image.
+  entrypoint scripts for the public all-in-one and etcd images.
 - `deploy/` - Helm charts, standalone scripts, Terraform modules, and
   deployment helper scripts.
 - `assets/` - static images used by the root README.
@@ -108,8 +108,18 @@ make build RUNTIME_PROFILE=python
 For a build that will be pushed and deployed, set `IMAGE_REPOSITORY` and
 `IMAGE_TAG` when creating the deployment profile. A one-off `IMAGE_TAG`
 override on `make build` does not update the profile consumed by `make push`.
-The build creates only the selected image reference; it does not add a second
-`akernel-all-in-one` alias. `make push` pushes that selected reference directly.
+The build creates only the selected all-in-one image reference; it does not add
+a second `akernel-all-in-one` alias. `make push` also builds or mirrors the
+profile's etcd and Traefik internal-stats BusyBox images, then pushes those
+three images. It does not mirror Traefik itself, monitoring, or Dragonfly.
+
+The bundled Helm chart uses `akerneldev/etcd:3.6.8`, which is built from the
+official etcd binaries plus an Alpine runtime layer. The shell and UID 1001 are
+part of the chart contract: both the volume-permissions init container and the
+etcd container execute `/bin/sh`, and `/etcd` is owned by UID 1001 after the
+init container prepares the mounted volume.
+`make push` builds this image and pushes it, BusyBox, and the all-in-one image
+to the repositories recorded in the deployment profile.
 
 The build helper performs two Docker builds. `builder/runtime.Dockerfile`
 creates `yr-runtime-rootfs.img`; the default `rrt` profile contains the

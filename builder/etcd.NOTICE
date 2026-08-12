@@ -1,0 +1,4 @@
+AKernel etcd image
+
+This image redistributes the etcd binaries from https://github.com/etcd-io/etcd.
+etcd is licensed under the Apache License, Version 2.0.

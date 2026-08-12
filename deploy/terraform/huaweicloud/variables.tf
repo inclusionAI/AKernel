@@ -409,7 +409,7 @@ variable "iam_litebus_data_key" {
 variable "etcd_image_repository" {
   type        = string
   description = "Image repository for etcd."
-  default     = "public.ecr.aws/bitnami/etcd"
+  default     = "akerneldev/etcd"
 }
 
 variable "etcd_image_tag" {

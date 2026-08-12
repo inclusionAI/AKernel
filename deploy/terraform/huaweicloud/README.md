@@ -76,9 +76,11 @@ are enabled. Its generated administrator password is stored at
 ## Images
 
 Master, frontend, and node use the same configured AKernel all-in-one image.
-etcd, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox use pinned official
-public images by default. Use the component image variables or
-`monitor_image_registry` only when the cluster requires private mirrors.
+etcd uses the AKernel-maintained `akerneldev/etcd:3.6.8` image. Traefik,
+Grafana, Prometheus, Loki, Tempo, and BusyBox use pinned upstream public images
+by default. The guided make flow derives sibling etcd and BusyBox mirror
+repositories from the all-in-one image repository; direct Terraform users can
+set the component image variables or `monitor_image_registry` explicitly.
 
 ## Optional components
 

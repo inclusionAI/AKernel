@@ -151,6 +151,12 @@ fsync enabled and uses persistent storage by default. Production environments
 that require etcd high availability should point AKernel at an externally
 managed multi-member etcd cluster instead of increasing `etcd.replicas`.
 
+The default `akerneldev/etcd:3.6.8` image copies the official etcd binaries
+into an Alpine runtime. This preserves `/bin/sh` for the chart's init and main
+container commands and runs etcd as UID 1001, matching the persistent-volume
+ownership configured by the chart. The image working directory and the chart's
+data directory are both `/etcd`.
+
 The core chart defaults master, frontend, and node to the same all-in-one image:
 
 ```yaml
@@ -268,10 +274,25 @@ through its own LoadBalancer when `install_monitor=true`. Set
 `install_dragonfly=true` to install the pinned official Dragonfly chart and
 inject its seed-client proxy into the node runtime configuration.
 
-Only the AKernel all-in-one image is pushed to the registry selected by
-`make config`. etcd, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox use
-their pinned official public images by default. Set the per-component image
-overrides when a private cluster requires mirrored third-party images.
+`make push` pushes the all-in-one image plus the etcd and Traefik internal-stats
+BusyBox images to the image namespace selected by `make config`. For example,
+`registry.example.com/akernel/all-in-one:<tag>` produces sibling repositories
+`registry.example.com/akernel/etcd:3.6.8` and
+`registry.example.com/akernel/busybox:1.37.0-musl`. Monitoring and Dragonfly
+images remain separate; set their registry overrides when private mirrors are
+required.
+
+> **Release note.** When `IMAGE_REPOSITORY` points at the public
+> `akerneldev/all-in-one` namespace (the default for users who consume AKernel's
+> published images instead of mirroring), `make config` writes
+> `akerneldev/etcd:3.6.8` and `akerneldev/busybox:1.37.0-musl` into the profile.
+> Both are release artifacts: a release that ships a new all-in-one tag must
+> also run `make push` so these sibling repositories exist, otherwise etcd or
+> the Traefik `/internal-stats` sidecar will fail to pull with
+> `ImagePullBackOff`. `make push` pushes the already-built all-in-one first,
+> then prepares and pushes the dependency images, so a build-host failure to
+> reach `gcr.io`/Docker Hub for the upstream etcd/busybox sources no longer
+> blocks the primary image.
 
 ## Directory Layout
 

@@ -10,6 +10,51 @@ permissions:
   contents: read
 
 jobs:
+  etcd-image-smoke:
+    name: etcd image smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build etcd image
+        run: |
+          docker build \
+            -f builder/etcd.Dockerfile \
+            -t akernel-etcd-ci:3.6.8 \
+            .
+
+      - name: Verify chart runtime contract
+        run: |
+          docker run --rm --entrypoint /bin/sh akernel-etcd-ci:3.6.8 -ec '
+            test "$(id -u)" = 1001
+            test "$(pwd)" = /etcd
+            test -w /etcd
+            command -v etcd
+            command -v etcdctl
+            command -v etcdutl
+          '
+          volume="akernel-etcd-smoke-${GITHUB_RUN_ID}"
+          trap 'docker volume rm -f "${volume}" >/dev/null 2>&1 || true' EXIT
+          docker volume create "${volume}" >/dev/null
+          docker run --rm --user 0:0 --entrypoint /bin/sh \
+            -v "${volume}:/etcd" akernel-etcd-ci:3.6.8 -ec '
+              mkdir -p /etcd
+              chown -R 1001:1001 /etcd
+              chmod 0700 /etcd
+            '
+          docker run --rm --entrypoint /bin/sh \
+            -v "${volume}:/etcd" akernel-etcd-ci:3.6.8 -ec '
+              test "$(id -u)" = 1001
+              test "$(stat -c %u:%g /etcd)" = 1001:1001
+              test "$(stat -c %a /etcd)" = 700
+              touch /etcd/.write-test
+              rm /etcd/.write-test
+            '
+          docker run --rm akernel-etcd-ci:3.6.8 --version
+
   sdk-unit-tests:
     name: Python SDK unit tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -63,3 +108,25 @@ jobs:
         run: |
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           make deploy-script-check
+
+      - name: Reject stale image push profiles
+        run: |
+          profile=".akernel/ci-stale-image-profile"
+          mkdir -p "${profile}"
+          printf '%s\n' \
+            'IMAGE_REPOSITORY=example.invalid/akernel/all-in-one' \
+            'IMAGE_TAG=test' \
+            > "${profile}/config.env"
+
+          set +e
+          output="$(./deploy/scripts/push-image.sh \
+            --vendor aliyun \
+            --env ci-stale-image-profile 2>&1)"
+          status=$?
+          set -e
+
+          test "${status}" -ne 0
+          case "${output}" in
+            *"missing dependency image settings"*) ;;
+            *) printf '%s\n' "${output}" >&2; exit 1 ;;
+          esac

@@ -195,11 +195,11 @@ locals {
     auths = { for host, cred in var.registry_auths : host => { auth = base64encode("${cred.username}:${cred.password}") } }
   }
 
-  etcd_image_repo              = length(var.etcd_image_repository) > 0 ? var.etcd_image_repository : "public.ecr.aws/bitnami/etcd"
+  etcd_image_repo              = length(var.etcd_image_repository) > 0 ? var.etcd_image_repository : "akerneldev/etcd"
   master_image_repo            = length(var.master_image_repository) > 0 ? var.master_image_repository : "${local.acr_registry}/all-in-one"
   node_image_repo              = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
   traefik_image_repo           = length(var.traefik_image_repository) > 0 ? var.traefik_image_repository : "traefik"
-  traefik_internal_stats_image = length(var.traefik_internal_stats_image) > 0 ? var.traefik_internal_stats_image : "${local.acr_registry}/busybox:1.37.0-musl"
+  traefik_internal_stats_image = length(var.traefik_internal_stats_image) > 0 ? var.traefik_internal_stats_image : "busybox:1.37.0-musl"
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
     acr_registry                      = local.acr_registry
