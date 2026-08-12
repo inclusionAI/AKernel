@@ -218,8 +218,9 @@ if [[ "${image_repository}" != */* ]]; then
 fi
 image_namespace="${image_repository%/*}"
 etcd_image_repository="${image_namespace}/etcd"
-etcd_image_tag="3.6.8"
+etcd_image_tag="v3.6.8"
 traefik_internal_stats_image="${image_namespace}/busybox:1.37.0-musl"
+etcd_volume_permissions_image="${traefik_internal_stats_image}"
 set_or_prompt install_monitor "Install monitor chart (true/false)" "true" "${install_monitor_override}"
 set_or_prompt install_dragonfly "Install Dragonfly and dedicated node pools (true/false)" "false" "${install_dragonfly_override}"
 set_or_prompt grafana_public_access "Expose Grafana LoadBalancer (true/false)" "true" "${grafana_public_access_override}"
@@ -322,6 +323,7 @@ node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
 etcd_image_repository   = "${etcd_image_repository}"
 etcd_image_tag          = "${etcd_image_tag}"
+etcd_volume_permissions_image = "${etcd_volume_permissions_image}"
 iam_litebus_data_key    = "${iam_seed}"
 
 frontend_enabled  = true
@@ -379,6 +381,7 @@ node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
 etcd_image_repository   = "${etcd_image_repository}"
 etcd_image_tag          = "${etcd_image_tag}"
+etcd_volume_permissions_image = "${etcd_volume_permissions_image}"
 iam_litebus_data_key    = "${iam_seed}"
 
 frontend_enabled  = true

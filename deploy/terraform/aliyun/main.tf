@@ -195,7 +195,7 @@ locals {
     auths = { for host, cred in var.registry_auths : host => { auth = base64encode("${cred.username}:${cred.password}") } }
   }
 
-  etcd_image_repo              = length(var.etcd_image_repository) > 0 ? var.etcd_image_repository : "akerneldev/etcd"
+  etcd_image_repo              = length(var.etcd_image_repository) > 0 ? var.etcd_image_repository : "gcr.io/etcd-development/etcd"
   master_image_repo            = length(var.master_image_repository) > 0 ? var.master_image_repository : "${local.acr_registry}/all-in-one"
   node_image_repo              = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
   traefik_image_repo           = length(var.traefik_image_repository) > 0 ? var.traefik_image_repository : "traefik"
@@ -209,6 +209,7 @@ locals {
     acr_password                      = var.acr_password
     etcd_image_repository             = local.etcd_image_repo
     etcd_image_tag                    = var.etcd_image_tag
+    etcd_volume_permissions_image     = var.etcd_volume_permissions_image
     master_image_repository           = local.master_image_repo
     master_image_tag                  = var.master_image_tag
     node_image_repository             = local.node_image_repo

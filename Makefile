@@ -51,7 +51,7 @@ help:
 	@echo "  make build RUNTIME_PROFILE=python   Include optional Python runtimes"
 	@echo "  make build GVISOR_RELEASE=<tag>     Override the pinned official gVisor tag"
 	@echo "  make versions                       Show locally selected component versions"
-	@echo "  make push                          Push all-in-one, etcd, and BusyBox"
+	@echo "  make push                          Push all-in-one and mirror etcd/BusyBox"
 	@echo "  make plan                          Terraform plan"
 	@echo "  make deploy                        Terraform apply"
 	@echo "  make token TTL=24h                 Generate a local JWT token"

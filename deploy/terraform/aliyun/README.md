@@ -144,16 +144,15 @@ export AKERNEL_SERVER_ADDRESS=<traefik-load-balancer-ip>
 not required for the `websecure` router on port 443; Traefik serves its default
 certificate when the variable is `false`.
 
-The module uses `akerneldev/etcd:3.6.8` by default. The image contains the
-official etcd binaries and the shell required by the bundled StatefulSet. The
-Traefik `/internal-stats` sidecar uses `busybox:1.37.0-musl` by default rather
-than deriving an image path from the deployment ACR namespace. Override
-`etcd_image_repository`, `etcd_image_tag`, or
-`traefik_internal_stats_image` when using a private mirror.
+The module uses the official `gcr.io/etcd-development/etcd:v3.6.8` image by
+default. A BusyBox init container prepares the etcd volume because the official
+image has no shell; it uses the same pinned BusyBox image as Traefik's
+`/internal-stats` sidecar. Override the component image variables when using a
+private mirror.
 
-The guided `make config` flow does configure that private mirror: it derives
-sibling `etcd` and `busybox` repositories from `IMAGE_REPOSITORY`, and
-`make push` handles the all-in-one, etcd, and internal-stats BusyBox images.
+The guided `make config` flow configures that private mirror: it derives sibling
+`etcd` and `busybox` repositories from `IMAGE_REPOSITORY`, and `make push`
+mirrors the official etcd and BusyBox images alongside the all-in-one image.
 It does not mirror the Traefik, monitoring, or Dragonfly images. Direct
 Terraform users retain the public defaults shown above.
 

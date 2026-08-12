@@ -16,6 +16,8 @@ etcd:
   image:
     repository: "${etcd_image_repository}"
     tag: "${etcd_image_tag}"
+  volumePermissions:
+    image: "${etcd_volume_permissions_image}"
   persistence:
     enabled: true
     storageClassName: "csi-disk"

@@ -40,8 +40,8 @@ spec:
       {{- if .Values.etcd.volumePermissions.enabled }}
       initContainers:
         - name: init-etcd-permissions
-          image: "{{ .Values.etcd.image.repository }}:{{ .Values.etcd.image.tag }}"
-          imagePullPolicy: {{ .Values.etcd.image.pullPolicy }}
+          image: "{{ .Values.etcd.volumePermissions.image }}"
+          imagePullPolicy: {{ .Values.etcd.volumePermissions.pullPolicy }}
           command:
             - /bin/sh
             - -ec
@@ -60,21 +60,23 @@ spec:
           image: "{{ .Values.etcd.image.repository }}:{{ .Values.etcd.image.tag }}"
           imagePullPolicy: {{ .Values.etcd.image.pullPolicy }}
           command:
-            - /bin/sh
-            - -ec
-            - |
-              mkdir -p {{ .Values.etcd.dataDir }}
-              exec etcd --name=etcd0 \
-                --data-dir={{ .Values.etcd.dataDir }} \
-                --auto-compaction-mode=revision \
-                --auto-compaction-retention={{ .Values.etcd.args.autoCompactionRetention }} \
-                --quota-backend-bytes={{ .Values.etcd.args.quotaBackendBytes }} \
-                --listen-client-urls=http://${MY_POD_IP}:2379 \
-                --advertise-client-urls=http://${MY_POD_IP}:2379 \
-                --listen-peer-urls=http://${MY_POD_IP}:2378 \
-                --initial-advertise-peer-urls=http://${MY_POD_IP}:2378 \
-                --initial-cluster=etcd0=http://${MY_POD_IP}:2378 \
-                --initial-cluster-state=new
+            - /usr/local/bin/etcd
+          args:
+            - --name=etcd0
+            - --data-dir={{ .Values.etcd.dataDir }}
+            - --auto-compaction-mode=revision
+            - --auto-compaction-retention={{ .Values.etcd.args.autoCompactionRetention }}
+            - --quota-backend-bytes={{ .Values.etcd.args.quotaBackendBytes }}
+            - --listen-client-urls=http://$(MY_POD_IP):2379
+            - --advertise-client-urls=http://$(MY_POD_IP):2379
+            - --listen-peer-urls=http://$(MY_POD_IP):2378
+            - --initial-advertise-peer-urls=http://$(MY_POD_IP):2378
+            - --initial-cluster=etcd0=http://$(MY_POD_IP):2378
+            - --initial-cluster-state=new
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: {{ .Values.etcd.volumePermissions.dataUser }}
+            runAsGroup: {{ .Values.etcd.volumePermissions.dataUser }}
           env:
             - name: MY_POD_IP
               valueFrom:

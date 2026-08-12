@@ -43,24 +43,20 @@ if [[ "${#missing_profile_vars[@]}" -gt 0 ]]; then
   die "deployment profile ${env_name} is missing dependency image settings (${missing_profile_vars[*]}); rerun make config ENV=${env_name} and review the generated Terraform plan"
 fi
 
-# Pinned dependency image versions. Keep these in sync with the chart defaults
-# in deploy/akernel/charts/core/values.yaml (etcd.image.tag and the busybox tag
-# under traefik.internalStats.image). configure.sh mirrors the same values into
-# the deployment profile, so an override arriving via env vars must match a
-# chart that the caller has actually updated accordingly.
+# Pinned dependency image versions. Keep these in sync with the chart defaults.
 readonly etcd_version="3.6.8"
 readonly busybox_tag="1.37.0-musl"
 
 all_in_one_image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-etcd_source_image="akerneldev/etcd:${etcd_version}"
+etcd_source_image="gcr.io/etcd-development/etcd:v${etcd_version}"
 busybox_source_image="busybox:${busybox_tag}"
 etcd_image="${ETCD_IMAGE_REPOSITORY}:${ETCD_IMAGE_TAG}"
 busybox_image="${TRAEFIK_INTERNAL_STATS_IMAGE}"
 
 # Warn if an override disagrees with the chart default, so a stale pin does not
 # silently push a tag the bundled chart will not request.
-[[ "${ETCD_IMAGE_TAG}" == "${etcd_version}" ]] || \
-  warn "ETCD_IMAGE_TAG=${ETCD_IMAGE_TAG} overrides the chart default ${etcd_version}; ensure the chart's etcd.image.tag matches"
+[[ "${ETCD_IMAGE_TAG}" == "v${etcd_version}" ]] || \
+  warn "ETCD_IMAGE_TAG=${ETCD_IMAGE_TAG} overrides the chart default v${etcd_version}; ensure the chart's etcd.image.tag matches"
 [[ "${TRAEFIK_INTERNAL_STATS_IMAGE}" == *":${busybox_tag}" ]] || \
   warn "TRAEFIK_INTERNAL_STATS_IMAGE=${TRAEFIK_INTERNAL_STATS_IMAGE} does not use the chart default tag ${busybox_tag}; ensure the chart's traefik.internalStats.image matches"
 
@@ -74,14 +70,10 @@ info "pushing ${all_in_one_image}"
 docker push "${all_in_one_image}"
 
 info "preparing deployment dependency images (etcd, BusyBox)"
-docker build \
-  --build-arg "ETCD_VERSION=${etcd_version}" \
-  -f "${ROOT}/builder/etcd.Dockerfile" \
-  -t "${etcd_source_image}" \
-  "${ROOT}" || \
-  die "failed to build etcd image; build host may be unable to reach gcr.io for the upstream etcd binaries"
+docker pull "${etcd_source_image}" || \
+  die "failed to pull ${etcd_source_image}"
 docker pull "${busybox_source_image}" || \
-  die "failed to pull ${busybox_source_image}; build host may be unable to reach Docker Hub"
+  die "failed to pull ${busybox_source_image}"
 
 if [[ "${etcd_source_image}" != "${etcd_image}" ]]; then
   docker tag "${etcd_source_image}" "${etcd_image}"

@@ -76,8 +76,9 @@ monitor_storage_class = "csi-disk"
 
 # --- Component images ---
 # Override image repository/tag for each component.
-# etcd_image_repository    = "akerneldev/etcd"
-# etcd_image_tag           = "3.6.8"
+# etcd_image_repository    = "gcr.io/etcd-development/etcd"
+# etcd_image_tag           = "v3.6.8"
+# etcd_volume_permissions_image = "busybox:1.37.0-musl"
 master_image_repository   = "swr.cn-north-4.myhuaweicloud.com/akernel/all-in-one"
 master_image_tag          = "<release-tag>"
 node_image_repository     = "swr.cn-north-4.myhuaweicloud.com/akernel/all-in-one"
