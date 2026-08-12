@@ -349,10 +349,12 @@ of both native packages; all native conversions belong under
 
 The SDK also supports a strict Dockerfile direct-launch subset through
 `DockerContext` and `Sandbox(context=...)`. `FROM` supplies only the root
-filesystem; inherited OCI image configuration is not applied. Context transfer
-must remain backend-neutral, honor `.dockerignore`, and fail closed for syntax
-outside the documented subset. Keep the contract, security boundaries, public
-types, unit tests, SDK README, and `examples/dockerfile_launch.py` in sync.
+filesystem; inherited OCI image configuration is not applied. `DockerContext.walk()`
+uses public structured entries for files and directories, including permission
+modes and empty directories. Context transfer must remain backend-neutral, honor
+`.dockerignore`, and fail closed for syntax outside the documented subset. Keep
+the contract, security boundaries, public types, unit tests, SDK README, and
+`examples/dockerfile_launch.py` in sync.
 
 When changing a public SDK method, update its type annotations and docstring,
 add or update unit coverage, and keep the SDK README and maintained examples in

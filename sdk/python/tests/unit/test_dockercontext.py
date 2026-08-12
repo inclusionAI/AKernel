@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from akernel_sdk._dockercontext import (
     DockerContext,
+    DockerContextEntry,
     DockerContextError,
     LocalDockerContext,
     _ContextManifest,
@@ -28,7 +29,7 @@ class MemoryDockerContext(DockerContext):
 
     def __init__(self, files: dict[str, bytes], paths: list[object] | None = None):
         self.files = files
-        self.paths = list(files) if paths is None else paths
+        self.paths = _entries(files) if paths is None else paths
         self.open_paths: list[str] = []
 
     def dockerfile_text(self) -> str:
@@ -39,19 +40,34 @@ class MemoryDockerContext(DockerContext):
         self.open_paths.append(path)
         yield io.BytesIO(self.files[path])
 
-    def walk(self) -> Iterator[str]:
+    def walk(self) -> Iterator[DockerContextEntry]:
         yield from self.paths  # type: ignore[misc]
 
 
+def _entries(files: dict[str, bytes]) -> list[DockerContextEntry]:
+    directories = {
+        "/".join(path.split("/")[:index])
+        for path in files
+        for index in range(1, len(path.split("/")))
+    }
+    return [
+        *(DockerContextEntry(path, "directory", 0o755) for path in sorted(directories)),
+        *(DockerContextEntry(path, "file", 0o644) for path in sorted(files)),
+    ]
+
+
 def paths(selection) -> list[tuple[str, str]]:
-    return [(item.source_path, item.relative_target) for item in selection.files]
+    return [
+        (item.source_path, item.relative_target)
+        for item in selection.entries
+        if item.kind == "file"
+    ]
 
 
 class TestContextManifest(unittest.TestCase):
     def test_deterministic_literal_file_directory_and_dot(self) -> None:
         context = MemoryDockerContext(
             {"src/lib/b.py": b"", "root.txt": b"", "src/a.py": b""},
-            ["src/lib/b.py", "root.txt", "src/a.py"],
         )
         manifest = _ContextManifest.from_context(context)
         self.assertEqual(context.open_paths, [])
@@ -209,9 +225,35 @@ class TestContextManifest(unittest.TestCase):
         for value in invalid:
             with self.subTest(value=repr(value)):
                 with self.assertRaises(DockerContextError):
-                    _ContextManifest.from_context(MemoryDockerContext({}, [value]))
+                    _ContextManifest.from_context(
+                        MemoryDockerContext(
+                            {},
+                            [
+                                DockerContextEntry(  # type: ignore[arg-type]
+                                    value, "file", 0o644
+                                )
+                            ],
+                        )
+                    )
         with self.assertRaises(DockerContextError):
-            _ContextManifest.from_context(MemoryDockerContext({}, ["same", "same"]))
+            duplicate = DockerContextEntry("same", "file", 0o644)
+            _ContextManifest.from_context(
+                MemoryDockerContext({}, [duplicate, duplicate])
+            )
+
+    def test_walk_requires_explicit_directory_ancestors(self) -> None:
+        missing_parent = [
+            DockerContextEntry("nested/file", "file", 0o644),
+        ]
+        with self.assertRaisesRegex(DockerContextError, "omitted directory"):
+            _ContextManifest.from_context(MemoryDockerContext({}, missing_parent))
+
+        file_ancestor = [
+            DockerContextEntry("nested", "file", 0o644),
+            DockerContextEntry("nested/file", "file", 0o644),
+        ]
+        with self.assertRaisesRegex(DockerContextError, "file-as-ancestor"):
+            _ContextManifest.from_context(MemoryDockerContext({}, file_ancestor))
 
     def test_malicious_sources_fail_closed(self) -> None:
         manifest = _ContextManifest.from_context(MemoryDockerContext({"safe": b""}))
@@ -250,8 +292,16 @@ class TestContextManifest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "z").write_bytes(b"")
             Path(directory, "a").write_bytes(b"")
+            os.chmod(Path(directory, "z"), 0o640)
+            os.chmod(Path(directory, "a"), 0o600)
             local = LocalDockerContext("FROM scratch", context_dir=directory)
-            self.assertEqual(list(local.walk()), ["a", "z"])
+            self.assertEqual(
+                list(local.walk()),
+                [
+                    DockerContextEntry("a", "file", 0o600),
+                    DockerContextEntry("z", "file", 0o640),
+                ],
+            )
             outside = Path(directory).parent / "dockercontext-outside"
             outside.write_bytes(b"outside")
             try:
@@ -302,6 +352,56 @@ class TestContextManifest(unittest.TestCase):
                 with local.open("selected") as stream:
                     self.fail(f"escaped context: {stream.read()!r}")
             self.assertTrue(replaced)
+
+    def test_entries_preserve_empty_directories_and_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty"
+            nested = empty / "nested"
+            nested.mkdir(parents=True)
+            executable = root / "run.sh"
+            executable.write_bytes(b"#!/bin/sh\n")
+            os.chmod(empty, 0o711)
+            os.chmod(nested, 0o750)
+            os.chmod(executable, 0o755)
+
+            self.assertEqual(
+                list(LocalDockerContext("FROM scratch", context_dir=root).walk()),
+                [
+                    DockerContextEntry("empty", "directory", 0o711),
+                    DockerContextEntry("empty/nested", "directory", 0o750),
+                    DockerContextEntry("run.sh", "file", 0o755),
+                ],
+            )
+
+    def test_dockerignore_filters_empty_directories(self) -> None:
+        entries = [
+            DockerContextEntry(".dockerignore", "file", 0o644),
+            DockerContextEntry("ignored", "directory", 0o755),
+            DockerContextEntry("visible", "directory", 0o711),
+            DockerContextEntry("visible/nested", "directory", 0o750),
+        ]
+        context = MemoryDockerContext({".dockerignore": b"ignored/" + NL}, entries)
+        manifest = _ContextManifest.from_context(context)
+        self.assertEqual(
+            [
+                (entry.source_path, entry.relative_target)
+                for entry in manifest.select(".").entries
+            ],
+            [("visible", "visible"), ("visible/nested", "visible/nested")],
+        )
+        with self.assertRaisesRegex(DockerContextError, "ignored"):
+            manifest.select("ignored")
+
+    def test_context_entry_rejects_invalid_mode(self) -> None:
+        class MaliciousMode(int):
+            def __format__(self, format_spec: str) -> str:
+                return "0000; injected"
+
+        for mode in (-1, 0o1000, True, MaliciousMode(0o644)):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ValueError, "permission bits"):
+                    DockerContextEntry("path", "file", mode)
 
     def test_local_open_accepts_nested_regular_files_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

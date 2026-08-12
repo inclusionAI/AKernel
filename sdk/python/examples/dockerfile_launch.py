@@ -20,10 +20,10 @@ sets runtime state. RUN/COPY/ADD execute for every launch, without a snapshot
 or build cache.
 
 Sections:
-    1. Core path — .dockerignore, COPY ., RUN, ENV, WORKDIR, USER, and CMD
-    2. ENTRYPOINT + CMD exec-form combination
+    1. Core path — filtered COPY ., modes, empty directories, explicit state
+    2. Root cwd plus ENTRYPOINT + CMD exec-form combination
     3. COPY --chown ownership
-    4. ADD local tar extraction
+    4. Builder/root ADD after USER
     5. Fail-closed pre-check without a sandbox
 """
 
@@ -57,6 +57,15 @@ def section_core_path() -> None:
             encoding="utf-8",
         )
         (context_dir / "greeting.txt").write_text("hello\n", encoding="utf-8")
+        executable = context_dir / "entrypoint.sh"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        empty = context_dir / "empty"
+        nested_empty = context_dir / "tree" / "nested-empty"
+        empty.mkdir()
+        nested_empty.mkdir(parents=True)
+        empty.chmod(0o711)
+        nested_empty.chmod(0o750)
         dockerfile = """\
 FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y --no-install-recommends python3
@@ -64,6 +73,7 @@ RUN useradd -m app
 ENV WHOAMI=app
 WORKDIR /srv
 USER app
+COPY empty/ /srv/literal-empty/
 COPY . /srv/
 CMD ["python3", "/srv/app.py"]
 """
@@ -81,7 +91,21 @@ CMD ["python3", "/srv/app.py"]
             assert marker.stdout.strip() == "whoami=app cwd=/srv", marker.stdout
             absent = sandbox.commands.run("test ! -e /srv/secret.txt")
             assert absent.exit_code == 0, absent.stderr
-            print(f"  sandbox: {sandbox.id}; marker: {marker.stdout.strip()}")
+            modes = sandbox.commands.run(
+                "stat -c '%a' /srv/entrypoint.sh /srv/empty "
+                "/srv/tree/nested-empty /srv/literal-empty"
+            )
+            assert modes.exit_code == 0, modes.stderr
+            assert modes.stdout.splitlines() == [
+                "755",
+                "711",
+                "750",
+                "755",
+            ], modes.stdout
+            print(
+                f"  sandbox: {sandbox.id}; marker: {marker.stdout.strip()}; "
+                f"modes: {modes.stdout.splitlines()}"
+            )
 
 
 def section_entrypoint_cmd_merge() -> None:
@@ -91,7 +115,8 @@ def section_entrypoint_cmd_merge() -> None:
         context_dir = Path(directory)
         dockerfile = """\
 FROM ubuntu:22.04
-ENTRYPOINT ["/bin/sh", "-c", "printf %s \\\"$1\\\" > /tmp/ep.out"]
+RUN test "$(pwd)" = /
+ENTRYPOINT ["/bin/sh", "-c", "printf %s \\\"$1\\\" > /tmp/ep.out; pwd > /tmp/cwd.out"]
 CMD ["ignored-argv-zero", "entrypoint+cmd merged"]
 """
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
@@ -105,7 +130,13 @@ CMD ["ignored-argv-zero", "entrypoint+cmd merged"]
             output = sandbox.commands.run("cat /tmp/ep.out")
             assert output.exit_code == 0, output.stderr
             assert output.stdout == "entrypoint+cmd merged", output.stdout
-            print(f"  sandbox: {sandbox.id}; output: {output.stdout}")
+            cwd = sandbox.commands.run("cat /tmp/cwd.out")
+            assert cwd.exit_code == 0, cwd.stderr
+            assert cwd.stdout.strip() == "/", cwd.stdout
+            print(
+                f"  sandbox: {sandbox.id}; output: {output.stdout}; "
+                f"startup cwd: {cwd.stdout.strip()}"
+            )
 
 
 def section_copy_chown() -> None:
@@ -146,7 +177,10 @@ def section_add_tar() -> None:
             tar.add(nested, arcname="nested")
 
         context = LocalDockerContext(
-            "FROM ubuntu:22.04\nADD app.tar.gz /opt/app/\n",
+            "FROM ubuntu:22.04\n"
+            "RUN useradd -m app\n"
+            "USER app\n"
+            "ADD app.tar.gz /opt/app/\n",
             context_dir=context_dir,
         )
         _precheck(context)
@@ -160,17 +194,23 @@ def section_add_tar() -> None:
 
 
 def section_fail_closed_precheck() -> None:
-    """Reject remote ADD before a sandbox is created."""
+    """Reject remote ADD and unsupported USER forms before sandbox creation."""
     print("\n=== Section 5: fail-closed precheck ===")
-    with tempfile.TemporaryDirectory() as directory:
-        context = LocalDockerContext(
+    cases = (
+        (
             "FROM ubuntu:22.04\nADD https://example.test/app.tar /opt/app/\n",
-            context_dir=directory,
-        )
-        result = check_direct_launch(context)
-        assert not result.direct_launchable
-        assert "remote_add" in result.reasons, result
-        print(f"  rejected reasons: {', '.join(result.reasons)}")
+            "remote_add",
+        ),
+        ("FROM ubuntu:22.04\nUSER app:staff\n", "unsupported_syntax"),
+        ("FROM ubuntu:22.04\nUSER 1000:1001\n", "unsupported_syntax"),
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        for dockerfile, reason in cases:
+            context = LocalDockerContext(dockerfile, context_dir=directory)
+            result = check_direct_launch(context)
+            assert not result.direct_launchable
+            assert reason in result.reasons, result
+            print(f"  rejected reasons: {', '.join(result.reasons)}")
 
 
 def main() -> None:

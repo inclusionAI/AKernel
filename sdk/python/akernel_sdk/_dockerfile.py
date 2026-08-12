@@ -173,6 +173,7 @@ _IGNORED_INSTRUCTIONS: dict[str, str] = {
 _CHOWN_VALUE_RE = re.compile(
     r"[A-Za-z0-9_][A-Za-z0-9_.-]*(?::[A-Za-z0-9_][A-Za-z0-9_.-]*)?"
 )
+_USER_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*\Z")
 _VARIABLE_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)")
 DIRECT_LAUNCH_ROOTFS_ONLY_WARNING = (
     "FROM supplies only the root filesystem; inherited image ENV, USER, WORKDIR, "
@@ -333,11 +334,21 @@ def parse_dockerfile(
                 instructions.append(WorkdirInstruction(path=wd))
         elif kind == "USER":
             user_value = value.strip()
-            if not user_value or _contains_variable(user_value):
+            if _contains_variable(user_value):
                 _unsupported(
                     kind,
                     value,
                     "USER variable expansion is not supported",
+                    "unsupported_syntax",
+                    strict,
+                    unsupported,
+                    warnings,
+                )
+            elif not _is_named_user(user_value):
+                _unsupported(
+                    kind,
+                    value,
+                    "USER must be a literal named user without a group or numeric ID",
                     "unsupported_syntax",
                     strict,
                     unsupported,
@@ -813,6 +824,12 @@ def _parse_cmd_entrypoint(
         out.append(CmdInstruction(cmd=(folded,), shell_form=True))
     else:
         out.append(EntrypointInstruction(cmd=(folded,), shell_form=True))
+
+
+def _is_named_user(value: str) -> bool:
+    """Return whether ``value`` is within the direct-launch USER subset."""
+
+    return bool(_USER_NAME_RE.fullmatch(value))
 
 
 def _contains_variable(value: str) -> bool:
