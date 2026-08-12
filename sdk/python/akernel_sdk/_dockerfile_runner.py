@@ -32,7 +32,7 @@ import tempfile
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ._dockercontext import DockerContext, _ContextManifest
 from ._dockerfile import (
@@ -65,11 +65,14 @@ class DockerfileApplyResult:
 
 @dataclass(frozen=True)
 class _PlannedCopy:
-    """One selected context file and its final sandbox target."""
+    """One selected context entry and its final sandbox target."""
 
     source_path: str
     relative_target: str
     remote_path: str
+    kind: Literal["file", "directory"]
+    mode: int
+    is_destination_marker: bool = False
     local_path: str | None = None
 
 
@@ -90,7 +93,6 @@ class _PreparedCopy:
     workdir: str
     dest: str
     plans: tuple[_PlannedCopy, ...]
-    has_directory_selection: bool
     extract_tar: bool
     tar_entries: tuple[_TarEntry, ...] = ()
 
@@ -169,7 +171,7 @@ def apply_dockerfile(
                 elif isinstance(instruction, RunInstruction):
                     runner.run(instruction.command, envs, workdir, user, index)
                 elif isinstance(instruction, CopyInstruction):
-                    runner.execute_prepared_copy(prepared_copies[index], envs, user)
+                    runner.execute_prepared_copy(prepared_copies[index], envs)
                 elif isinstance(instruction, EnvInstruction):
                     envs.update(instruction.envs)
                 elif isinstance(instruction, WorkdirInstruction):
@@ -253,7 +255,7 @@ class _Runner:
         result = self._sb.commands.run(
             wrapped,
             envs=envs or None,
-            cwd=workdir if workdir != "/" else None,
+            cwd=workdir,
             timeout=self._run_timeout,
         )
         if result.exit_code != 0:
@@ -289,20 +291,17 @@ class _Runner:
                 ) from error
 
         plans: list[_PlannedCopy] = []
-        has_directory_selection = False
         for source, selection in selections:
-            directory_selection = selection.kind in ("literal_directory", "dot")
-            wildcard_directory_expansion = selection.kind == "wildcard" and any(
-                "/" in selected.relative_target for selected in selection.files
+            directory_target = (
+                selection.kind in ("literal_directory", "dot")
+                or selection.has_directories
+                or ins.dest.endswith("/")
             )
-            must_use_directory = directory_selection or (
-                selection.kind == "wildcard"
-                and (len(selection.files) > 1 or wildcard_directory_expansion)
-            )
+            must_use_directory = selection.has_directories or len(selection.entries) > 1
             if (
                 must_use_directory
                 and not ins.dest.endswith("/")
-                and not directory_selection
+                and not directory_target
             ):
                 raise DockerfileBuildError(
                     f"{instruction} source {source!r} expands to multiple paths; "
@@ -310,13 +309,19 @@ class _Runner:
                     index=index,
                     instruction=instruction,
                 )
-            has_directory_selection |= directory_selection
-            for selected in selection.files:
+            for selected in selection.entries:
+                is_destination_marker = (
+                    selection.kind == "literal_directory"
+                    and selected.kind == "directory"
+                    and selected.relative_target == ""
+                )
                 try:
-                    remote_path = self._copy_target(
-                        dest,
-                        selected.relative_target,
-                        directory_selection or ins.dest.endswith("/"),
+                    remote_path = (
+                        dest
+                        if is_destination_marker
+                        else self._copy_target(
+                            dest, selected.relative_target, directory_target
+                        )
                     )
                 except Exception as error:
                     raise DockerfileBuildError(
@@ -330,6 +335,9 @@ class _Runner:
                         source_path=selected.source_path,
                         relative_target=selected.relative_target,
                         remote_path=remote_path,
+                        kind=selected.kind,
+                        mode=selected.mode,
+                        is_destination_marker=is_destination_marker,
                     )
                 )
 
@@ -338,10 +346,9 @@ class _Runner:
             ins.is_add
             and len(ins.srcs) == 1
             and selections[0][1].kind == "literal_file"
-            and len(selections[0][1].files) == 1
-            and selections[0][1].files[0].source_path.lower().endswith(_TAR_SUFFIXES)
+            and len(selections[0][1].entries) == 1
+            and selections[0][1].entries[0].source_path.lower().endswith(_TAR_SUFFIXES)
         )
-
         materialized = self._materialize(
             plans, os.path.join(staging_dir, f"{index:08d}"), index, instruction
         )
@@ -356,7 +363,6 @@ class _Runner:
             workdir=workdir,
             dest=dest,
             plans=tuple(materialized),
-            has_directory_selection=has_directory_selection,
             extract_tar=extract_tar,
             tar_entries=tar_entries,
         )
@@ -365,7 +371,6 @@ class _Runner:
         self,
         prepared: _PreparedCopy,
         envs: dict[str, str],
-        user: str | None,
     ) -> None:
         ins = prepared.instruction
         instruction = "ADD" if ins.is_add else "COPY"
@@ -382,7 +387,6 @@ class _Runner:
                 prepared.dest,
                 envs,
                 prepared.workdir,
-                user,
                 prepared.index,
             )
             chown_targets = (
@@ -394,18 +398,36 @@ class _Runner:
                 + new_directories
             )
         else:
-            parents = self._parent_directories(
-                plan.remote_path for plan in prepared.plans
-            )
-            new_directories = self._new_directories(parents) if ins.chown else ()
-            for parent in parents:
-                self._sb.files.make_dir(parent)
+            directories = self._copy_directories(prepared.plans)
+            new_directories = self._new_directories(directories) if ins.chown else ()
+            for directory in directories:
+                self._sb.files.make_dir(directory)
             for plan in prepared.plans:
+                if plan.kind == "directory":
+                    continue
                 if plan.local_path is None:
                     raise AssertionError("copy plan was not materialized")
                 self._sb.files.copy_from_local(plan.local_path, plan.remote_path)
+            self._chmod(
+                tuple(
+                    dict.fromkeys(
+                        (plan.remote_path, plan.mode)
+                        for plan in prepared.plans
+                        if not plan.is_destination_marker
+                    )
+                ),
+                prepared.workdir,
+                prepared.index,
+                instruction,
+            )
             chown_targets = (
-                tuple(dict.fromkeys(plan.remote_path for plan in prepared.plans))
+                tuple(
+                    dict.fromkeys(
+                        plan.remote_path
+                        for plan in prepared.plans
+                        if plan.kind == "file"
+                    )
+                )
                 + new_directories
             )
 
@@ -456,24 +478,33 @@ class _Runner:
                 index=index,
                 instruction=instruction,
             )
-        relative_targets = [plan.relative_target for plan in plans]
+        relative_targets = [
+            plan.relative_target for plan in plans if not plan.is_destination_marker
+        ]
         if len(relative_targets) != len(set(relative_targets)):
             raise DockerfileBuildError(
                 f"{instruction} sources have colliding relative targets",
                 index=index,
                 instruction=instruction,
             )
-        targets = {plan.remote_path for plan in plans}
-        if len(targets) != len(plans):
+        by_target: dict[str, _PlannedCopy] = {}
+        for plan in plans:
+            existing = by_target.get(plan.remote_path)
+            if existing is None:
+                by_target[plan.remote_path] = plan
+                continue
+            if existing.is_destination_marker and plan.is_destination_marker:
+                continue
             raise DockerfileBuildError(
                 f"{instruction} sources have colliding destination paths",
                 index=index,
                 instruction=instruction,
             )
-        for target in targets:
+        for target, _plan in by_target.items():
             parent = posixpath.dirname(target)
             while parent != "/":
-                if parent in targets:
+                ancestor = by_target.get(parent)
+                if ancestor is not None and ancestor.kind == "file":
                     raise DockerfileBuildError(
                         f"{instruction} destination file conflicts with descendant: "
                         f"{parent!r}",
@@ -481,6 +512,19 @@ class _Runner:
                         instruction=instruction,
                     )
                 parent = posixpath.dirname(parent)
+
+    def _copy_directories(self, plans: tuple[_PlannedCopy, ...]) -> tuple[str, ...]:
+        """Return parent and explicitly selected directories in creation order."""
+
+        directories = set(
+            self._parent_directories(plan.remote_path for plan in plans)
+        )
+        directories.update(
+            plan.remote_path
+            for plan in plans
+            if plan.kind == "directory" and plan.remote_path != "/"
+        )
+        return tuple(sorted(directories, key=lambda path: (path.count("/"), path)))
 
     def _materialize(
         self,
@@ -492,6 +536,9 @@ class _Runner:
         materialized: list[_PlannedCopy] = []
         os.makedirs(staging_dir, exist_ok=True)
         for sequence, plan in enumerate(plans):
+            if plan.kind == "directory":
+                materialized.append(plan)
+                continue
             local_path = os.path.join(staging_dir, f"{sequence:08d}")
             try:
                 with self._context.open(plan.source_path) as stream:
@@ -509,6 +556,9 @@ class _Runner:
                     source_path=plan.source_path,
                     relative_target=plan.relative_target,
                     remote_path=plan.remote_path,
+                    kind=plan.kind,
+                    mode=plan.mode,
+                    is_destination_marker=plan.is_destination_marker,
                     local_path=local_path,
                 )
             )
@@ -643,6 +693,7 @@ class _Runner:
         command = " && ".join(f"test ! -L {shlex.quote(path)}" for path in paths)
         result = self._sb.commands.run(
             command,
+            cwd=prepared.workdir,
             timeout=self._run_timeout,
         )
         if result.exit_code != 0:
@@ -666,12 +717,37 @@ class _Runner:
             command = f"chown {shlex.quote(owner)} {shlex.quote(target)}"
             result = self._sb.commands.run(
                 wrap_user(command, "root"),
-                cwd=workdir if workdir != "/" else None,
+                cwd=workdir,
                 timeout=self._run_timeout,
             )
             if result.exit_code != 0:
                 raise DockerfileBuildError(
                     f"{instruction} --chown failed: {result.stderr}",
+                    index=index,
+                    instruction=instruction,
+                    stderr=result.stderr,
+                    exit_code=result.exit_code,
+                )
+
+    def _chmod(
+        self,
+        targets: tuple[tuple[str, int], ...],
+        workdir: str,
+        index: int,
+        instruction: str,
+    ) -> None:
+        """Restore selected context entry modes without touching parent paths."""
+
+        for target, mode in targets:
+            command = f"chmod {mode:04o} {shlex.quote(target)}"
+            result = self._sb.commands.run(
+                wrap_user(command, "root"),
+                cwd=workdir,
+                timeout=self._run_timeout,
+            )
+            if result.exit_code != 0:
+                raise DockerfileBuildError(
+                    f"{instruction} chmod failed: {result.stderr}",
                     index=index,
                     instruction=instruction,
                     stderr=result.stderr,
@@ -685,7 +761,6 @@ class _Runner:
         dest: str,
         envs: dict[str, str],
         workdir: str,
-        user: str | None,
         index: int,
     ) -> None:
         # Docker ADD extraction creates the destination directory before tar xf.
@@ -697,9 +772,9 @@ class _Runner:
             f"tar xf {shlex.quote(sandbox_tar)} --no-same-owner -C {shlex.quote(dest)}"
         )
         result = self._sb.commands.run(
-            wrap_user(tar_cmd, user),
+            wrap_user(tar_cmd, "root"),
             envs=envs or None,
-            cwd=workdir if workdir != "/" else None,
+            cwd=workdir,
             timeout=self._run_timeout,
         )
         if result.exit_code != 0:
@@ -742,7 +817,7 @@ class _Runner:
             wrapped,
             background=True,
             envs=envs or None,
-            cwd=workdir if workdir != "/" else None,
+            cwd=workdir,
         )
 
 
@@ -753,22 +828,32 @@ def _join_posix(base: str, rel: str) -> str:
 
 
 def wrap_user(command: str, user: str | None) -> str:
-    """Wrap ``command`` so it runs as ``user`` (root passthrough when None).
+    """Wrap ``command`` for a supported named user.
 
-    Uses ``runuser`` by default. The actual fallback to ``su`` is resolved at
-    runtime inside the sandbox (see :func:`resolve_user_wrapper`); ``wrap_user``
-    emits a wrapper that tries ``runuser`` first and falls back to ``su``.
+    The parser already rejects unsupported USER syntax. This defensive check
+    keeps direct callers from silently changing a ``user:group`` or numeric
+    value into a different command identity.
     """
-    if not user:
+    if user is None:
         return command
-    user = user.split(":", 1)[0]  # strip :group
-    if not user or user == "root" or user == "0":
+    if user == "root":
         return command
-    # Try runuser, fall back to su if runuser is absent.
+    if not _is_named_user(user):
+        raise ValueError(
+            "USER must be a literal named user without a group or numeric ID"
+        )
     return (
         f"if command -v runuser >/dev/null 2>&1; then "
         f"runuser -u {_shq(user)} -- sh -c {_shq(command)}; "
         f"else su -s /bin/sh {_shq(user)} -c {_shq(command)}; fi"
+    )
+
+
+def _is_named_user(value: str) -> bool:
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_"
+    characters = alphabet + "0123456789.-"
+    return bool(value) and value[0] in alphabet and all(
+        character in characters for character in value
     )
 
 

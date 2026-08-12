@@ -48,65 +48,97 @@ class DockerContextError(ValueError):
 
 
 @dataclass(frozen=True)
-class _SelectedContextFile:
-    """A source context file and its relative destination target."""
+class DockerContextEntry:
+    """One file or directory exposed by a :class:`DockerContext`.
+
+    ``path`` is relative to the context root and uses POSIX separators.
+    ``mode`` contains only permission bits, from ``0`` through ``0o777``.
+    """
+
+    path: str
+    kind: Literal["file", "directory"]
+    mode: int
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("file", "directory"):
+            raise ValueError("context entry kind must be 'file' or 'directory'")
+        if (
+            type(self.mode) is not int
+            or self.mode < 0
+            or self.mode > 0o777
+        ):
+            raise ValueError("context entry mode must contain only permission bits")
+
+
+@dataclass(frozen=True)
+class _SelectedContextEntry:
+    """A source context entry and its relative destination target."""
 
     source_path: str
     relative_target: str
+    kind: Literal["file", "directory"]
+    mode: int
 
 
 @dataclass(frozen=True)
 class _ContextSelection:
-    """A deterministic file selection for one COPY or ADD source."""
+    """A deterministic entry selection for one COPY or ADD source."""
 
     source: str
     kind: Literal["literal_file", "literal_directory", "dot", "wildcard"]
-    files: tuple[_SelectedContextFile, ...]
+    entries: tuple[_SelectedContextEntry, ...]
+
+    @property
+    def has_directories(self) -> bool:
+        """Return whether this selection contains an explicit directory."""
+
+        return any(entry.kind == "directory" for entry in self.entries)
 
 
 @dataclass(frozen=True)
 class _ContextManifest:
     """Validated, ignored-filtered context entries used to plan selections."""
 
-    _raw_files: tuple[str, ...]
-    _visible_files: tuple[str, ...]
-    _raw_directories: frozenset[str]
+    _raw_entries: tuple[DockerContextEntry, ...]
+    _visible_entries: tuple[DockerContextEntry, ...]
 
     @classmethod
     def from_context(cls, context: DockerContext) -> _ContextManifest:
         """Build a manifest without opening selectable context files."""
 
         try:
-            raw_files = tuple(context.walk())
+            raw_entries = tuple(context.walk())
         except Exception as error:
             raise DockerContextError("failed to walk Docker context") from error
 
-        _validate_walk_paths(raw_files)
-        raw_files = tuple(sorted(raw_files))
-        raw_directories = _directories_from_files(raw_files)
-        ignore_spec = _read_ignore_spec(context, raw_files)
-
-        reserved = {path for path in raw_files if _is_reserved_root_path(path)}
-        visible_files = tuple(
-            path
-            for path in raw_files
-            if path not in reserved and not ignore_spec.match_file(path)
+        _validate_walk_entries(raw_entries)
+        raw_entries = tuple(sorted(raw_entries, key=lambda entry: entry.path))
+        raw_files = tuple(
+            entry.path for entry in raw_entries if entry.kind == "file"
         )
-        return cls(raw_files, visible_files, frozenset(raw_directories))
+        ignore_spec = _read_ignore_spec(context, raw_files)
+        visible_entries = tuple(
+            entry
+            for entry in raw_entries
+            if not _is_reserved_root_path(entry.path)
+            and not ignore_spec.match_file(entry.path)
+        )
+        return cls(raw_entries, visible_entries)
 
     def select(self, source: str) -> _ContextSelection:
         """Plan one normalized Docker COPY or ADD source without opening files."""
 
         normalized = _normalize_source(source)
         if normalized == ".":
-            if not self._visible_files:
-                reason = "ignored" if self._raw_files else "no match"
+            if not self._visible_entries:
+                reason = "ignored" if self._raw_entries else "no match"
                 raise DockerContextError(f"context source is {reason}: {normalized!r}")
             return _ContextSelection(
                 source=normalized,
                 kind="dot",
-                files=tuple(
-                    _SelectedContextFile(path, path) for path in self._visible_files
+                entries=tuple(
+                    _selected_entry(entry, entry.path)
+                    for entry in self._visible_entries
                 ),
             )
         if _has_wildcard(normalized):
@@ -114,76 +146,98 @@ class _ContextManifest:
         return self._select_literal(normalized)
 
     def _select_literal(self, source: str) -> _ContextSelection:
-        if source in self._raw_files:
-            if source not in self._visible_files:
-                raise DockerContextError(f"context source is ignored: {source!r}")
+        raw_by_path = {entry.path: entry for entry in self._raw_entries}
+        visible_by_path = {entry.path: entry for entry in self._visible_entries}
+        entry = raw_by_path.get(source)
+        if entry is None:
+            raise DockerContextError(f"context source has no match: {source!r}")
+        if source not in visible_by_path:
+            raise DockerContextError(f"context source is ignored: {source!r}")
+        if entry.kind == "file":
             return _ContextSelection(
                 source=source,
                 kind="literal_file",
-                files=(_SelectedContextFile(source, posixpath.basename(source)),),
+                entries=(_selected_entry(entry, posixpath.basename(source)),),
             )
 
-        if source in self._raw_directories:
-            files = tuple(
-                _SelectedContextFile(path, path.removeprefix(f"{source}/"))
-                for path in self._visible_files
-                if path.startswith(f"{source}/")
+        entries = tuple(
+            _selected_entry(
+                item,
+                "" if item.path == source else item.path.removeprefix(f"{source}/"),
             )
-            if not files:
-                raise DockerContextError(f"context source is ignored: {source!r}")
-            return _ContextSelection(
-                source=source,
-                kind="literal_directory",
-                files=_validate_selection_files(files),
-            )
-
-        raise DockerContextError(f"context source has no match: {source!r}")
+            for item in self._visible_entries
+            if item.path == source or item.path.startswith(f"{source}/")
+        )
+        if not entries:
+            raise DockerContextError(f"context source is ignored: {source!r}")
+        return _ContextSelection(
+            source=source,
+            kind="literal_directory",
+            entries=_validate_selection_entries(entries),
+        )
 
     def _select_wildcard(self, source: str) -> _ContextSelection:
-        matched_files = [
-            path for path in self._raw_files if _glob_matches(source, path)
+        matched_entries = [
+            entry for entry in self._raw_entries if _glob_matches(source, entry.path)
         ]
-        matched_directories = [
-            path for path in self._raw_directories if _glob_matches(source, path)
-        ]
-        if not matched_files and not matched_directories:
+        if not matched_entries:
             raise DockerContextError(f"context source has no match: {source!r}")
 
         top_directories: list[str] = []
-        for directory in sorted(
-            matched_directories, key=lambda item: (item.count("/"), item)
+        for entry in sorted(
+            (entry for entry in matched_entries if entry.kind == "directory"),
+            key=lambda item: (item.path.count("/"), item.path),
         ):
             if not any(
-                directory.startswith(f"{parent}/") for parent in top_directories
+                entry.path.startswith(f"{parent}/") for parent in top_directories
             ):
-                top_directories.append(directory)
+                top_directories.append(entry.path)
 
-        files: list[_SelectedContextFile] = []
+        entries: list[_SelectedContextEntry] = []
         for directory in top_directories:
             prefix = f"{directory}/"
-            for path in self._visible_files:
-                if path.startswith(prefix):
-                    child = path.removeprefix(prefix)
-                    files.append(
-                        _SelectedContextFile(
-                            path, f"{posixpath.basename(directory)}/{child}"
-                        )
+            for entry in self._visible_entries:
+                if entry.path == directory or entry.path.startswith(prefix):
+                    child = (
+                        ""
+                        if entry.path == directory
+                        else entry.path.removeprefix(prefix)
                     )
+                    target = posixpath.basename(directory)
+                    if child:
+                        target = f"{target}/{child}"
+                    entries.append(_selected_entry(entry, target))
 
-        for path in self._visible_files:
-            if not _glob_matches(source, path):
+        for entry in self._visible_entries:
+            if not _glob_matches(source, entry.path):
                 continue
-            if any(path.startswith(f"{directory}/") for directory in top_directories):
+            if any(
+                entry.path == directory or entry.path.startswith(f"{directory}/")
+                for directory in top_directories
+            ):
                 continue
-            files.append(_SelectedContextFile(path, posixpath.basename(path)))
+            entries.append(_selected_entry(entry, posixpath.basename(entry.path)))
 
-        if not files:
+        if not entries:
             raise DockerContextError(f"context source is ignored: {source!r}")
         return _ContextSelection(
             source=source,
             kind="wildcard",
-            files=_validate_selection_files(files),
+            entries=_validate_selection_entries(entries),
         )
+
+
+def _selected_entry(
+    entry: DockerContextEntry, relative_target: str
+) -> _SelectedContextEntry:
+    """Attach a destination-relative path to a context entry."""
+
+    return _SelectedContextEntry(
+        source_path=entry.path,
+        relative_target=relative_target,
+        kind=entry.kind,
+        mode=entry.mode,
+    )
 
 
 class DockerContext(ABC):
@@ -208,10 +262,12 @@ class DockerContext(ABC):
         """
 
     @abstractmethod
-    def walk(self) -> Iterator[str]:
-        """Enumerate relative POSIX paths of all context files.
+    def walk(self) -> Iterator[DockerContextEntry]:
+        """Enumerate every context file and directory as structured entries.
 
-        The Dockerfile itself is not part of the enumerated context files.
+        Entries use relative POSIX paths. The Dockerfile itself is not included.
+        File entries must be readable through :meth:`open`; directory entries
+        make empty directories and their permission modes representable.
         """
 
 
@@ -221,11 +277,14 @@ def _to_posix(rel: str) -> str:
     return rel.replace(os.sep, "/").lstrip("/")
 
 
-def _validate_walk_paths(paths: tuple[object, ...]) -> None:
-    """Reject malformed context paths before they can affect selection."""
+def _validate_walk_entries(entries: tuple[object, ...]) -> None:
+    """Reject malformed context entries before they can affect selection."""
 
-    seen: set[str] = set()
-    for path in paths:
+    seen: dict[str, DockerContextEntry] = {}
+    for entry in entries:
+        if not isinstance(entry, DockerContextEntry):
+            raise DockerContextError("context walk yielded a non-entry")
+        path = entry.path
         if not isinstance(path, str):
             raise DockerContextError("context walk yielded a non-string path")
         if not path:
@@ -245,19 +304,21 @@ def _validate_walk_paths(paths: tuple[object, ...]) -> None:
             raise DockerContextError("context walk yielded a non-normalized path")
         if path in seen:
             raise DockerContextError(f"context walk yielded a duplicate path: {path!r}")
-        seen.add(path)
+        seen[path] = entry
 
-
-def _directories_from_files(paths: tuple[str, ...]) -> set[str]:
-    """Derive non-empty directories from walked file paths."""
-
-    directories: set[str] = set()
-    for path in paths:
-        segments = path.split("/")
-        for index in range(1, len(segments)):
-            directories.add("/".join(segments[:index]))
-    return directories
-
+    for path in seen:
+        parent = posixpath.dirname(path)
+        while parent not in ("", "."):
+            ancestor = seen.get(parent)
+            if ancestor is None:
+                raise DockerContextError(
+                    f"context walk omitted directory entry: {parent!r}"
+                )
+            if ancestor.kind == "file":
+                raise DockerContextError(
+                    f"context walk yielded a file-as-ancestor path: {parent!r}"
+                )
+            parent = posixpath.dirname(parent)
 
 def _is_reserved_root_path(path: str) -> bool:
     """Return whether a root metadata file is never selectable."""
@@ -384,12 +445,12 @@ def _glob_matches(pattern: str, path: str) -> bool:
     return match(0, 0)
 
 
-def _validate_selection_files(
-    files: tuple[_SelectedContextFile, ...] | list[_SelectedContextFile],
-) -> tuple[_SelectedContextFile, ...]:
-    """Sort selection files and reject source or target collisions."""
+def _validate_selection_entries(
+    entries: tuple[_SelectedContextEntry, ...] | list[_SelectedContextEntry],
+) -> tuple[_SelectedContextEntry, ...]:
+    """Sort selection entries and reject source or target collisions."""
 
-    ordered = tuple(sorted(files, key=lambda item: item.source_path))
+    ordered = tuple(sorted(entries, key=lambda item: item.source_path))
     source_paths = [item.source_path for item in ordered]
     target_paths = [item.relative_target for item in ordered]
     if len(source_paths) != len(set(source_paths)):
@@ -501,24 +562,46 @@ class LocalDockerContext(DockerContext):
                 for descriptor in reversed(directory_fds):
                     os.close(descriptor)
 
-    def walk(self) -> Iterator[str]:
+    def walk(self) -> Iterator[DockerContextEntry]:
+        """Deterministically enumerate regular files and all directories.
+
+        Symlinks and non-regular files fail closed. Keeping directory entries is
+        required to preserve empty directories and their modes during COPY.
+        """
+
         if not os.path.isdir(self._context_dir):
             return
         dockerfile_abs = (
             os.path.normpath(self._dockerfile_path) if self._dockerfile_path else None
         )
+        entries: list[DockerContextEntry] = []
         for root, dirs, files in os.walk(self._context_dir):
+            dirs.sort()
             for name in dirs:
-                if os.path.islink(os.path.join(root, name)):
+                full = os.path.join(root, name)
+                info = os.lstat(full)
+                if stat.S_ISLNK(info.st_mode):
                     raise DockerContextError(
                         f"context contains a symbolic link: {name!r}"
                     )
-            dirs.sort()
+                if not stat.S_ISDIR(info.st_mode):
+                    raise DockerContextError(
+                        f"context path is not a directory: {name!r}"
+                    )
+                rel = _to_posix(os.path.relpath(full, self._context_dir))
+                entries.append(
+                    DockerContextEntry(rel, "directory", stat.S_IMODE(info.st_mode))
+                )
             for name in sorted(files):
                 full = os.path.join(root, name)
-                if os.path.islink(full):
+                info = os.lstat(full)
+                if stat.S_ISLNK(info.st_mode):
                     raise DockerContextError(
                         f"context contains a symbolic link: {name!r}"
+                    )
+                if not stat.S_ISREG(info.st_mode):
+                    raise DockerContextError(
+                        f"context path is not a regular file: {name!r}"
                     )
                 if dockerfile_abs and os.path.normpath(full) == dockerfile_abs:
                     continue
@@ -528,8 +611,11 @@ class LocalDockerContext(DockerContext):
                     and name.lower() == "dockerfile"
                 ):
                     continue
-                rel = os.path.relpath(full, self._context_dir)
-                yield _to_posix(rel)
+                rel = _to_posix(os.path.relpath(full, self._context_dir))
+                entries.append(
+                    DockerContextEntry(rel, "file", stat.S_IMODE(info.st_mode))
+                )
+        yield from sorted(entries, key=lambda entry: entry.path)
 
     @property
     def context_dir(self) -> str:

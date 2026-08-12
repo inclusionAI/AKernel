@@ -156,21 +156,29 @@ rejects a parsed result containing unsupported syntax.
 | --- | --- |
 | Exactly one literal `FROM`, optionally `AS alias`; shell-form `RUN` | Multiple stages, `COPY --from`, `FROM` flags or variables, and exec-form `RUN` |
 | Shell-form local `COPY` and `ADD` paths: files, directories, `.`, and wildcards; literal `--chown`; literal local tar extraction for `ADD` | JSON-form `COPY`/`ADD`, remote `ADD` URLs, `--chmod`, `--link`, unknown flags, or build-time variable expansion |
-| Literal `ENV`, absolute `WORKDIR`, literal `USER`, and `EXPOSE` metadata | Any `ARG`, relative `WORKDIR`, and `VOLUME`, `LABEL`, `HEALTHCHECK`, `SHELL`, `STOPSIGNAL`, `ONBUILD`, `MAINTAINER`, or unknown instructions |
+| Literal `ENV`, absolute `WORKDIR`, named `USER` values such as `app` or `root`, and `EXPOSE` metadata | Any `ARG`, relative `WORKDIR`, `USER user:group` or numeric UID/GID values, and `VOLUME`, `LABEL`, `HEALTHCHECK`, `SHELL`, `STOPSIGNAL`, `ONBUILD`, `MAINTAINER`, or unknown instructions |
 | Exec- or shell-form `CMD` and `ENTRYPOINT`, normalized and combined | — |
 
-A `DockerContext` exposes Dockerfile text plus context files. `LocalDockerContext`
-uses a local directory; custom contexts may implement the same abstraction.
-Before any sandbox operation, direct launch walks and validates the context
-manifest, applies root `.dockerignore` rules, excludes `Dockerfile` and
+A `DockerContext` exposes Dockerfile text plus structured `DockerContextEntry`
+values from `walk()`. Each entry has a relative POSIX `path`, `kind` of `file`
+or `directory`, and a permission-bit `mode` from `0o000` through `0o777`;
+custom contexts must expose files and every ancestor or empty directory.
+`LocalDockerContext` uses a local directory and rejects symbolic links. Before
+any sandbox operation, direct launch walks and validates the manifest, applies
+root `.dockerignore` rules to files and directories, excludes `Dockerfile` and
 `.dockerignore` from selection, plans every `COPY`/`ADD`, and materializes all
-selected files. Local context symbolic links are rejected, and paths and target
-collisions fail closed. `--chown` affects only files and directories created by
-the current instruction. Local tar `ADD` accepts only regular files and
-directories with safe paths. Remote `ADD` URLs are rejected; the SDK never
-fetches them. Secure local context opening requires platform support for
-directory-relative file descriptors and no-follow flags; unsupported platforms
-fail closed.
+selected files. Selected directory entries create empty and nested directories,
+while each copied child file or directory has its own non-recursive mode
+restored. For a literal directory source, the source root itself is only a
+content container: the destination is created when needed, but does not inherit
+that source-root mode. Paths and target collisions fail closed. `--chown`
+affects only files and directories
+created by the current instruction. Local tar `ADD` accepts only regular files
+and directories with safe paths, preserves tar member metadata, and always
+extracts as the builder/root identity before applying `--chown`. Remote `ADD`
+URLs are rejected; the SDK never fetches them. Secure local context opening
+requires platform support for directory-relative file descriptors and no-follow
+flags; unsupported platforms fail closed.
 
 Each launch executes `RUN`, `COPY`, and `ADD` again in a new sandbox. There is
 no snapshot or build cache. After instructions finish, the SDK polls **sandbox

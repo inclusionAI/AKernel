@@ -25,6 +25,7 @@ from typing import BinaryIO
 
 from akernel_sdk._dockercontext import (
     DockerContext,
+    DockerContextEntry,
     DockerContextError,
     LocalDockerContext,
 )
@@ -35,6 +36,7 @@ from akernel_sdk._dockerfile import (
     DockerfileBuildError,
     DockerfileParseError,
     RunInstruction,
+    UserInstruction,
     _json_array,
     check_direct_launch,
     parse_dockerfile,
@@ -146,10 +148,12 @@ class _MemoryDockerContext(DockerContext):
         files: dict[str, bytes],
         *,
         fail_path: str | None = None,
+        entries: tuple[DockerContextEntry, ...] | None = None,
     ) -> None:
         self._dockerfile = dockerfile
         self._files = files
         self._fail_path = fail_path
+        self._entries = entries
         self.open_paths: list[str] = []
 
     def dockerfile_text(self) -> str:
@@ -162,8 +166,23 @@ class _MemoryDockerContext(DockerContext):
             raise OSError(f"cannot open {path}")
         yield io.BytesIO(self._files[path])
 
-    def walk(self) -> Iterator[str]:
-        yield from self._files
+    def walk(self) -> Iterator[DockerContextEntry]:
+        if self._entries is not None:
+            yield from self._entries
+            return
+        directories = {
+            "/".join(path.split("/")[:index])
+            for path in self._files
+            for index in range(1, len(path.split("/")))
+        }
+        yield from (
+            DockerContextEntry(path, "directory", 0o755)
+            for path in sorted(directories)
+        )
+        yield from (
+            DockerContextEntry(path, "file", 0o644)
+            for path in sorted(self._files)
+        )
 
 
 class TestParseDockerfile(unittest.TestCase):
@@ -329,10 +348,9 @@ class TestCheckDirectLaunch(unittest.TestCase):
 
 
 class TestWrapUser(unittest.TestCase):
-    def test_no_user_passthrough(self):
+    def test_no_user_and_root_passthrough(self):
         self.assertEqual(wrap_user("whoami", None), "whoami")
         self.assertEqual(wrap_user("whoami", "root"), "whoami")
-        self.assertEqual(wrap_user("whoami", "0"), "whoami")
 
     def test_user_wraps_runuser_with_su_fallback(self):
         wrapped = wrap_user("whoami", "app")
@@ -340,11 +358,11 @@ class TestWrapUser(unittest.TestCase):
         self.assertIn("su -s /bin/sh", wrapped)
         self.assertIn("app", wrapped)
 
-    def test_group_stripped(self):
-        wrapped = wrap_user("whoami", "app:grp")
-        # Should reference user "app" not "app:grp"
-        self.assertIn("app", wrapped)
-        self.assertNotIn("app:grp", wrapped)
+    def test_unsupported_user_is_not_silently_rewritten(self):
+        for user in ("app:grp", "0", "1000:1001", ""):
+            with self.subTest(user=user):
+                with self.assertRaisesRegex(ValueError, "named user"):
+                    wrap_user("whoami", user)
 
 
 class TestResolveStartCmd(unittest.TestCase):
@@ -519,9 +537,10 @@ class TestApplyDockerfile(unittest.TestCase):
                 any("tar xf" in o[1] and "/opt/app" in o[1] for o in run_ops)
             )
             self.assertTrue(any("--no-same-owner" in o[1] for o in run_ops))
-            self.assertTrue(
-                any("tar xf" in o[1] and "runuser" in o[1] for o in run_ops)
-            )
+            tar_op = next(o for o in run_ops if "tar xf" in o[1])
+            self.assertNotIn("runuser", tar_op[1])
+            self.assertNotIn("su -s", tar_op[1])
+            self.assertEqual(tar_op[4], "/")
 
     def test_add_tar_rejects_path_traversal(self):
         import io
@@ -555,8 +574,11 @@ class TestDockerfileManifestCopies(unittest.TestCase):
         *,
         fail_path: str | None = None,
         existing_paths: set[str] | None = None,
+        entries: tuple[DockerContextEntry, ...] | None = None,
     ) -> tuple[_MockSandbox, _MemoryDockerContext]:
-        context = _MemoryDockerContext(dockerfile, files, fail_path=fail_path)
+        context = _MemoryDockerContext(
+            dockerfile, files, fail_path=fail_path, entries=entries
+        )
         sandbox = _MockSandbox(existing_paths=existing_paths)
         apply_dockerfile(
             sandbox,
@@ -652,7 +674,6 @@ class TestDockerfileManifestCopies(unittest.TestCase):
                 "COPY . /dest/\n",
                 {".dockerignore": b"*.txt\n", "hidden.txt": b""},
             ),
-            ("COPY . /dest/\n", {"a": b"", "a-foo": b"", "a/b": b""}),
         )
         for instruction, files in cases:
             with self.subTest(instruction=instruction):
@@ -773,13 +794,16 @@ class TestDockerfileManifestCopies(unittest.TestCase):
             [operation[2] for operation in sandbox.files.ops if operation[0] == "cp"],
             ["/one/a", "/two/b"],
         )
-        self.assertEqual(events, ["run", "copy:/one/a", "copy:/two/b"])
+        self.assertEqual(
+            events,
+            ["run", "copy:/one/a", "run", "copy:/two/b", "run"],
+        )
 
     def test_manifest_failure_is_wrapped_before_sandbox_operations(self) -> None:
         class BrokenContext(_MemoryDockerContext):
-            def walk(self) -> Iterator[str]:
+            def walk(self) -> Iterator[DockerContextEntry]:
                 raise OSError("walk failed")
-                yield "unreachable"
+                yield DockerContextEntry("unreachable", "file", 0o644)
 
         context = BrokenContext("FROM ubuntu\nRUN echo never\nCOPY a /dest/\n", {})
         sandbox = _MockSandbox()
@@ -975,6 +999,173 @@ class TestDockerfileManifestCopies(unittest.TestCase):
         self.assertFalse(any("chown" in op[1] for op in sandbox.commands.ops))
 
 
+    def test_structured_context_copies_empty_directories_and_modes(self) -> None:
+        entries = (
+            DockerContextEntry("empty", "directory", 0o711),
+            DockerContextEntry("top", "directory", 0o755),
+            DockerContextEntry("top/nested", "directory", 0o750),
+            DockerContextEntry("plain.txt", "file", 0o640),
+            DockerContextEntry("run.sh", "file", 0o755),
+        )
+        context = _MemoryDockerContext(
+            "FROM ubuntu\nCOPY empty/ /srv/empty/\nCOPY . /tree/\n",
+            {"plain.txt": b"plain", "run.sh": b"#!/bin/sh\n"},
+            entries=entries,
+        )
+        sandbox = _MockSandbox()
+        apply_dockerfile(
+            sandbox, parse_dockerfile(context), context, auto_start_cmd=False
+        )
+        copied = [op[2] for op in sandbox.files.ops if op[0] == "cp"]
+        self.assertEqual(copied, ["/tree/plain.txt", "/tree/run.sh"])
+        made_dirs = [op[1] for op in sandbox.files.ops if op[0] == "mkdir"]
+        self.assertEqual(
+            made_dirs,
+            [
+                "/srv",
+                "/srv/empty",
+                "/tree",
+                "/tree/empty",
+                "/tree/top",
+                "/tree/top/nested",
+            ],
+        )
+        chmod = [op[1] for op in sandbox.commands.ops if "chmod" in op[1]]
+        self.assertEqual(
+            chmod,
+            [
+                "chmod 0711 /tree/empty",
+                "chmod 0640 /tree/plain.txt",
+                "chmod 0755 /tree/run.sh",
+                "chmod 0755 /tree/top",
+                "chmod 0750 /tree/top/nested",
+            ],
+        )
+        self.assertEqual(context.open_paths, ["plain.txt", "run.sh"])
+
+    def test_literal_directory_copy_to_root_copies_contents_and_subdirectories(
+        self,
+    ) -> None:
+        entries = (
+            DockerContextEntry("src", "directory", 0o700),
+            DockerContextEntry("src/a", "file", 0o640),
+            DockerContextEntry("src/empty", "directory", 0o711),
+        )
+        sandbox, context = self._apply_memory(
+            "FROM ubuntu\nCOPY src /\n",
+            {"src/a": b"a"},
+            entries=entries,
+        )
+        self.assertEqual(
+            [operation[2] for operation in sandbox.files.ops if operation[0] == "cp"],
+            ["/a"],
+        )
+        self.assertEqual(
+            [
+                operation[1]
+                for operation in sandbox.files.ops
+                if operation[0] == "mkdir"
+            ],
+            ["/empty"],
+        )
+        self.assertEqual(
+            [
+                operation[1]
+                for operation in sandbox.commands.ops
+                if "chmod" in operation[1]
+            ],
+            ["chmod 0640 /a", "chmod 0711 /empty"],
+        )
+        self.assertEqual(context.open_paths, ["src/a"])
+
+    def test_empty_literal_directory_copy_to_root_has_no_sandbox_operations(
+        self,
+    ) -> None:
+        context = _MemoryDockerContext(
+            "FROM ubuntu\nCOPY empty /\n",
+            {},
+            entries=(DockerContextEntry("empty", "directory", 0o700),),
+        )
+        sandbox = _MockSandbox()
+        apply_dockerfile(
+            sandbox, parse_dockerfile(context), context, auto_start_cmd=False
+        )
+        self.assertEqual(sandbox.files.ops, [])
+        self.assertEqual(sandbox.commands.ops, [])
+        self.assertEqual(context.open_paths, [])
+
+    def test_multiple_literal_directories_share_destination_marker(self) -> None:
+        entries = (
+            DockerContextEntry("one", "directory", 0o700),
+            DockerContextEntry("one/a", "file", 0o640),
+            DockerContextEntry("two", "directory", 0o711),
+            DockerContextEntry("two/b", "file", 0o600),
+        )
+        sandbox, _ = self._apply_memory(
+            "FROM ubuntu\nCOPY one two /target/\n",
+            {"one/a": b"a", "two/b": b"b"},
+            entries=entries,
+        )
+        self.assertEqual(
+            [operation[2] for operation in sandbox.files.ops if operation[0] == "cp"],
+            ["/target/a", "/target/b"],
+        )
+        self.assertNotIn(
+            "chmod 0700 /target",
+            [operation[1] for operation in sandbox.commands.ops],
+        )
+        self.assertNotIn(
+            "chmod 0711 /target",
+            [operation[1] for operation in sandbox.commands.ops],
+        )
+
+    def test_literal_directory_root_marker_does_not_chmod_destination(self) -> None:
+        entries = (
+            DockerContextEntry("src", "directory", 0o700),
+            DockerContextEntry("src/a", "file", 0o640),
+        )
+        sandbox, _ = self._apply_memory(
+            "FROM ubuntu\nCOPY src /target/\n",
+            {"src/a": b"a"},
+            existing_paths={"/target"},
+            entries=entries,
+        )
+        chmod = [
+            operation[1]
+            for operation in sandbox.commands.ops
+            if "chmod" in operation[1]
+        ]
+        self.assertEqual(chmod, ["chmod 0640 /target/a"])
+        self.assertNotIn("chmod 0700 /target", chmod)
+
+    def test_runner_commands_always_receive_root_cwd(self) -> None:
+        archive = _archive_bytes([_regular_member("inside")])
+        context = _MemoryDockerContext(
+            "FROM ubuntu\n"
+            "USER app\n"
+            "RUN echo build\n"
+            "COPY input /copy/\n"
+            "ADD --chown=app:app app.tar /extract/\n"
+            'CMD ["server"]\n',
+            {"input": b"input", "app.tar": archive},
+        )
+        sandbox = _MockSandbox()
+        apply_dockerfile(
+            sandbox, parse_dockerfile(context), context, auto_start_cmd=True
+        )
+        commands = [op for op in sandbox.commands.ops if op[0] == "run"]
+        self.assertTrue(any("test ! -L" in op[1] for op in commands))
+        self.assertTrue(any("tar xf" in op[1] for op in commands))
+        self.assertTrue(any("chown app:app" in op[1] for op in commands))
+        self.assertTrue(any("chmod 0644 /copy/input" in op[1] for op in commands))
+        self.assertTrue(any(op[2] for op in commands))
+        self.assertTrue(all(op[4] == "/" for op in commands))
+        tar = next(op[1] for op in commands if "tar xf" in op[1])
+        self.assertNotIn("runuser", tar)
+        self.assertNotIn("su -s", tar)
+
+
+
 class TestLocalDockerContext(unittest.TestCase):
     def test_content_string(self):
         ctx = LocalDockerContext("FROM ubuntu\n")
@@ -1003,8 +1194,12 @@ class TestLocalDockerContext(unittest.TestCase):
                 _f.write("FROM ubuntu\n")
             with open(os.path.join(d, "app.py"), "w") as _f:
                 _f.write("print(1)")
+            os.chmod(os.path.join(d, "app.py"), 0o640)
             ctx = LocalDockerContext("FROM ubuntu\n", context_dir=d)
-            self.assertEqual(list(ctx.walk()), ["app.py"])
+            self.assertEqual(
+                list(ctx.walk()),
+                [DockerContextEntry("app.py", "file", 0o640)],
+            )
 
     def test_open_path_escape_rejected(self):
         import tempfile
@@ -1031,6 +1226,26 @@ class TestLocalDockerContext(unittest.TestCase):
 class TestStrictDockerfileSemantics(unittest.TestCase):
     def _parse(self, dockerfile, strict=False):
         return parse_dockerfile(LocalDockerContext(dockerfile), strict=strict)
+
+    def test_user_accepts_only_literal_names(self):
+        accepted = self._parse("FROM ubuntu\nUSER app\n", strict=True)
+        self.assertEqual(accepted.user, "app")
+        for value in ("app:staff", "1000", "1000:1001", "app staff", ""):
+            with self.subTest(value=value):
+                dockerfile = f"FROM ubuntu\nUSER {value}\n"
+                parsed = self._parse(dockerfile)
+                self.assertEqual(parsed.user, None)
+                self.assertFalse(
+                    any(
+                        isinstance(item, UserInstruction)
+                        for item in parsed.instructions
+                    )
+                )
+                result = check_direct_launch(LocalDockerContext(dockerfile))
+                self.assertFalse(result.direct_launchable)
+                self.assertEqual(result.reasons, ("unsupported_syntax",))
+                with self.assertRaises(DockerfileParseError):
+                    self._parse(dockerfile, strict=True)
 
     def test_remote_add_is_never_executable(self):
         dockerfile = "FROM ubuntu\nADD https://example.test/app.tar /opt/\n"

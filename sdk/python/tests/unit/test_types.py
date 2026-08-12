@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 
 import akernel_sdk
-from akernel_sdk import HttpReverseTunnel, Mount, S3Config
+from akernel_sdk import DockerContextEntry, HttpReverseTunnel, Mount, S3Config
 
 
 class PublicTypesTest(unittest.TestCase):
@@ -71,6 +71,7 @@ assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
                 "UnsupportedBackendFeatureError",
                 "BackendOperationError",
                 "DockerContext",
+                "DockerContextEntry",
                 "LocalDockerContext",
                 "parse_dockerfile",
                 "check_direct_launch",
@@ -93,6 +94,12 @@ assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
             "Shell",
         ):
             self.assertFalse(hasattr(akernel_sdk, removed), removed)
+
+    def test_docker_context_entry_is_public_and_immutable(self):
+        entry = DockerContextEntry("empty", "directory", 0o755)
+        self.assertEqual(entry.path, "empty")
+        with self.assertRaisesRegex(AttributeError, "cannot assign"):
+            entry.mode = 0o700  # type: ignore[misc]
 
     def test_s3_config_serialization(self):
         config = S3Config(
