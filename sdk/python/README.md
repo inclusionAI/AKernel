@@ -171,8 +171,11 @@ selected files. Selected directory entries create empty and nested directories,
 while each copied child file or directory has its own non-recursive mode
 restored. For a literal directory source, the source root itself is only a
 content container: the destination is created when needed, but does not inherit
-that source-root mode. Paths and target collisions fail closed. `--chown`
-affects only files and directories
+that source-root mode. A wildcard that matches a directory likewise copies its
+contents, rather than the matched directory name. Wildcard source patterns
+follow Docker filepath-style segment matching, so `**` has the same one-segment
+behavior as `*`. Paths and target collisions fail closed. `--chown` affects only
+files and directories
 created by the current instruction. Local tar `ADD` accepts only regular files
 and directories with safe paths, preserves tar member metadata, and always
 extracts as the builder/root identity before applying `--chown`. Remote `ADD`

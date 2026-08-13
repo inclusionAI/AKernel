@@ -311,9 +311,7 @@ class _Runner:
                 )
             for selected in selection.entries:
                 is_destination_marker = (
-                    selection.kind == "literal_directory"
-                    and selected.kind == "directory"
-                    and selected.relative_target == ""
+                    selected.kind == "directory" and selected.relative_target == ""
                 )
                 try:
                     remote_path = (
@@ -399,7 +397,9 @@ class _Runner:
             )
         else:
             directories = self._copy_directories(prepared.plans)
-            new_directories = self._new_directories(directories) if ins.chown else ()
+            new_directories = (
+                self._new_directories(directories) if ins.chown else ()
+            )
             for directory in directories:
                 self._sb.files.make_dir(directory)
             for plan in prepared.plans:

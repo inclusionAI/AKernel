@@ -16,12 +16,17 @@
 
 from __future__ import annotations
 
+import errno
 import io
+import os
 import tarfile
+import tempfile
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import BinaryIO
+from unittest.mock import patch
 
 from akernel_sdk._dockercontext import (
     DockerContext,
@@ -650,13 +655,163 @@ class TestDockerfileManifestCopies(unittest.TestCase):
                 ],
             ),
             ("COPY *.py /four/\n", ["/four/root.py"]),
-            ("COPY src/**/*.py /five/\n", ["/five/a.py", "/five/b.py"]),
+            ("COPY src/**/*.py /five/\n", ["/five/b.py"]),
         )
         for instruction, expected in cases:
             with self.subTest(instruction=instruction):
                 sandbox, _ = self._apply_memory("FROM ubuntu\n" + instruction, files)
                 copies = [op[2] for op in sandbox.files.ops if op[0] == "cp"]
                 self.assertEqual(copies, expected)
+
+    def test_wildcard_directory_copy_targets_match_buildkit(self) -> None:
+        for destination in ("/subdest/", "/subdest"):
+            with self.subTest(destination=destination):
+                sandbox, _ = self._apply_memory(
+                    f"FROM ubuntu\nCOPY sub/* {destination}\n",
+                    {"sub/dir1/dir2/foo": b"foo"},
+                )
+                self.assertEqual(
+                    [
+                        operation[2]
+                        for operation in sandbox.files.ops
+                        if operation[0] == "cp"
+                    ],
+                    ["/subdest/dir2/foo"],
+                )
+                made_dirs = [
+                    operation[1]
+                    for operation in sandbox.files.ops
+                    if operation[0] == "mkdir"
+                ]
+                self.assertEqual(made_dirs, ["/subdest", "/subdest/dir2"])
+                self.assertNotIn("/subdest/dir1", made_dirs)
+
+        mixed, _ = self._apply_memory(
+            "FROM ubuntu\nCOPY sub/* /subdest/\n",
+            {"sub/dir1/dir2/foo": b"foo", "sub/file": b"file"},
+        )
+        self.assertEqual(
+            [operation[2] for operation in mixed.files.ops if operation[0] == "cp"],
+            ["/subdest/dir2/foo", "/subdest/file"],
+        )
+
+        modules, _ = self._apply_memory(
+            "FROM ubuntu\nCOPY modules/** /dest/\n",
+            {"modules/one/x.py": b"x", "modules/two/y.txt": b"y"},
+        )
+        self.assertEqual(
+            [
+                operation[2]
+                for operation in modules.files.ops
+                if operation[0] == "cp"
+            ],
+            ["/dest/x.py", "/dest/y.txt"],
+        )
+        module_directories = [
+            operation[1]
+            for operation in modules.files.ops
+            if operation[0] == "mkdir"
+        ]
+        self.assertEqual(module_directories, ["/dest"])
+
+        multiple, _ = self._apply_memory(
+            "FROM ubuntu\nCOPY * /target/\n",
+            {"one/a": b"a", "two/b": b"b"},
+        )
+        self.assertEqual(
+            [
+                operation[2]
+                for operation in multiple.files.ops
+                if operation[0] == "cp"
+            ],
+            ["/target/a", "/target/b"],
+        )
+
+        empty = _MemoryDockerContext(
+            "FROM ubuntu\nCOPY --chown=app:app empty* /target/\n",
+            {},
+            entries=(DockerContextEntry("empty", "directory", 0o700),),
+        )
+        empty_sandbox = _MockSandbox()
+        apply_dockerfile(
+            empty_sandbox,
+            parse_dockerfile(empty),
+            empty,
+            auto_start_cmd=False,
+        )
+        self.assertEqual(empty_sandbox.files.ops, [("mkdir", "/target")])
+        self.assertEqual(
+            [op[1] for op in empty_sandbox.commands.ops if "chown" in op[1]],
+            ["chown app:app /target"],
+        )
+
+        root_empty = _MemoryDockerContext(
+            "FROM ubuntu\nCOPY --chown=app:app empty* /\n",
+            {},
+            entries=(DockerContextEntry("empty", "directory", 0o700),),
+        )
+        root_empty_sandbox = _MockSandbox()
+        apply_dockerfile(
+            root_empty_sandbox,
+            parse_dockerfile(root_empty),
+            root_empty,
+            auto_start_cmd=False,
+        )
+        self.assertEqual(root_empty_sandbox.files.ops, [])
+        self.assertEqual(root_empty_sandbox.files.exists_calls, [])
+        self.assertEqual(root_empty_sandbox.commands.ops, [])
+
+        collision = _MemoryDockerContext(
+            "FROM ubuntu\nCOPY * /target/\n",
+            {"left/same": b"left", "right/same": b"right"},
+        )
+        collision_sandbox = _MockSandbox()
+        with self.assertRaisesRegex(DockerfileBuildError, "colliding"):
+            apply_dockerfile(
+                collision_sandbox,
+                parse_dockerfile(collision),
+                collision,
+                auto_start_cmd=False,
+            )
+        self.assertEqual(collision_sandbox.files.ops, [])
+        self.assertEqual(collision_sandbox.commands.ops, [])
+
+    def test_local_traversal_failure_prevents_copy_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            blocked = Path(directory, "blocked")
+            blocked.mkdir()
+            (blocked / "required.txt").write_text("required", encoding="utf-8")
+            context = LocalDockerContext(
+                "FROM ubuntu\nCOPY blocked /app\n", context_dir=directory
+            )
+            sandbox = _MockSandbox()
+            real_scandir = os.scandir
+
+            def deny_blocked(path: str | int) -> object:
+                if (
+                    isinstance(path, (str, bytes, os.PathLike))
+                    and os.path.abspath(os.fspath(path)) == str(blocked)
+                ):
+                    raise PermissionError(
+                        errno.EACCES, "Permission denied", str(blocked)
+                    )
+                return real_scandir(path)
+
+            with (
+                patch(
+                    "akernel_sdk._dockercontext.os.scandir",
+                    side_effect=deny_blocked,
+                ),
+                self.assertRaisesRegex(DockerfileBuildError, "blocked"),
+            ):
+                apply_dockerfile(
+                    sandbox,
+                    parse_dockerfile(context),
+                    context,
+                    auto_start_cmd=False,
+                )
+            self.assertEqual(sandbox.files.ops, [])
+            self.assertEqual(sandbox.commands.ops, [])
 
     def test_selection_and_target_errors_have_no_sandbox_operations(self) -> None:
         cases = (
@@ -889,7 +1044,7 @@ class TestDockerfileManifestCopies(unittest.TestCase):
         self.assertNotIn("chown app:app /app", chown)
         self.assertFalse(any("-R" in command for command in chown))
 
-    def test_directory_copy_chown_includes_only_new_parent_directories(self) -> None:
+    def test_directory_copy_chown_includes_new_destination_marker(self) -> None:
         sandbox, _ = self._apply_memory(
             "FROM ubuntu\nCOPY --chown=app:app src /app\n",
             {"src/a": b"a", "src/sub/b": b"b"},
