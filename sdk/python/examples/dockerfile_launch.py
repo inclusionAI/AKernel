@@ -20,7 +20,7 @@ sets runtime state. RUN/COPY/ADD execute for every launch, without a snapshot
 or build cache.
 
 Sections:
-    1. Core path — filtered COPY ., modes, empty directories, explicit state
+    1. Core path — filtered COPY ., wildcard directory COPY, modes, empty dirs
     2. Root cwd plus ENTRYPOINT + CMD exec-form combination
     3. COPY --chown ownership
     4. Builder/root ADD after USER
@@ -43,7 +43,7 @@ def _precheck(context: LocalDockerContext) -> None:
 
 
 def section_core_path() -> None:
-    """Copy a filtered context, then run a finite CMD with explicit state."""
+    """Copy a filtered context and wildcard directory, then run a finite CMD."""
     print("\n=== Section 1: filtered core path ===")
     with tempfile.TemporaryDirectory() as directory:
         context_dir = Path(directory)
@@ -62,8 +62,11 @@ def section_core_path() -> None:
         executable.chmod(0o755)
         empty = context_dir / "empty"
         nested_empty = context_dir / "tree" / "nested-empty"
+        wildcard_file = context_dir / "wild" / "dir1" / "dir2" / "foo"
         empty.mkdir()
         nested_empty.mkdir(parents=True)
+        wildcard_file.parent.mkdir(parents=True)
+        wildcard_file.write_text("wildcard\n", encoding="utf-8")
         empty.chmod(0o711)
         nested_empty.chmod(0o750)
         dockerfile = """\
@@ -73,9 +76,10 @@ RUN useradd -m app
 ENV WHOAMI=app
 WORKDIR /srv
 USER app
-COPY empty/ /srv/literal-empty/
-COPY . /srv/
-CMD ["python3", "/srv/app.py"]
+COPY empty/ /srv/core/literal-empty/
+COPY . /srv/core/
+COPY wild/* /srv/wild/
+CMD ["python3", "/srv/core/app.py"]
 """
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
         _precheck(context)
@@ -89,11 +93,11 @@ CMD ["python3", "/srv/app.py"]
             marker = sandbox.commands.run("cat /tmp/app.started")
             assert marker.exit_code == 0, marker.stderr
             assert marker.stdout.strip() == "whoami=app cwd=/srv", marker.stdout
-            absent = sandbox.commands.run("test ! -e /srv/secret.txt")
+            absent = sandbox.commands.run("test ! -e /srv/core/secret.txt")
             assert absent.exit_code == 0, absent.stderr
             modes = sandbox.commands.run(
-                "stat -c '%a' /srv/entrypoint.sh /srv/empty "
-                "/srv/tree/nested-empty /srv/literal-empty"
+                "stat -c '%a' /srv/core/entrypoint.sh /srv/core/empty "
+                "/srv/core/tree/nested-empty /srv/core/literal-empty"
             )
             assert modes.exit_code == 0, modes.stderr
             assert modes.stdout.splitlines() == [
@@ -102,6 +106,10 @@ CMD ["python3", "/srv/app.py"]
                 "750",
                 "755",
             ], modes.stdout
+            wildcard = sandbox.commands.run(
+                "test -f /srv/wild/dir2/foo && test ! -e /srv/wild/dir1"
+            )
+            assert wildcard.exit_code == 0, wildcard.stderr
             print(
                 f"  sandbox: {sandbox.id}; marker: {marker.stdout.strip()}; "
                 f"modes: {modes.stdout.splitlines()}"

@@ -198,14 +198,11 @@ class _ContextManifest:
             prefix = f"{directory}/"
             for entry in self._visible_entries:
                 if entry.path == directory or entry.path.startswith(prefix):
-                    child = (
+                    target = (
                         ""
                         if entry.path == directory
                         else entry.path.removeprefix(prefix)
                     )
-                    target = posixpath.basename(directory)
-                    if child:
-                        target = f"{target}/{child}"
                     entries.append(_selected_entry(entry, target))
 
         for entry in self._visible_entries:
@@ -416,33 +413,16 @@ def _has_wildcard(path: str) -> bool:
 
 
 def _glob_matches(pattern: str, path: str) -> bool:
-    """Match a POSIX path where ** spans zero or more path segments."""
+    """Match Docker source patterns one POSIX path segment at a time."""
 
     pattern_segments = pattern.split("/")
     path_segments = path.split("/")
-    cache: dict[tuple[int, int], bool] = {}
-
-    def match(pattern_index: int, path_index: int) -> bool:
-        key = (pattern_index, path_index)
-        if key in cache:
-            return cache[key]
-        if pattern_index == len(pattern_segments):
-            result = path_index == len(path_segments)
-        elif pattern_segments[pattern_index] == "**":
-            result = any(
-                match(pattern_index + 1, next_index)
-                for next_index in range(path_index, len(path_segments) + 1)
-            )
-        elif path_index == len(path_segments):
-            result = False
-        else:
-            result = fnmatch.fnmatchcase(
-                path_segments[path_index], pattern_segments[pattern_index]
-            ) and match(pattern_index + 1, path_index + 1)
-        cache[key] = result
-        return result
-
-    return match(0, 0)
+    return len(pattern_segments) == len(path_segments) and all(
+        fnmatch.fnmatchcase(path_segment, pattern_segment)
+        for pattern_segment, path_segment in zip(
+            pattern_segments, path_segments, strict=True
+        )
+    )
 
 
 def _validate_selection_entries(
@@ -452,7 +432,11 @@ def _validate_selection_entries(
 
     ordered = tuple(sorted(entries, key=lambda item: item.source_path))
     source_paths = [item.source_path for item in ordered]
-    target_paths = [item.relative_target for item in ordered]
+    target_paths = [
+        item.relative_target
+        for item in ordered
+        if not (item.kind == "directory" and item.relative_target == "")
+    ]
     if len(source_paths) != len(set(source_paths)):
         raise DockerContextError("context selection has duplicate source paths")
     if len(target_paths) != len(set(target_paths)):
@@ -574,12 +558,29 @@ class LocalDockerContext(DockerContext):
         dockerfile_abs = (
             os.path.normpath(self._dockerfile_path) if self._dockerfile_path else None
         )
+
+        def traversal_error(error: OSError, path: str) -> DockerContextError:
+            candidate = error.filename or path
+            try:
+                detail = _to_posix(os.path.relpath(candidate, self._context_dir))
+            except (TypeError, ValueError):
+                detail = str(candidate)
+            return DockerContextError(
+                f"cannot traverse Docker context directory: {detail!r}"
+            )
+
+        def onerror(error: OSError) -> None:
+            raise traversal_error(error, self._context_dir) from error
+
         entries: list[DockerContextEntry] = []
-        for root, dirs, files in os.walk(self._context_dir):
+        for root, dirs, files in os.walk(self._context_dir, onerror=onerror):
             dirs.sort()
             for name in dirs:
                 full = os.path.join(root, name)
-                info = os.lstat(full)
+                try:
+                    info = os.lstat(full)
+                except OSError as error:
+                    raise traversal_error(error, full) from error
                 if stat.S_ISLNK(info.st_mode):
                     raise DockerContextError(
                         f"context contains a symbolic link: {name!r}"
@@ -594,7 +595,10 @@ class LocalDockerContext(DockerContext):
                 )
             for name in sorted(files):
                 full = os.path.join(root, name)
-                info = os.lstat(full)
+                try:
+                    info = os.lstat(full)
+                except OSError as error:
+                    raise traversal_error(error, full) from error
                 if stat.S_ISLNK(info.st_mode):
                     raise DockerContextError(
                         f"context contains a symbolic link: {name!r}"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import io
 import os
 import tempfile
@@ -170,18 +171,28 @@ class TestContextManifest(unittest.TestCase):
         self.assertEqual(paths(manifest.select("*.py")), [("top.py", "top.py")])
         self.assertEqual(
             paths(manifest.select("src/**/*.py")),
-            [("src/a.py", "a.py"), ("src/lib/b.py", "b.py")],
+            [("src/lib/b.py", "b.py")],
+        )
+        wildcard_directories = manifest.select("modules/**")
+        self.assertEqual(
+            [
+                (item.source_path, item.relative_target, item.kind)
+                for item in wildcard_directories.entries
+            ],
+            [
+                ("modules/one", "", "directory"),
+                ("modules/one/x.py", "x.py", "file"),
+                ("modules/two", "", "directory"),
+                ("modules/two/y.txt", "y.txt", "file"),
+            ],
+        )
+        self.assertEqual(
+            paths(wildcard_directories),
+            [("modules/one/x.py", "x.py"), ("modules/two/y.txt", "y.txt")],
         )
         self.assertEqual(
             paths(manifest.select("modules/*")),
-            [("modules/one/x.py", "one/x.py"), ("modules/two/y.txt", "two/y.txt")],
-        )
-        self.assertEqual(
-            paths(manifest.select("modules/**")),
-            [
-                ("modules/one/x.py", "modules/one/x.py"),
-                ("modules/two/y.txt", "modules/two/y.txt"),
-            ],
+            paths(wildcard_directories),
         )
         with self.assertRaisesRegex(DockerContextError, "colliding"):
             manifest.select("*/*.py")
@@ -283,6 +294,8 @@ class TestContextManifest(unittest.TestCase):
                 path = Path(directory, name)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
+                os.chmod(path, 0o644)
+            os.chmod(Path(directory, "src"), 0o755)
             actual = _ContextManifest.from_context(
                 LocalDockerContext("FROM scratch", context_dir=directory)
             ).select(".")
@@ -313,6 +326,46 @@ class TestContextManifest(unittest.TestCase):
                         pass
             finally:
                 outside.unlink(missing_ok=True)
+
+    def test_local_walk_fails_closed_when_descending(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            blocked = Path(directory, "blocked")
+            blocked.mkdir()
+            (blocked / "required.txt").write_text("required", encoding="utf-8")
+            local = LocalDockerContext("FROM scratch", context_dir=directory)
+            real_scandir = os.scandir
+
+            def deny_blocked(path: str) -> object:
+                if os.path.abspath(os.fspath(path)) == str(blocked):
+                    raise PermissionError(
+                        errno.EACCES, "Permission denied", str(blocked)
+                    )
+                return real_scandir(path)
+
+            with (
+                patch(
+                    "akernel_sdk._dockercontext.os.scandir",
+                    side_effect=deny_blocked,
+                ),
+                self.assertRaisesRegex(DockerContextError, "blocked") as raised,
+            ):
+                list(local.walk())
+            self.assertIsInstance(raised.exception.__cause__, PermissionError)
+
+            with (
+                patch(
+                    "akernel_sdk._dockercontext.os.scandir",
+                    side_effect=deny_blocked,
+                ),
+                self.assertRaisesRegex(
+                    DockerContextError, "failed to walk Docker context"
+                ) as raised,
+            ):
+                _ContextManifest.from_context(local)
+            walk_error = raised.exception.__cause__
+            self.assertIsInstance(walk_error, DockerContextError)
+            self.assertIn("blocked", str(walk_error))
+            self.assertIsInstance(walk_error.__cause__, PermissionError)
 
     def test_local_open_rejects_symlink_replacement_race(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
