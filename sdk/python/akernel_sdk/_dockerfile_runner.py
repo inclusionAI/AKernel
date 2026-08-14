@@ -292,6 +292,17 @@ class _Runner:
 
         plans: list[_PlannedCopy] = []
         for source, selection in selections:
+            if (
+                selection.kind == "wildcard"
+                and selection.top_level_source_count > 1
+                and not ins.dest.endswith("/")
+            ):
+                raise DockerfileBuildError(
+                    f"{instruction} source {source!r} expands to multiple sources; "
+                    "destination must end in '/'",
+                    index=index,
+                    instruction=instruction,
+                )
             directory_target = (
                 selection.kind in ("literal_directory", "dot")
                 or selection.has_directories

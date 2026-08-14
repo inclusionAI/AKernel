@@ -173,9 +173,12 @@ restored. For a literal directory source, the source root itself is only a
 content container: the destination is created when needed, but does not inherit
 that source-root mode. A wildcard that matches a directory likewise copies its
 contents, rather than the matched directory name. Wildcard source patterns
-follow Docker filepath-style segment matching, so `**` has the same one-segment
-behavior as `*`. Paths and target collisions fail closed. `--chown` affects only
-files and directories
+follow Go `filepath.Match`-style segment matching, so `**` has the same
+one-segment behavior as `*`; `[^a]` negates a character class while `[!a]`
+matches `!` or `a`. Backslash escapes are outside this strict subset, and
+malformed classes fail closed. When one wildcard expands to multiple top-level
+sources after `.dockerignore` filtering, the destination must end in `/`. Paths
+and target collisions fail closed. `--chown` affects only files and directories
 created by the current instruction. Local tar `ADD` accepts only regular files
 and directories with safe paths, preserves tar member metadata, and always
 extracts as the builder/root identity before applying `--chown`. Remote `ADD`

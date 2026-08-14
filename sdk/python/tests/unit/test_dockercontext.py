@@ -197,6 +197,73 @@ class TestContextManifest(unittest.TestCase):
         with self.assertRaisesRegex(DockerContextError, "colliding"):
             manifest.select("*/*.py")
 
+    def test_wildcard_character_classes_follow_go_filepath_semantics(self) -> None:
+        manifest = _ContextManifest.from_context(
+            MemoryDockerContext(
+                {
+                    "!.txt": b"",
+                    "a.txt": b"",
+                    "b.txt": b"",
+                    "c.txt": b"",
+                    "é.txt": b"",
+                    "nested/x.txt": b"",
+                    "nested/deep/y.txt": b"",
+                }
+            )
+        )
+        self.assertEqual(
+            paths(manifest.select("[!a].txt")),
+            [("!.txt", "!.txt"), ("a.txt", "a.txt")],
+        )
+        self.assertEqual(
+            paths(manifest.select("[^a].txt")),
+            [
+                ("!.txt", "!.txt"),
+                ("b.txt", "b.txt"),
+                ("c.txt", "c.txt"),
+                ("é.txt", "é.txt"),
+            ],
+        )
+        self.assertEqual(
+            paths(manifest.select("[a-c].txt")),
+            [("a.txt", "a.txt"), ("b.txt", "b.txt"), ("c.txt", "c.txt")],
+        )
+        self.assertEqual(
+            paths(manifest.select("?.txt")),
+            [
+                ("!.txt", "!.txt"),
+                ("a.txt", "a.txt"),
+                ("b.txt", "b.txt"),
+                ("c.txt", "c.txt"),
+                ("é.txt", "é.txt"),
+            ],
+        )
+        self.assertEqual(
+            paths(manifest.select("**.txt")), paths(manifest.select("*.txt"))
+        )
+        self.assertEqual(
+            paths(manifest.select("*/?.txt")), [("nested/x.txt", "x.txt")]
+        )
+
+    def test_malformed_wildcard_patterns_fail_closed_before_file_reads(self) -> None:
+        for files in ({}, {"safe.txt": b""}):
+            for pattern in (
+                "file[.txt",
+                "[]",
+                "[^]",
+                "[a-]",
+                "[-a]",
+                "[a-b-c]",
+            ):
+                with self.subTest(files=files, pattern=pattern):
+                    context = MemoryDockerContext(files)
+                    manifest = _ContextManifest.from_context(context)
+                    with self.assertRaisesRegex(
+                        DockerContextError, "malformed context source pattern"
+                    ):
+                        manifest.select(pattern)
+                    self.assertEqual(context.open_paths, [])
+
     def test_wildcard_no_match_and_only_ignored(self) -> None:
         manifest = _ContextManifest.from_context(
             MemoryDockerContext(

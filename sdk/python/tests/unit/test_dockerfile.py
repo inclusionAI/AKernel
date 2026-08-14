@@ -776,6 +776,81 @@ class TestDockerfileManifestCopies(unittest.TestCase):
         self.assertEqual(collision_sandbox.files.ops, [])
         self.assertEqual(collision_sandbox.commands.ops, [])
 
+    def test_wildcard_multiple_sources_require_directory_destination(self) -> None:
+        rejected_cases = (
+            ("two directories", {"one/a": b"a", "two/b": b"b"}),
+            ("two files", {"one": b"one", "two": b"two"}),
+            ("directory and file", {"dir/a": b"a", "file": b"file"}),
+        )
+        for name, files in rejected_cases:
+            with self.subTest(name=name):
+                context = _MemoryDockerContext("FROM ubuntu\nCOPY * /target\n", files)
+                sandbox = _MockSandbox()
+                with self.assertRaisesRegex(DockerfileBuildError, "multiple sources"):
+                    apply_dockerfile(
+                        sandbox,
+                        parse_dockerfile(context),
+                        context,
+                        auto_start_cmd=False,
+                    )
+                self.assertEqual(sandbox.files.ops, [])
+                self.assertEqual(sandbox.commands.ops, [])
+                self.assertEqual(context.open_paths, [])
+
+        valid_cases = (
+            (
+                "two directories",
+                {"one/a": b"a", "two/b": b"b"},
+                ["/target/a", "/target/b"],
+            ),
+            (
+                "two files",
+                {"one": b"one", "two": b"two"},
+                ["/target/one", "/target/two"],
+            ),
+            (
+                "directory and file",
+                {"dir/a": b"a", "file": b"file"},
+                ["/target/a", "/target/file"],
+            ),
+        )
+        for name, files, targets in valid_cases:
+            with self.subTest(name=name):
+                sandbox, _ = self._apply_memory(
+                    "FROM ubuntu\nCOPY * /target/\n", files
+                )
+                self.assertEqual(
+                    [
+                        operation[2]
+                        for operation in sandbox.files.ops
+                        if operation[0] == "cp"
+                    ],
+                    targets,
+                )
+
+        single_directory, _ = self._apply_memory(
+            "FROM ubuntu\nCOPY * /target\n", {"one/a": b"a"}
+        )
+        self.assertEqual(
+            [
+                operation[2]
+                for operation in single_directory.files.ops
+                if operation[0] == "cp"
+            ],
+            ["/target/a"],
+        )
+        single_file, _ = self._apply_memory(
+            "FROM ubuntu\nCOPY * /target\n", {"one": b"one"}
+        )
+        self.assertEqual(
+            [
+                operation[2]
+                for operation in single_file.files.ops
+                if operation[0] == "cp"
+            ],
+            ["/target"],
+        )
+
     def test_local_traversal_failure_prevents_copy_side_effects(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             blocked = Path(directory, "blocked")
@@ -823,6 +898,7 @@ class TestDockerfileManifestCopies(unittest.TestCase):
             ("COPY /absolute /dest/\n", {"absolute": b""}),
             ("COPY ../parent /dest/\n", {"parent": b""}),
             ("COPY *.py /dest\n", {"a.py": b"", "b.py": b""}),
+            ("COPY file[.txt /dest/\n", {}),
             ("COPY one/a two/a /dest/\n", {"one/a": b"", "two/a": b""}),
             ("COPY . /dest/\n", {}),
             (
