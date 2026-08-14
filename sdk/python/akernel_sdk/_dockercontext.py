@@ -23,7 +23,6 @@ OSS, S3, memory, etc.
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import posixpath
 import stat
@@ -45,6 +44,20 @@ _SECURE_OPEN_SUPPORTED = (
 
 class DockerContextError(ValueError):
     """Raised when a Docker build context cannot be safely selected."""
+
+
+@dataclass(frozen=True)
+class _CharacterClass:
+    """One prevalidated Go filepath-style character class."""
+
+    negated: bool
+    ranges: tuple[tuple[str, str], ...]
+
+    def matches(self, character: str) -> bool:
+        """Return whether a Unicode codepoint belongs to this class."""
+
+        matched = any(low <= character <= high for low, high in self.ranges)
+        return matched != self.negated
 
 
 @dataclass(frozen=True)
@@ -87,6 +100,7 @@ class _ContextSelection:
     source: str
     kind: Literal["literal_file", "literal_directory", "dot", "wildcard"]
     entries: tuple[_SelectedContextEntry, ...]
+    top_level_source_count: int
 
     @property
     def has_directories(self) -> bool:
@@ -140,6 +154,7 @@ class _ContextManifest:
                     _selected_entry(entry, entry.path)
                     for entry in self._visible_entries
                 ),
+                top_level_source_count=1,
             )
         if _has_wildcard(normalized):
             return self._select_wildcard(normalized)
@@ -158,6 +173,7 @@ class _ContextManifest:
                 source=source,
                 kind="literal_file",
                 entries=(_selected_entry(entry, posixpath.basename(source)),),
+                top_level_source_count=1,
             )
 
         entries = tuple(
@@ -174,18 +190,24 @@ class _ContextManifest:
             source=source,
             kind="literal_directory",
             entries=_validate_selection_entries(entries),
+            top_level_source_count=1,
         )
 
     def _select_wildcard(self, source: str) -> _ContextSelection:
+        pattern = _compile_source_pattern(source)
         matched_entries = [
-            entry for entry in self._raw_entries if _glob_matches(source, entry.path)
+            entry for entry in self._raw_entries if _glob_matches(pattern, entry.path)
         ]
         if not matched_entries:
             raise DockerContextError(f"context source has no match: {source!r}")
 
         top_directories: list[str] = []
         for entry in sorted(
-            (entry for entry in matched_entries if entry.kind == "directory"),
+            (
+                entry
+                for entry in self._visible_entries
+                if entry.kind == "directory" and _glob_matches(pattern, entry.path)
+            ),
             key=lambda item: (item.path.count("/"), item.path),
         ):
             if not any(
@@ -205,14 +227,17 @@ class _ContextManifest:
                     )
                     entries.append(_selected_entry(entry, target))
 
-        for entry in self._visible_entries:
-            if not _glob_matches(source, entry.path):
-                continue
-            if any(
-                entry.path == directory or entry.path.startswith(f"{directory}/")
+        top_level_files = [
+            entry
+            for entry in self._visible_entries
+            if entry.kind == "file"
+            and _glob_matches(pattern, entry.path)
+            and not any(
+                entry.path.startswith(f"{directory}/")
                 for directory in top_directories
-            ):
-                continue
+            )
+        ]
+        for entry in top_level_files:
             entries.append(_selected_entry(entry, posixpath.basename(entry.path)))
 
         if not entries:
@@ -221,6 +246,7 @@ class _ContextManifest:
             source=source,
             kind="wildcard",
             entries=_validate_selection_entries(entries),
+            top_level_source_count=len(top_directories) + len(top_level_files),
         )
 
 
@@ -412,17 +438,129 @@ def _has_wildcard(path: str) -> bool:
     return any(character in path for character in "*?[")
 
 
-def _glob_matches(pattern: str, path: str) -> bool:
-    """Match Docker source patterns one POSIX path segment at a time."""
+def _compile_source_pattern(
+    pattern: str,
+) -> tuple[tuple[str | _CharacterClass, ...], ...]:
+    """Compile the strict no-escape subset of Go filepath-style source globs.
 
-    pattern_segments = pattern.split("/")
+    Source normalization rejects backslashes, so escaped pattern syntax is not
+    supported.
+    """
+
+    return tuple(
+        _compile_glob_segment(segment, pattern) for segment in pattern.split("/")
+    )
+
+
+def _compile_glob_segment(
+    segment: str, source: str
+) -> tuple[str | _CharacterClass, ...]:
+    """Compile one source pattern segment before context entries are inspected."""
+
+    tokens: list[str | _CharacterClass] = []
+    index = 0
+    while index < len(segment):
+        character = segment[index]
+        if character == "[":
+            character_class, index = _parse_character_class(segment, index, source)
+            tokens.append(character_class)
+            continue
+        tokens.append(character)
+        index += 1
+    return tuple(tokens)
+
+
+def _parse_character_class(
+    segment: str, index: int, source: str
+) -> tuple[_CharacterClass, int]:
+    """Parse one non-empty Go filepath-style character class without escapes."""
+
+    index += 1
+    negated = index < len(segment) and segment[index] == "^"
+    if negated:
+        index += 1
+
+    ranges: list[tuple[str, str]] = []
+    while True:
+        if index >= len(segment):
+            raise DockerContextError(f"malformed context source pattern: {source!r}")
+        if segment[index] == "]":
+            if not ranges:
+                raise DockerContextError(
+                    f"malformed context source pattern: {source!r}"
+                )
+            return _CharacterClass(negated, tuple(ranges)), index + 1
+
+        low = segment[index]
+        if low == "-":
+            raise DockerContextError(f"malformed context source pattern: {source!r}")
+        index += 1
+        high = low
+        if index < len(segment) and segment[index] == "-":
+            index += 1
+            if index >= len(segment) or segment[index] in "-]":
+                raise DockerContextError(
+                    f"malformed context source pattern: {source!r}"
+                )
+            high = segment[index]
+            index += 1
+        ranges.append((low, high))
+
+
+def _glob_matches(
+    pattern_segments: tuple[tuple[str | _CharacterClass, ...], ...], path: str
+) -> bool:
+    """Match a compiled source pattern one POSIX path segment at a time."""
+
     path_segments = path.split("/")
     return len(pattern_segments) == len(path_segments) and all(
-        fnmatch.fnmatchcase(path_segment, pattern_segment)
+        _glob_segment_matches(pattern_segment, path_segment)
         for pattern_segment, path_segment in zip(
             pattern_segments, path_segments, strict=True
         )
     )
+
+
+def _glob_segment_matches(
+    pattern: tuple[str | _CharacterClass, ...], path: str
+) -> bool:
+    """Match one source segment; stars, questions, and classes never cross '/'."""
+
+    pattern_index = 0
+    path_index = 0
+    star_index: int | None = None
+    star_path_index = 0
+    while path_index < len(path):
+        if pattern_index < len(pattern):
+            token = pattern[pattern_index]
+            if token == "*":
+                star_index = pattern_index
+                star_path_index = path_index
+                pattern_index += 1
+                continue
+            if token == "?":
+                pattern_index += 1
+                path_index += 1
+                continue
+            if _glob_token_matches(token, path[path_index]):
+                pattern_index += 1
+                path_index += 1
+                continue
+        if star_index is None:
+            return False
+        star_path_index += 1
+        path_index = star_path_index
+        pattern_index = star_index + 1
+
+    return all(token == "*" for token in pattern[pattern_index:])
+
+
+def _glob_token_matches(token: str | _CharacterClass, character: str) -> bool:
+    """Return whether one literal or character class token matches a codepoint."""
+
+    if isinstance(token, _CharacterClass):
+        return token.matches(character)
+    return token == character
 
 
 def _validate_selection_entries(
