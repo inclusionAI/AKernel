@@ -5,6 +5,7 @@
 ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG AKERNEL_RUNTIME_PROFILE=rrt
+ARG AKERNEL_ENABLE_KATA=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.9.7
@@ -25,7 +26,7 @@ ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collecto
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 
-FROM ${KATA_BUILD_IMAGE} AS kata-runtime
+FROM ${KATA_BUILD_IMAGE} AS kata-runtime-true
 ARG KATA_RELEASE
 ARG KATA_AMD64_SHA256
 ARG KATA_RELEASE_BASE_URL
@@ -55,6 +56,11 @@ RUN set -eux; \
       "https://raw.githubusercontent.com/kata-containers/kata-containers/${KATA_RELEASE}/LICENSE" \
       -o /kata/opt/kata/share/licenses/kata-containers/LICENSE; \
     rm -f "${archive}"
+
+FROM ${KATA_BUILD_IMAGE} AS kata-runtime-false
+RUN mkdir -p /kata/opt/kata
+
+FROM kata-runtime-${AKERNEL_ENABLE_KATA} AS kata-runtime
 
 FROM ${AKERNEL_RUNTIME_IMAGE} AS runtime-image
 
@@ -91,6 +97,7 @@ COPY ./src/distill-fs/ ./
 RUN cargo build --locked --release --bin distill_fs
 
 FROM ${AKERNEL_NODE_BASE_IMAGE}
+ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_RUNTIME_PROFILE
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
@@ -242,7 +249,9 @@ COPY --from=sandboxd-builder /src/sandboxd/output/sbox /usr/local/bin/sbox
 COPY --from=sandboxd-builder /src/sandboxd/output/sandbox-logger /usr/local/bin/sandbox-logger
 COPY --from=distill-fs-builder /src/distill-fs/target/release/distill_fs /usr/local/bin/distill_fs
 COPY --from=kata-runtime /kata/opt/kata /opt/kata
-RUN ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
+RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
+      ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2; \
+    fi
 
 COPY ./builder/scripts/akernel-entrypoint.sh /usr/local/bin/akernel-entrypoint
 COPY ./builder/scripts/ensure-component-cert.sh /usr/local/bin/ensure-component-cert
@@ -253,10 +262,10 @@ RUN chmod 0755 \
         /usr/local/bin/sbox \
         /usr/local/bin/sandbox-logger \
         /usr/local/bin/distill_fs \
-        /usr/local/bin/containerd-shim-kata-v2 \
         /usr/local/bin/akernel-entrypoint \
         /usr/local/bin/ensure-component-cert \
         /usr/local/bin/sandboxd-network-prepare
+RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then chmod 0755 /usr/local/bin/containerd-shim-kata-v2; fi
 
 COPY ./builder/config/yr_services.yaml /tmp/yr_services_rrt.yaml
 COPY ./builder/config/yr_services_python.yaml /tmp/yr_services_python.yaml
@@ -295,7 +304,8 @@ RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INS
 
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
-      org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}"
+      org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \
+      org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}"
 
 ENV YR_LOG_PATH=${YR_INSTALLATION_DIR}/logs
 STOPSIGNAL SIGRTMIN+3

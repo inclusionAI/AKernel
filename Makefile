@@ -49,6 +49,7 @@ help:
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
 	@echo "  make build IMAGE_TAG=<tag>          Build the all-in-one image"
 	@echo "  make build RUNTIME_PROFILE=python   Include optional Python runtimes"
+	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
 	@echo "  make build GVISOR_RELEASE=<tag>     Override the pinned official gVisor tag"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
