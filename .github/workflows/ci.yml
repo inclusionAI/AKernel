@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sdk-unit-tests:
     name: Python SDK unit tests (${{ matrix.python-version }})
@@ -63,3 +67,110 @@ jobs:
         run: |
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           make deploy-script-check
+
+  standalone-e2e:
+    name: Standalone E2E
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize build submodules
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          git submodule update --init src/sandboxd src/distill-fs
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sdk/python/pyproject.toml
+
+      - name: Install SDK dependencies
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          python -m pip install -e './sdk/python[all]'
+
+      - name: Prepare host kernel modules
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          sudo modprobe loop
+          sudo modprobe erofs
+          sudo modprobe br_netfilter
+          sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
+
+      - name: Build all-in-one image
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          AKERNEL_ENABLE_KATA=false \
+            make build \
+              IMAGE_REPOSITORY=akernel-ci/all-in-one \
+              IMAGE_TAG="${GITHUB_SHA}" \
+              RUNTIME_PROFILE=rrt
+
+      - name: Start standalone AKernel
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          IMAGE="akernel-ci/all-in-one:${GITHUB_SHA}" \
+            AKERNEL_NAT_BACKEND=iptables \
+            ./deploy/standalone/start.sh
+
+      - name: Run SDK end-to-end examples
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          gateway_ip="$(docker inspect \
+            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+            akernel-traefik)"
+          test -n "${gateway_ip}"
+          token="$(cat deploy/standalone/data/token)"
+          export AKERNEL_TOKEN="${token}"
+          export AKERNEL_SERVER_ADDRESS="${gateway_ip}"
+          export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
+
+          examples=(
+            basic_usage.py
+            command_stdin.py
+            custom_image.py
+            named_sandbox.py
+            network_policy.py
+            port_forwarding.py
+            pty.py
+            reverse_tunnel.py
+            storage_sandbox.py
+          )
+          for example in "${examples[@]}"; do
+            echo "=== Running ${example} ==="
+            timeout 120s python "sdk/python/examples/${example}"
+          done
+
+      - name: Show standalone diagnostics
+        if: failure()
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          docker ps -a
+          for container in akernel-node akernel-traefik; do
+            if docker container inspect "${container}" >/dev/null 2>&1; then
+              echo "=== ${container}: docker logs ==="
+              docker logs --tail 500 "${container}" 2>&1 || true
+            fi
+          done
+          if docker container inspect akernel-node >/dev/null 2>&1; then
+            echo "=== akernel-node: service journal ==="
+            docker exec akernel-node journalctl --no-pager -n 500 \
+              -u sandboxd.service -u yuanrong.service || true
+          fi
+
+      - name: Stop standalone AKernel
+        if: always()
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+          if [[ -x ./deploy/standalone/stop.sh ]]; then
+            ./deploy/standalone/stop.sh
+          else
+            docker rm -f akernel-traefik akernel-node >/dev/null 2>&1 || true
+          fi
