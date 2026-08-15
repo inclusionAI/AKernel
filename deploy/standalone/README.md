@@ -26,9 +26,9 @@ The all-in-one image contains `nvidia-container-cli`, but not the host driver.
 Use `AKERNEL_GPU_DEVICES` to override Docker's `--gpus` value when only a
 device subset should be assigned.
 
-Explicit sandbox storage quotas use the XFS filestore mounted at
-`/home/akernel/xfs`. The standalone data directory is bind-mounted from the
-host, and sandboxd creates `data/xfs.img` as a loop-backed XFS filesystem when
+Explicit sandbox storage quotas use the bounded ext4 filestore mounted at
+`/home/akernel/filestore`. The standalone data directory is bind-mounted from
+the host, and sandboxd creates a loop-backed filesystem image there when
 needed; quota-backed writable layers therefore use local disk rather than
 tmpfs.
 

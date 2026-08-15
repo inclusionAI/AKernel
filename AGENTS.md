@@ -317,7 +317,7 @@ the sandbox bridge. YuanRong receives `INSTANCE_IP` in Kubernetes or the
 default-route interface address in standalone mode; `AKERNEL_NODE_IP` is the
 explicit override for multi-homed environments.
 
-The standalone sandboxd filestore is a loop-mounted XFS image under the
+The standalone sandboxd filestore is a loop-mounted ext4 image under the
 bind-mounted `deploy/standalone/data/` directory. Explicit `storage_mb` quotas
 use this local-disk filestore; omitting `storage_mb` retains the configured
 memory-backed writable overlay.

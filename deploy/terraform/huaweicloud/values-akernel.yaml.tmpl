@@ -150,8 +150,10 @@ node:
 
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
-        filestore_dir="/home/akernel/xfs"
+        filestore_dir="/home/akernel/filestore"
         filestore_dir_size="200G"
+        filestore_xfs_enabled=false
+        loop_device_dir="/dev"
         overlay_tmpfs_size="10G"
 
         [plugin.runtime.basic_spec]

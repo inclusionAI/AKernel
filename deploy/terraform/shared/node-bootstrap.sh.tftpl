@@ -26,6 +26,27 @@ systemctl enable akernel-network-modules.service
 systemctl start akernel-network-modules.service
 %{ endif ~}
 
+# Bounded sandbox filestores use loop devices. Load the host module before
+# kubelet starts so privileged node containers can allocate loop devices.
+cat >/etc/systemd/system/akernel-loop-module.service <<'EOF'
+[Unit]
+Description=Load loop kernel module for AKernel filestores
+After=systemd-modules-load.service
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'modprobe loop'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable akernel-loop-module.service
+systemctl start akernel-loop-module.service
+
 # Enable user namespaces (required by gVisor/runsc).
 #
 # user_data only runs on first boot, so a plain `sysctl -w` does not survive a

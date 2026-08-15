@@ -31,12 +31,12 @@ enable_cache_in_stock_mode=true
 [plugin.runtime]
 image_lib_dir="/home/akernel/images"
 resolv_conf_path="/etc/resolv.conf"
-# filestore_dir must reside on an XFS filesystem with reflink support.
-# sandboxd will automatically create an XFS image at /home/akernel/xfs.img
-# and mount it here if the mount point does not already exist as XFS.
-# filestore_dir_size controls the size of that XFS image.
-filestore_dir="/home/akernel/xfs"
+# A configured size creates a loop-backed bounded filestore. ext4 is used by
+# default; set filestore_xfs_enabled=true to select XFS.
+filestore_dir="/home/akernel/filestore"
 filestore_dir_size="50G"
+filestore_xfs_enabled=false
+loop_device_dir="/dev"
 overlay_tmpfs_size="10G"
 
 [plugin.runtime.basic_spec]
