@@ -313,6 +313,26 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         native.close.assert_called_once_with()
         native.kill.assert_not_called()
 
+    def test_terminate_closes_native_resources_before_remote_delete(self):
+        lifecycle = []
+        native = MagicMock()
+        native.id = "default-worker"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.close.side_effect = lambda: lifecycle.append("close")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            sandbox_type.delete.side_effect = lambda _sandbox_id: lifecycle.append(
+                "delete"
+            )
+            session = self.backend.create(_spec())
+            session.terminate()
+
+        self.assertEqual(lifecycle, ["close", "delete"])
+
     def test_detached_delete_failure_still_allows_local_cleanup(self):
         native = MagicMock()
         native.id = "default-worker"

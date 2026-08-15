@@ -249,9 +249,12 @@ class _Session:
     def terminate(self) -> None:
         if self._terminated:
             return
+        # Release the native handle before deleting the remote sandbox. This
+        # lets transports such as reverse tunnels close while their routes are
+        # still available. The stable-ID delete still uses a fresh native
+        # client, so a failed deletion remains retryable after local cleanup.
+        self.close()
         try:
-            # The native instance is one-shot: kill() closes its HTTP client even
-            # when deletion fails. Delete by stable ID so a retry gets a new client.
             yr_sandbox.Sandbox.delete(self.id)
         except Exception as error:
             raise _convert_error("terminate sandbox", error) from error
