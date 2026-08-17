@@ -255,10 +255,40 @@ configure_network() {
     fi
 }
 
+prepare_host_network_modules() {
+    if [[ "${AKERNEL_NAT_BACKEND}" != "iptables" ]]; then
+        return 0
+    fi
+
+    local modprobe_bin
+    modprobe_bin="$(command -v modprobe || true)"
+    if [[ -z "${modprobe_bin}" ]]; then
+        log_error "modprobe is required to load br_netfilter for the iptables ACL backend"
+        exit 1
+    fi
+
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "${modprobe_bin}" br_netfilter
+    elif sudo -n "${modprobe_bin}" br_netfilter; then
+        :
+    else
+        log_error "Unable to load br_netfilter; run this script as root or allow passwordless sudo for modprobe"
+        exit 1
+    fi
+
+    if [[ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ]]; then
+        log_error "br_netfilter loaded but bridge netfilter sysctls are unavailable"
+        exit 1
+    fi
+    log_info "Loaded host br_netfilter module for the iptables ACL backend"
+}
+
 # Start the AKernel all-in-one container. Traefik runs separately so traffic
 # from the gateway enters this network namespace through PREROUTING.
 start_node_container() {
     log_info "Starting container: ${NODE_CONTAINER_NAME}"
+    # FunctionMaster's HTTP provider publishes the per-sandbox routes required
+    # by reverse tunnels; the legacy etcd mode cannot publish those routes.
 
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
         --name "${NODE_CONTAINER_NAME}" \
@@ -266,7 +296,7 @@ start_node_container() {
         --net bridge \
         --restart always \
         -e AKS_LOCAL_MODE="true" \
-        -e TRAEFIK_MODE="etcd" \
+        -e TRAEFIK_MODE="http" \
         -e TRAEFIK_HTTP_ENTRYPOINT="web" \
         -e TRAEFIK_ENABLE_TLS="false" \
         -e ETCD_PORT="${ETCD_PORT}" \
@@ -354,7 +384,7 @@ EOF
 }
 
 start_traefik_container() {
-    local etcd_endpoint="$1"
+    local provider_endpoint="$1"
     local dynamic_config="${DATA_DIR}/traefik/dynamic.yml"
 
     log_info "Starting container: ${TRAEFIK_CONTAINER_NAME}"
@@ -367,8 +397,8 @@ start_traefik_container() {
         --entryPoints.web.address=:80 \
         --entryPoints.websecure.address=:443 \
         --providers.file.filename=/etc/traefik/dynamic.yml \
-        --providers.etcd.endpoints="${etcd_endpoint}" \
-        --providers.etcd.rootKey=traefik \
+        --providers.http.endpoint="${provider_endpoint}" \
+        --providers.http.pollInterval=1s \
         --log.level=INFO \
         --accessLog=true \
         --accessLog.format=json \
@@ -433,6 +463,7 @@ ensure_image "${TRAEFIK_IMAGE}"
 configure_container_proxy
 configure_gpu
 configure_network
+prepare_host_network_modules
 start_node_container
 wait_for_ready
 NODE_IP="$(container_ip "${NODE_CONTAINER_NAME}")"
@@ -441,9 +472,9 @@ if [[ -z "${NODE_IP}" ]]; then
     exit 1
 fi
 write_traefik_config "${NODE_IP}"
-ETCD_ENDPOINT="${NODE_IP}:${ETCD_PORT}"
-log_info "Using embedded etcd endpoint: ${ETCD_ENDPOINT}"
-start_traefik_container "${ETCD_ENDPOINT}"
+TRAEFIK_PROVIDER_ENDPOINT="http://${NODE_IP}:22770/global-scheduler/traefik/config"
+log_info "Using FunctionMaster route provider: ${TRAEFIK_PROVIDER_ENDPOINT}"
+start_traefik_container "${TRAEFIK_PROVIDER_ENDPOINT}"
 TRAEFIK_IP="$(container_ip "${TRAEFIK_CONTAINER_NAME}")"
 if [[ -z "${TRAEFIK_IP}" ]]; then
     log_error "Could not determine the Traefik container IP"

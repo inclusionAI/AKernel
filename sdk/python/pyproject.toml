@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akernel-sdk"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python SDK and CLI for AKernel remote sandboxes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -28,21 +28,21 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
-    "openyuanrong-sandbox==0.9.3",
+    "openyuanrong-sandbox==0.9.7",
     "websockets>=10.0",
 ]
 
 [project.optional-dependencies]
 openyuanrong-sdk = [
-    "openyuanrong-sdk==0.9.3",
+    "openyuanrong-sdk==0.9.7",
 ]
 all = [
-    "openyuanrong-sdk==0.9.3",
+    "openyuanrong-sdk==0.9.7",
 ]
 dev = [
     "build>=1.2,<2",
     "mypy>=1.10,<2",
-    "openyuanrong-sdk==0.9.3",
+    "openyuanrong-sdk==0.9.7",
     "ruff>=0.11,<1",
 ]
 

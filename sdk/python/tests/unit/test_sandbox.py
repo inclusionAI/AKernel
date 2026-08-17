@@ -16,7 +16,7 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
-from akernel_sdk import HttpReverseTunnel, S3Config, Sandbox
+from akernel_sdk import HttpReverseTunnel, NetworkPolicy, S3Config, Sandbox
 from akernel_sdk import sandbox as sandbox_module
 from akernel_sdk.types import SandboxInfo
 
@@ -61,6 +61,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(dict(spec.env), {})
         self.assertIsNone(spec.xpu)
         self.assertIsNone(spec.storage_mb)
+        self.assertIsNone(spec.network_policy)
         sandbox.kill()
         self.session.terminate.assert_called_once_with()
         self.session.close.assert_called_once_with()
@@ -179,6 +180,53 @@ class SandboxTest(unittest.TestCase):
                 Sandbox(storage_mb=value)
         with self.assertRaisesRegex(ValueError, "storage_mb.*runsc"):
             Sandbox(runtime="kata", storage_mb=256)
+        self.backend.create.assert_not_called()
+
+    def test_block_network_policy_is_passed_to_backend(self):
+        policy = NetworkPolicy.block()
+
+        sandbox = Sandbox(network_policy=policy)
+
+        spec = self.backend.create.call_args.args[0]
+        self.assertIs(spec.network_policy, policy)
+        self.assertEqual(policy.to_dict(), {"blockNetwork": True})
+        sandbox.kill()
+
+    def test_dns_blacklist_is_normalized_and_passed_to_backend(self):
+        policy = NetworkPolicy.deny_dns("GitHub.COM.", "*.GitHub.com", "github.com")
+
+        sandbox = Sandbox(network_policy=policy)
+
+        spec = self.backend.create.call_args.args[0]
+        self.assertEqual(
+            spec.network_policy.to_dict(),
+            {"dnsBlacklist": ["github.com", "*.github.com"]},
+        )
+        sandbox.kill()
+
+    def test_empty_network_policy_is_treated_as_unrestricted(self):
+        sandbox = Sandbox(network_policy=NetworkPolicy())
+
+        spec = self.backend.create.call_args.args[0]
+        self.assertIsNone(spec.network_policy)
+        sandbox.kill()
+
+    def test_invalid_network_policy_is_rejected_before_backend(self):
+        invalid_factories = (
+            lambda: NetworkPolicy(block_network="yes"),
+            lambda: NetworkPolicy(dns_blacklist="github.com"),
+            lambda: NetworkPolicy.deny_dns(),
+            lambda: NetworkPolicy.deny_dns("github.*"),
+            lambda: NetworkPolicy(block_network=True, dns_blacklist=("github.com",)),
+        )
+        for factory in invalid_factories:
+            with (
+                self.subTest(factory=factory),
+                self.assertRaises((TypeError, ValueError)),
+            ):
+                factory()
+        with self.assertRaisesRegex(TypeError, "NetworkPolicy"):
+            Sandbox(network_policy={"blockNetwork": True})
         self.backend.create.assert_not_called()
 
     def test_cwd_must_be_absolute(self):

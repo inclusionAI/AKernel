@@ -31,7 +31,7 @@ from ._sandbox_resources import normalize_xpu, validate_storage_mb
 from .commands import Commands
 from .filesystem import Filesystem
 from .pty import Pty
-from .types import HttpReverseTunnel, Mount, S3Config, SandboxInfo
+from .types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config, SandboxInfo
 
 _SUPPORTED_RUNTIMES = ("runsc", "kata")
 _traefik_internal_ip_cache: str | None = None
@@ -134,6 +134,7 @@ class Sandbox:
         *,
         xpu: str | None = None,
         storage_mb: int | None = None,
+        network_policy: NetworkPolicy | None = None,
     ) -> None:
         """Create and wait for a sandbox to become ready.
 
@@ -161,6 +162,8 @@ class Sandbox:
             storage_mb: Experimental writable root filesystem quota in MiB.
                 When omitted, the configured default is used. Explicit quotas
                 currently require the ``runsc`` runtime.
+            network_policy: Optional creation-time network policy. Omitting it
+                leaves sandbox networking unrestricted.
 
         Raises:
             TypeError: An argument has an invalid type.
@@ -181,6 +184,10 @@ class Sandbox:
             )
         normalized_xpu = normalize_xpu(xpu)
         validate_storage_mb(storage_mb)
+        if network_policy is not None and not isinstance(
+            network_policy, NetworkPolicy
+        ):
+            raise TypeError("network_policy must be a NetworkPolicy or None")
         if normalized_xpu is not None and runtime != "runsc":
             raise ValueError("xpu is currently supported only by runsc")
         if storage_mb is not None and runtime != "runsc":
@@ -265,6 +272,11 @@ class Sandbox:
             node_id=node_id,
             xpu=normalized_xpu,
             storage_mb=storage_mb,
+            network_policy=(
+                None
+                if network_policy is None or network_policy.is_empty
+                else network_policy
+            ),
         )
         self._session = load_backend().create(spec)
         try:

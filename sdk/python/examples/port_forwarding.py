@@ -14,12 +14,14 @@
 
 """Expose an HTTP server running in a sandbox through AKernel's gateway."""
 
+import os
 import time
 import urllib.request
 
 from akernel_sdk import Sandbox
 
 PORT = 8080
+IMAGE = os.environ.get("AKERNEL_PORT_FORWARDING_IMAGE", "python:3.12-slim")
 
 
 def fetch_with_retry(url: str, timeout: float = 30.0) -> str:
@@ -37,6 +39,7 @@ def fetch_with_retry(url: str, timeout: float = 30.0) -> str:
 
 def main() -> None:
     with Sandbox(
+        image=IMAGE,
         cpu=1000,
         memory=2048,
         port_forwardings=[PORT],

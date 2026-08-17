@@ -201,6 +201,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 ## Roadmap
 
 - [x] Kata Containers runtime on KVM-capable nodes
+- [x] Sandbox network ACL
 - [ ] Fork-based sandbox launch based on gVisor
 - [ ] Sandbox checkpoint and restore
 - [ ] Support for GKE and AWS

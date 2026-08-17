@@ -9,13 +9,13 @@ ARG PYTHON_311_VERSION=3.11.13
 ARG PYTHON_312_VERSION=3.12.11
 ARG PYTHON_313_VERSION=3.13.5
 ARG PYTHON_314_VERSION=3.14.6
-ARG OPEN_YR_VERSION=0.9.3
+ARG OPEN_YR_VERSION=0.9.7
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-download
 
 ARG OPEN_YR_VERSION
 ARG RRT_RUNTIME_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/rrt-runtime-amd64
-ARG RRT_RUNTIME_SHA256=89eb9271233e79f97b42b7b12cfd65e81404eb75b49d0e7a0b1ebe4977aae305
+ARG RRT_RUNTIME_SHA256=c7f7441ed631de564f56c1878b84598a7364ffae040a0e51f6e14a82f6ae31d5
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \

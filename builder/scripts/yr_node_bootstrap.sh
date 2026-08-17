@@ -42,11 +42,13 @@ resolve_node_ip() {
 YR_NODE_IP="$(resolve_node_ip)"
 echo "Using ${YR_NODE_IP} as the YuanRong node address"
 
-# Set enable_traefik_registry based on TRAEFIK_MODE
+# Select the legacy etcd registry or the FunctionMaster HTTP provider.
 if [ "${TRAEFIK_MODE:-etcd}" = "etcd" ]; then
     ENABLE_TRAEFIK_REGISTRY=${ENABLE_TRAEFIK_REGISTRY:-true}
+    ENABLE_TRAEFIK_PROVIDER=false
 else
     ENABLE_TRAEFIK_REGISTRY=false
+    ENABLE_TRAEFIK_PROVIDER=true
 fi
 
 if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
@@ -83,10 +85,12 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --enable_distributed_master false \
         --metrics_collector_type external \
         --enable_traefik_registry=${ENABLE_TRAEFIK_REGISTRY} \
+        --enable_traefik_provider=${ENABLE_TRAEFIK_PROVIDER} \
         --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \
         --traefik_etcd_prefix=traefik \
         --traefik_lease_ttl=300000 \
         --traefik_http_entrypoint=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
+        --traefik_http_entry_point=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
         --enable_metrics ${ENABLE_METRICS} \
         --metrics_config_file "/home/yuanrong/metrics/metrics_config.json" \
         --enable_trace ${ENABLE_TRACE} \

@@ -33,23 +33,7 @@ from .base import (
 from .errors import BackendOperationError, UnsupportedBackendFeatureError
 
 _NAMESPACE = "default"
-_DEFAULT_REVERSE_PORT = 8765
 _DEFAULT_LISTEN_PORT = 8766
-_DEFAULT_LOCAL_ROOTFS = "/home/yuanrong/yr-runtime-rootfs.img"
-
-
-class _LocalRootfsSandbox(yr_sandbox.Sandbox):
-    """Supply the AKernel local rootfs until frontend owns runtime override."""
-
-    def _create(self, body: dict[str, Any]) -> dict[str, Any]:
-        request = dict(body)
-        request["rootfs"] = {
-            "runtime": request["runtime"],
-            "type": "local",
-            "readonly": False,
-            "path": _DEFAULT_LOCAL_ROOTFS,
-        }
-        return super()._create(request)
 
 
 def _convert_error(operation: str, error: Exception) -> BackendOperationError:
@@ -265,9 +249,12 @@ class _Session:
     def terminate(self) -> None:
         if self._terminated:
             return
+        # Release the native handle before deleting the remote sandbox. This
+        # lets transports such as reverse tunnels close while their routes are
+        # still available. The stable-ID delete still uses a fresh native
+        # client, so a failed deletion remains retryable after local cleanup.
+        self.close()
         try:
-            # The native instance is one-shot: kill() closes its HTTP client even
-            # when deletion fails. Delete by stable ID so a retry gets a new client.
             yr_sandbox.Sandbox.delete(self.id)
         except Exception as error:
             raise _convert_error("terminate sandbox", error) from error
@@ -277,10 +264,7 @@ class _Session:
         if self._closed:
             return
         try:
-            # TODO: Upgrade openyuanrong-sandbox once it exposes a local-only
-            # close(). Native kill() also DELETEs the sandbox, so after a
-            # successful terminate() this cleanup can issue a redundant DELETE.
-            self._sandbox.kill()
+            self._sandbox.close()
         except Exception as error:
             raise _convert_error("close sandbox resources", error) from error
         finally:
@@ -311,26 +295,14 @@ class OpenYuanRongSandboxBackend:
 
     def _validate(self, spec: SandboxSpec) -> None:
         tunnel = spec.reverse_tunnel
-        if tunnel is not None and (
-            tunnel.reverse_port != _DEFAULT_REVERSE_PORT
-            or tunnel.listen_port != _DEFAULT_LISTEN_PORT
-        ):
-            # TODO: Relax this after openyuanrong-sandbox forwards proxy_port
-            # to the frontend. Then require reverse_port == listen_port - 1
-            # and pass listen_port as proxy_port.
+        if tunnel is not None and tunnel.reverse_port != tunnel.listen_port - 1:
             raise UnsupportedBackendFeatureError(
-                "Backend 'openyuanrong-sandbox' supports only reverse tunnel "
-                "ports 8765 and 8766."
+                "Backend 'openyuanrong-sandbox' requires reverse_port to equal "
+                "listen_port - 1."
             )
 
     def create(self, spec: SandboxSpec) -> BackendSession:
         self._validate(spec)
-        sandbox_type = yr_sandbox.Sandbox
-        if spec.runtime == "kata" and spec.image is None and spec.rootfs is None:
-            # openyuanrong-sandbox 0.9.3 forwards the isolation runtime only
-            # through an explicit rootfs. Keep this aligned with the actor
-            # backend until frontend can override the service rootfs runtime.
-            sandbox_type = _LocalRootfsSandbox
         rootfs = None
         if spec.rootfs is not None:
             rootfs = yr_sandbox.S3Config(
@@ -339,6 +311,12 @@ class OpenYuanRongSandboxBackend:
                 object=spec.rootfs.object,
                 access_key=spec.rootfs.access_key,
                 secret_key=spec.rootfs.secret_key,
+            )
+        network = None
+        if spec.network_policy is not None:
+            network = yr_sandbox.NetworkPolicy(
+                block_network=spec.network_policy.block_network,
+                dns_blacklist=spec.network_policy.dns_blacklist,
             )
         mounts = [
             yr_sandbox.Mount(
@@ -361,7 +339,7 @@ class OpenYuanRongSandboxBackend:
         ]
         create_timeout = max(60, spec.schedule_timeout + 30)
         try:
-            sandbox = sandbox_type(
+            sandbox = yr_sandbox.Sandbox(
                 image=spec.image,
                 rootfs=rootfs,
                 runtime=spec.runtime,
@@ -386,10 +364,16 @@ class OpenYuanRongSandboxBackend:
                     if spec.reverse_tunnel is not None
                     else None
                 ),
+                proxy_port=(
+                    spec.reverse_tunnel.listen_port
+                    if spec.reverse_tunnel is not None
+                    else _DEFAULT_LISTEN_PORT
+                ),
                 detached=spec.detached,
                 node_id=spec.node_id,
                 xpu=spec.xpu,
                 storage_mb=spec.storage_mb,
+                network=network,
                 create_timeout=create_timeout,
             )
         except Exception as error:

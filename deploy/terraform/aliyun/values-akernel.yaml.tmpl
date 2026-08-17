@@ -181,6 +181,7 @@ node:
         [plugin.network]
         ip_range="172.17.0.1/16"
         nat_backend="${sandboxd_nat_backend}"
+        enable_network_acl=true
 
         [plugin.resource]
         cgroup_cache_size=800
@@ -193,8 +194,10 @@ node:
 
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
-        filestore_dir="/home/akernel/xfs"
+        filestore_dir="/home/akernel/filestore"
         filestore_dir_size="200G"
+        filestore_xfs_enabled=false
+        loop_device_dir="/dev"
         overlay_tmpfs_size="10G"
 
         [plugin.runtime.basic_spec]

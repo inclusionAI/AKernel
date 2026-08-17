@@ -40,12 +40,17 @@ from .._sandbox_resources import (
     validate_storage_mb,
     xpu_custom_resource,
 )
-from ..types import HttpReverseTunnel, Mount, NodeInfo, S3Config
+from ..types import (
+    HttpReverseTunnel,
+    Mount,
+    NetworkPolicy,
+    NodeInfo,
+    S3Config,
+)
 
 logger = logging.getLogger(__name__)
 
 _NAMESPACE = "akernel"
-_DEFAULT_LOCAL_ROOTFS = "/home/yuanrong/yr-runtime-rootfs.img"
 _initialized = False
 _init_lock = threading.Lock()
 
@@ -127,16 +132,7 @@ def _rootfs_json(
                 "storageInfo": rootfs.to_dict(),
             }
         )
-    if runtime != "runsc":
-        return json.dumps(
-            {
-                "runtime": runtime,
-                "type": "local",
-                "readonly": False,
-                "path": _DEFAULT_LOCAL_ROOTFS,
-            }
-        )
-    return None
+    return json.dumps({"runtime": runtime})
 
 
 def build_options(
@@ -159,6 +155,7 @@ def build_options(
     node_id: str | None,
     xpu: str | None,
     storage_mb: int | None,
+    network_policy: NetworkPolicy | None,
 ) -> Any:
     """Translate the stable SDK configuration to openYuanrong options."""
 
@@ -209,6 +206,10 @@ def build_options(
         options.custom_resources[resource_name] = count
     if storage_mb is not None:
         options.custom_resources["storage"] = storage_bytes(storage_mb)
+    if network_policy is not None:
+        options.custom_extensions["network_policy"] = json.dumps(
+            network_policy.to_dict()
+        )
 
     forwarded = list(port_forwardings)
     if reverse_tunnel is not None:

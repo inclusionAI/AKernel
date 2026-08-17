@@ -26,9 +26,9 @@ The all-in-one image contains `nvidia-container-cli`, but not the host driver.
 Use `AKERNEL_GPU_DEVICES` to override Docker's `--gpus` value when only a
 device subset should be assigned.
 
-Explicit sandbox storage quotas use the XFS filestore mounted at
-`/home/akernel/xfs`. The standalone data directory is bind-mounted from the
-host, and sandboxd creates `data/xfs.img` as a loop-backed XFS filesystem when
+Explicit sandbox storage quotas use the bounded ext4 filestore mounted at
+`/home/akernel/filestore`. The standalone data directory is bind-mounted from
+the host, and sandboxd creates a loop-backed filesystem image there when
 needed; quota-backed writable layers therefore use local disk rather than
 tmpfs.
 
@@ -54,6 +54,17 @@ AKernel passes YuanRong the IPv4 address of the default-route interface so the
 later creation of `sandbox0` cannot change the advertised node address. Set
 `AKERNEL_NODE_IP` only when a multi-homed deployment requires an explicit
 override.
+
+The standalone configuration enables per-sandbox network ACLs. With the
+default iptables backend, `start.sh` loads `br_netfilter` on the host before
+the node starts; the node then enables bridge netfilter in its own network
+namespace. The host also requires conntrack plus connmark/CONNMARK support.
+The optional bpfnat backend instead
+requires TC eBPF support and a writable bpffs. TCP and UDP port 53 on the
+sandbox bridge must remain free for sandboxd's managed DNS proxy. Before
+upgrading an existing standalone data directory to an ACL-enabled image,
+terminate its sandboxes and stop the old node cleanly; sandboxd refuses to
+initialize ACLs while pre-ACL sandboxes remain in its store.
 
 ## Directory Structure
 
@@ -119,6 +130,8 @@ This will:
 - Start the privileged AKernel all-in-one container
 - Start an independent Traefik container for the HTTPS API and HTTP sandbox
   port-forwarding gateway
+- Configure Traefik to poll FunctionMaster's HTTP provider for per-sandbox
+  tunnel routes, including custom tunnel ports
 - Generate a deployment-specific IAM signing seed and a 24-hour SDK token
 - Generate a sandboxd config using `AKERNEL_NAT_BACKEND` (`iptables` by
   default)

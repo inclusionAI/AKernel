@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -26,6 +27,94 @@ YR_GET_DEFAULT_TIMEOUT = 300
 
 # Extra seconds added to a command timeout for RPC and serialization overhead.
 YR_GET_TIMEOUT_BUFFER = 30
+
+
+# DNS blacklist patterns use exact ASCII names or a single leading ``*.``.
+# Each label is 1-63 characters from this set; a hyphen cannot be an endpoint.
+_DNS_LABEL_PATTERN = re.compile(r"^[a-z0-9_-]+$")
+
+
+def _normalize_dns_pattern(pattern: str) -> str:
+    if not isinstance(pattern, str):
+        raise TypeError("dns blacklist patterns must be strings")
+    value = pattern.strip().lower().rstrip(".")
+    wildcard = value.startswith("*.")
+    if wildcard:
+        value = value[2:]
+    if not value or "*" in value or "?" in value or len(value) > 253:
+        raise ValueError(f"invalid DNS blacklist pattern: {pattern!r}")
+    for label in value.split("."):
+        if (
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            or _DNS_LABEL_PATTERN.fullmatch(label) is None
+        ):
+            raise ValueError(f"invalid DNS blacklist pattern: {pattern!r}")
+    return f"*.{value}" if wildcard else value
+
+
+@dataclass(frozen=True)
+class NetworkPolicy:
+    """Creation-time network policy for an AKernel sandbox.
+
+    Use :meth:`block` to deny new flows except the YuanRong control proxy and
+    published sandbox ports used by direct filesystem I/O, reverse tunnels,
+    and explicit port forwarding. Use :meth:`deny_dns` to reject conventional
+    DNS queries matching exact names or leading ``*.`` suffix patterns.
+
+    DNS patterns are ASCII names up to 253 characters, split into labels of
+    1-63 lowercase letters, digits, underscores, or hyphens. Hyphens cannot
+    start or end a label. A wildcard is accepted only as the leading ``*.``;
+    use ASCII punycode for internationalized names. Input is normalized to
+    lowercase and trailing dots are removed.
+    """
+
+    block_network: bool = False
+    dns_blacklist: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.block_network, bool):
+            raise TypeError("block_network must be a boolean")
+        if isinstance(self.dns_blacklist, (str, bytes)):
+            raise TypeError("dns_blacklist must be a sequence of patterns")
+        normalized = tuple(
+            dict.fromkeys(_normalize_dns_pattern(item) for item in self.dns_blacklist)
+        )
+        if self.block_network and normalized:
+            raise ValueError("block_network and dns_blacklist cannot be combined")
+        object.__setattr__(self, "dns_blacklist", normalized)
+
+    @classmethod
+    def block(cls) -> NetworkPolicy:
+        """Deny new flows except control and published sandbox-port routes."""
+
+        return cls(block_network=True)
+
+    @classmethod
+    def deny_dns(cls, *patterns: str) -> NetworkPolicy:
+        """Deny DNS queries matching exact names or leading ``*.`` patterns."""
+
+        if not patterns:
+            raise ValueError("deny_dns requires at least one domain pattern")
+        return cls(dns_blacklist=patterns)
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether this policy has no effect and should be omitted."""
+
+        return not self.block_network and not self.dns_blacklist
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON-compatible public API representation."""
+
+        value: dict[str, Any] = {}
+        if self.block_network:
+            value["blockNetwork"] = True
+        if self.dns_blacklist:
+            value["dnsBlacklist"] = list(self.dns_blacklist)
+        return value
 
 
 @dataclass(frozen=True)

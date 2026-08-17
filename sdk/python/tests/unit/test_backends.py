@@ -36,6 +36,7 @@ from akernel_sdk.types import (
     EntryInfo,
     HttpReverseTunnel,
     Mount,
+    NetworkPolicy,
     S3Config,
 )
 
@@ -61,6 +62,7 @@ def _spec(**overrides):
         "node_id": None,
         "xpu": None,
         "storage_mb": None,
+        "network_policy": None,
     }
     values.update(overrides)
     return SandboxSpec(**values)
@@ -145,53 +147,47 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(os.environ["YR_GATEWAY_TLS"], "0")
         self.assertEqual(os.environ["YR_TOKEN"], "secret")
 
-    def test_kata_without_explicit_rootfs_uses_local_runtime_rootfs(self):
+    def test_kata_without_explicit_rootfs_passes_runtime_config_override(self):
         native = MagicMock()
         native.id = "default-kata"
         with patch.object(
-            openyuanrong_sandbox,
-            "_LocalRootfsSandbox",
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
             return_value=native,
         ) as sandbox_type:
             self.backend.create(_spec(runtime="kata"))
 
+        # YuanRong applies this runtime as a configuration override to the
+        # deployed default rootfs; the adapter does not build a filesystem
+        # overlay.
         self.assertEqual(sandbox_type.call_args.kwargs["runtime"], "kata")
+        self.assertIsNone(sandbox_type.call_args.kwargs["rootfs"])
 
-    def test_local_rootfs_sandbox_injects_complete_rootfs_request(self):
-        client = MagicMock()
-        client.create_info.return_value = {"sandboxId": "default-kata"}
-        sandbox = object.__new__(openyuanrong_sandbox._LocalRootfsSandbox)
-        sandbox._client = client
+    def test_runsc_without_explicit_rootfs_passes_runtime_config_override(self):
+        native = MagicMock()
+        native.id = "default-runsc"
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            self.backend.create(_spec())
 
-        result = sandbox._create({"runtime": "kata", "namespace": "default"})
+        self.assertEqual(sandbox_type.call_args.kwargs["runtime"], "runsc")
+        self.assertIsNone(sandbox_type.call_args.kwargs["rootfs"])
 
-        self.assertEqual(result, {"sandboxId": "default-kata"})
-        request = client.create_info.call_args.args[0]
-        self.assertEqual(
-            request["rootfs"],
-            {
-                "runtime": "kata",
-                "type": "local",
-                "readonly": False,
-                "path": "/home/yuanrong/yr-runtime-rootfs.img",
-            },
-        )
-
-    def test_explicit_kata_image_keeps_native_sandbox_path(self):
+    def test_explicit_kata_image_is_forwarded_to_native_sdk(self):
         native = MagicMock()
         native.id = "default-kata-image"
-        with (
-            patch.object(
-                openyuanrong_sandbox.yr_sandbox,
-                "Sandbox",
-                return_value=native,
-            ) as sandbox_type,
-            patch.object(openyuanrong_sandbox, "_LocalRootfsSandbox") as local_type,
-        ):
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
             self.backend.create(_spec(runtime="kata", image="ubuntu:24.04"))
 
-        sandbox_type.assert_called_once()
-        local_type.assert_not_called()
+        self.assertEqual(sandbox_type.call_args.kwargs["runtime"], "kata")
+        self.assertEqual(sandbox_type.call_args.kwargs["image"], "ubuntu:24.04")
 
     def test_create_converts_inputs_and_preserves_akernel_outputs(self):
         native = MagicMock()
@@ -277,7 +273,27 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         )
         self.assertEqual(session.get_info().id, "default-worker")
         session.close()
-        native.kill.assert_called_once_with()
+        native.close.assert_called_once_with()
+        native.kill.assert_not_called()
+
+    def test_create_converts_network_policy_to_native_sdk_type(self):
+        native = MagicMock()
+        native.id = "default-worker"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        policy = NetworkPolicy.deny_dns("github.com", "*.github.com")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(_spec(network_policy=policy))
+
+        network = sandbox_type.call_args.kwargs["network"]
+        self.assertIsInstance(network, openyuanrong_sandbox.yr_sandbox.NetworkPolicy)
+        self.assertFalse(network.block_network)
+        self.assertEqual(network.dns_blacklist, ("github.com", "*.github.com"))
+        session.close()
 
     def test_terminate_forces_deletion_of_detached_native_sandbox(self):
         native = MagicMock()
@@ -294,7 +310,28 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             session.close()
 
         sandbox_type.delete.assert_called_once_with("default-worker")
-        native.kill.assert_called_once_with()
+        native.close.assert_called_once_with()
+        native.kill.assert_not_called()
+
+    def test_terminate_closes_native_resources_before_remote_delete(self):
+        lifecycle = []
+        native = MagicMock()
+        native.id = "default-worker"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.close.side_effect = lambda: lifecycle.append("close")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            sandbox_type.delete.side_effect = lambda _sandbox_id: lifecycle.append(
+                "delete"
+            )
+            session = self.backend.create(_spec())
+            session.terminate()
+
+        self.assertEqual(lifecycle, ["close", "delete"])
 
     def test_detached_delete_failure_still_allows_local_cleanup(self):
         native = MagicMock()
@@ -323,7 +360,27 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
 
         self.assertEqual(sandbox_type.delete.call_count, 2)
         sandbox_type.delete.assert_called_with("default-worker")
-        native.kill.assert_called_once_with()
+        native.close.assert_called_once_with()
+        native.kill.assert_not_called()
+
+    def test_terminate_then_close_does_not_issue_second_native_delete(self):
+        native = MagicMock()
+        native.id = "default-anonymous"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.kill.side_effect = RuntimeError("redundant DELETE failed")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(_spec())
+            session.terminate()
+            session.close()
+
+        sandbox_type.delete.assert_called_once_with("default-anonymous")
+        native.close.assert_called_once_with()
+        native.kill.assert_not_called()
 
     def test_non_detached_termination_uses_retryable_id_delete(self):
         native = MagicMock()
@@ -346,15 +403,35 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         sandbox_type.delete.assert_called_with("default-anonymous")
         native.kill.assert_not_called()
 
-    def test_custom_reverse_tunnel_ports_are_rejected(self):
+    def test_custom_reverse_tunnel_ports_are_forwarded(self):
+        native = MagicMock()
+        native.id = "default-anonymous"
+        native.commands = MagicMock()
+        native.files = MagicMock()
         tunnel = HttpReverseTunnel(
             "https://service.example",
             reverse_port=9000,
             listen_port=9001,
         )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(_spec(reverse_tunnel=tunnel))
+            session.close()
+
+        self.assertEqual(sandbox_type.call_args.kwargs["proxy_port"], 9001)
+
+    def test_non_consecutive_reverse_tunnel_ports_are_rejected(self):
+        tunnel = HttpReverseTunnel(
+            "https://service.example",
+            reverse_port=9000,
+            listen_port=9002,
+        )
         with self.assertRaisesRegex(
             UnsupportedBackendFeatureError,
-            "8765 and 8766",
+            "listen_port - 1",
         ):
             self.backend.create(_spec(reverse_tunnel=tunnel))
 

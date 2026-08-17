@@ -16,6 +16,7 @@ It supports two backends:
   - [Install and configure](#install-and-configure)
   - [Create a sandbox](#create-a-sandbox)
     - [Experimental GPU and writable storage](#experimental-gpu-and-writable-storage)
+    - [Network ACLs](#network-acls)
   - [Sandbox runtimes](#sandbox-runtimes)
   - [Commands](#commands)
   - [Filesystem](#filesystem)
@@ -99,6 +100,7 @@ Sandbox(
     *,
     xpu: str | None = None,
     storage_mb: int | None = None,
+    network_policy: NetworkPolicy | None = None,
 )
 ```
 
@@ -128,6 +130,68 @@ disk-backed XFS filestore. When it is omitted, sandboxd retains its configured
 default 10 GiB memory-backed writable overlay. See
 [`examples/gpu_sandbox.py`](./examples/gpu_sandbox.py) and
 [`examples/storage_sandbox.py`](./examples/storage_sandbox.py).
+
+### Network ACLs
+
+Omit `network_policy` to leave all sandbox networking unrestricted. An empty
+`NetworkPolicy()` is equivalent and is omitted from the creation request:
+
+```python
+from akernel_sdk import NetworkPolicy, Sandbox
+
+with Sandbox() as unrestricted:
+    print(unrestricted.commands.run("python3 -c 'import socket; "
+                                    "socket.getaddrinfo(\"github.com\", 443)'"))
+```
+
+Block new sandbox flows except the YuanRong control proxy and published
+sandbox-port routes:
+
+```python
+with Sandbox(network_policy=NetworkPolicy.block()) as sandbox:
+    result = sandbox.commands.run("printf 'control plane still works'")
+    assert result.exit_code == 0
+```
+
+Commands and lifecycle operations continue to work in block mode. The policy
+also publishes the sandbox targets required by direct filesystem I/O, reverse
+tunnels, and explicit `port_forwardings`. Replies on those allowed paths are
+stateful. Other new network flows remain denied.
+
+Deny conventional DNS lookups for exact names or leading `*.` suffix
+patterns:
+
+```python
+policy = NetworkPolicy.deny_dns("github.com", "*.github.com")
+with Sandbox(network_policy=policy) as sandbox:
+    blocked = sandbox.commands.run(
+        "python3 -c 'import socket; socket.getaddrinfo(\"github.com\", 443)'"
+    )
+    assert blocked.exit_code != 0
+```
+
+An exact pattern matches only that name. For example, `github.com` does not
+match `api.github.com`, while `*.github.com` matches descendants but not
+the apex. Supply both when both should be denied. Patterns are normalized to
+lower case without a trailing dot; international names must use ASCII
+punycode. Each pattern may be an exact ASCII name or begin with one leading
+`*.`. The remaining name is at most 253 characters; each dot-separated label
+is 1-63 letters, digits, underscores, or hyphens, and a hyphen cannot start or
+end a label. Other wildcard placements and `?` are rejected.
+
+Network policies are fixed when a sandbox is created. `block_network` and
+`dns_blacklist` cannot be combined in the current SDK. DNS blacklists cover
+ordinary UDP and TCP DNS and return a refused response for blocked queries;
+DNS-over-HTTPS and connections to a known IP are outside their scope. The
+block-network packet ACL is currently stateful IPv4. DNS-only policies do not
+install a general packet allowlist.
+
+See [`examples/network_policy.py`](./examples/network_policy.py) for all
+three modes. Deployment nodes must have network ACL support enabled; the
+bundled standalone, Helm, and Terraform configurations enable it. Drain
+existing sandboxes before upgrading a node to an ACL-enabled sandboxd
+configuration, as described in the
+[deployment guide](../../deploy/README.md#network-acls).
 
 ## Sandbox runtimes
 
@@ -284,11 +348,11 @@ certificate verification. The sandbox application talks only to its loopback
 HTTP listener. AKernel supports one HTTP/HTTPS reverse tunnel per sandbox and
 does not expose a general TCP tunnel.
 
-> The default `openyuanrong-sandbox` backend reserves ports `8765` and `8766`
-> inside each sandbox while a reverse tunnel is active. They do not occupy
-> ports on the SDK host, but applications in the same sandbox cannot bind
-> them. The SDK-side target port remains configurable through `target`;
-> custom internal tunnel ports currently require `openyuanrong-sdk`.
+The default `openyuanrong-sandbox` backend supports custom internal tunnel
+ports. Its frontend derives the WebSocket port from the HTTP listener, so
+`reverse_port` must equal `listen_port - 1`. Both ports are reserved inside
+that sandbox while the tunnel is active and must not also appear in
+`port_forwardings`; they do not occupy ports on the SDK host.
 
 ## Rootfs and mounts
 
@@ -318,7 +382,9 @@ with Sandbox(rootfs=rootfs) as sandbox:
 
 `image` and `rootfs` are mutually exclusive. The SDK generates the backend
 wire representation; callers do not pass raw rootfs JSON or override the
-runtime inside an S3 object.
+runtime inside an S3 object. When neither source is supplied, AKernel sends
+only the selected isolation runtime and openYuanRong overlays it onto the
+rootfs configured by the deployed service.
 
 The same `S3Config` type can be used as a read-only mount source:
 
@@ -389,6 +455,7 @@ Maintained examples are under [`examples/`](./examples):
 - `custom_image.py`
 - `gpu_sandbox.py`
 - `named_sandbox.py`
+- `network_policy.py`
 - `pty.py`
 - `port_forwarding.py`
 - `reverse_tunnel.py`
@@ -425,3 +492,4 @@ not part of the default test suite.
 | `S3Config` | `endpoint`, `bucket`, `object`, optional credentials |
 | `Mount` | `target`, one source, and `type` |
 | `HttpReverseTunnel` | `target`, `reverse_port`, `listen_port`, `connect_timeout` |
+| `NetworkPolicy` | `block_network`, `dns_blacklist` |

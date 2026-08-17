@@ -57,15 +57,19 @@ def main() -> None:
             reverse_tunnel=tunnel,
         ) as sandbox:
             probe = (
-                "import sys,urllib.request;"
-                "response=urllib.request.urlopen(sys.argv[1],timeout=10);"
-                "print(response.read().decode().strip())"
+                "exec 3<>/dev/tcp/127.0.0.1/8766; "
+                "printf 'GET /health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n"
+                "Connection: close\\r\\n\\r\\n' >&3; "
+                "while IFS= read -r line <&3; do "
+                "case \"$line\" in "
+                "*AKERNEL_REVERSE_TUNNEL_OK*) "
+                "printf 'AKERNEL_REVERSE_TUNNEL_OK\\n'; exit 0;; "
+                "esac; "
+                "done; "
+                "exit 1"
             )
             result = sandbox.commands.run(
-                "python3 -c "
-                + shlex.quote(probe)
-                + " "
-                + shlex.quote(f"{sandbox.reverse_tunnel.url}/health"),
+                "bash -c " + shlex.quote(probe),
                 timeout=20,
             )
             assert result.exit_code == 0, result.stderr

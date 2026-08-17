@@ -41,10 +41,23 @@ fi
 
 nat_backend="$(network_value nat_backend)"
 enable_local_dnat="$(network_value enable_local_dnat)"
+enable_network_acl="$(network_value enable_network_acl)"
+nat_backend="${nat_backend:-iptables}"
 
 # Both NAT backends route packets between sandbox0 and the selected external
 # interface. AKernel owns this network-namespace prerequisite.
 "${SYSCTL_BIN}" -w net.ipv4.ip_forward=1
+
+# The iptables ACL backend filters bridged sandbox traffic through host kernel
+# netfilter hooks. Host provisioning must load br_netfilter; this hook only
+# configures the node container's network namespace.
+if [[ "${enable_network_acl,,}" == "true" && "${nat_backend}" == "iptables" ]]; then
+    if [[ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ]]; then
+        echo "br_netfilter is unavailable; load it on the host before starting the AKernel node" >&2
+        exit 1
+    fi
+    "${SYSCTL_BIN}" -w net.bridge.bridge-nf-call-iptables=1
+fi
 
 # bpfnat validates this setting when its local-DNAT path is enabled. Apply it
 # before sandboxd starts so startup never races systemd's sysctl processing.

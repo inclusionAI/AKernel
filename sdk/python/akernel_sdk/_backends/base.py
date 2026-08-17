@@ -28,6 +28,7 @@ from ..types import (
     EntryInfo,
     HttpReverseTunnel,
     Mount,
+    NetworkPolicy,
     S3Config,
     SandboxInfo,
 )
@@ -75,6 +76,7 @@ class SandboxSpec:
     node_id: str | None
     xpu: str | None
     storage_mb: int | None
+    network_policy: NetworkPolicy | None
 
 
 class CommandsDriver(Protocol):

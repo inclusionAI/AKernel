@@ -114,6 +114,11 @@ case "${runtime_profile}" in
   *) die "unsupported runtime profile: ${runtime_profile}; expected rrt or python" ;;
 esac
 
+case "${AKERNEL_ENABLE_KATA:-true}" in
+  true|false) ;;
+  *) die "AKERNEL_ENABLE_KATA must be true or false" ;;
+esac
+
 require_cmd docker
 
 if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
@@ -167,6 +172,7 @@ info "building ${all_in_one_image}"
 node_build_args=(
   --build-arg "AKERNEL_RUNTIME_IMAGE=${runtime_image}"
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
+  --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA:-true}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"
 )
