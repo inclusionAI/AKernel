@@ -151,6 +151,7 @@ jobs:
             basic_usage.py
             command_stdin.py
             custom_image.py
+            dockerfile_launch.py
             named_sandbox.py
             network_policy.py
             port_forwarding.py
