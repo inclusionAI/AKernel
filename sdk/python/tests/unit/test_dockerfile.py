@@ -609,6 +609,28 @@ class TestDockerfileManifestCopies(unittest.TestCase):
         self.assertEqual(copies, ["/app/allowed", "/app/sub/x"])
         self.assertEqual(context.open_paths, [".dockerignore", "allowed", "sub/x"])
 
+    def test_reincluded_dockerignore_descendant_copies_from_virtual_dir(self) -> None:
+        files = {
+            ".dockerignore": b"docs\n!docs/README.md\n",
+            "docs/README.md": b"visible",
+            "docs/private.txt": b"hidden",
+        }
+        for source in ("docs", "*"):
+            with self.subTest(source=source):
+                sandbox, context = self._apply_memory(
+                    f"FROM ubuntu\nCOPY {source} /out/\n", files
+                )
+                copies = [
+                    operation[2]
+                    for operation in sandbox.files.ops
+                    if operation[0] == "cp"
+                ]
+                self.assertEqual(copies, ["/out/README.md"])
+                self.assertEqual(
+                    context.open_paths,
+                    [".dockerignore", "docs/README.md"],
+                )
+
     def test_local_and_memory_contexts_have_same_copy_targets(self) -> None:
         import os
         import tempfile

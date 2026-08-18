@@ -33,8 +33,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal
 
-from pathspec import GitIgnoreSpec
-
 _SECURE_OPEN_SUPPORTED = (
     os.open in getattr(os, "supports_dir_fd", ())
     and hasattr(os, "O_DIRECTORY")
@@ -130,12 +128,9 @@ class _ContextManifest:
         raw_files = tuple(
             entry.path for entry in raw_entries if entry.kind == "file"
         )
-        ignore_spec = _read_ignore_spec(context, raw_files)
-        visible_entries = tuple(
-            entry
-            for entry in raw_entries
-            if not _is_reserved_root_path(entry.path)
-            and not ignore_spec.match_file(entry.path)
+        ignore_matcher = _read_ignore_matcher(context, raw_files)
+        visible_entries = _visible_entries_with_ancestors(
+            raw_entries, ignore_matcher
         )
         return cls(raw_entries, visible_entries)
 
@@ -343,68 +338,420 @@ def _validate_walk_entries(entries: tuple[object, ...]) -> None:
                 )
             parent = posixpath.dirname(parent)
 
+
 def _is_reserved_root_path(path: str) -> bool:
     """Return whether a root metadata file is never selectable."""
 
     return path.lower() == "dockerfile" or path == ".dockerignore"
 
 
-def _read_ignore_spec(
+# The matcher below adapts moby/patternmatcher commit 5a6d8429a19b
+# (Apache-2.0) to keep Docker context filtering backend-neutral.
+@dataclass(frozen=True)
+class _DockerIgnoreToken:
+    """One token in a Moby-compatible ignore pattern."""
+
+    kind: Literal[
+        "literal",
+        "star",
+        "question",
+        "globstar",
+        "globstar_directory",
+        "class",
+        "anchor",
+    ]
+    value: str | _CharacterClass | None = None
+
+
+@dataclass(frozen=True)
+class _DockerIgnorePattern:
+    """One precompiled Moby patternmatcher-compatible ignore pattern."""
+
+    value: str
+    exclusion: bool
+    match_type: Literal["exact", "prefix", "suffix", "tokens"]
+    tokens: tuple[_DockerIgnoreToken, ...] = ()
+
+    def matches(self, path: str) -> bool:
+        """Match one context path using Moby's optimized pattern forms."""
+
+        if self.match_type == "exact":
+            return path == self.value
+        if self.match_type == "prefix":
+            return path.startswith(self.value[:-2])
+        if self.match_type == "suffix":
+            suffix = self.value[2:]
+            return path.endswith(suffix) or (
+                suffix.startswith("/") and path == suffix[1:]
+            )
+        return _ignore_tokens_match(self.tokens, path)
+
+
+@dataclass(frozen=True)
+class _DockerIgnoreMatcher:
+    """Ordered Docker ignore patterns with parent-directory matching."""
+
+    patterns: tuple[_DockerIgnorePattern, ...]
+
+    @classmethod
+    def from_lines(cls, lines: list[str]) -> _DockerIgnoreMatcher:
+        return cls(tuple(_compile_ignore_pattern(line) for line in lines))
+
+    def is_ignored(self, path: str) -> bool:
+        """Return Moby MatchesOrParentMatches result for a context path."""
+
+        matched = False
+        segments = path.split("/")
+        parents = tuple(
+            "/".join(segments[:index]) for index in range(1, len(segments))
+        )
+        for pattern in self.patterns:
+            if pattern.exclusion != matched:
+                continue
+            pattern_matched = pattern.matches(path) or any(
+                pattern.matches(parent) for parent in parents
+            )
+            if pattern_matched:
+                matched = not pattern.exclusion
+        return matched
+
+    def match_with_parent_results(
+        self, path: str, parent_results: tuple[bool, ...]
+    ) -> tuple[bool, tuple[bool, ...]]:
+        """Match a path while reusing per-pattern results from its parent."""
+
+        if parent_results and len(parent_results) != len(self.patterns):
+            raise DockerContextError("invalid .dockerignore parent match results")
+
+        matched = False
+        results = [False] * len(self.patterns)
+        for index, pattern in enumerate(self.patterns):
+            pattern_matched = (
+                parent_results[index] if parent_results else False
+            )
+            if not pattern_matched:
+                if pattern.exclusion != matched:
+                    continue
+                pattern_matched = pattern.matches(path)
+            results[index] = pattern_matched
+            if pattern_matched:
+                matched = not pattern.exclusion
+        return matched, tuple(results)
+
+
+def _visible_entries_with_ancestors(
+    raw_entries: tuple[DockerContextEntry, ...],
+    ignore_matcher: _DockerIgnoreMatcher,
+) -> tuple[DockerContextEntry, ...]:
+    """Keep visible entries plus directory ancestors needed to reach them."""
+
+    raw_by_path = {entry.path: entry for entry in raw_entries}
+    active_directories: list[tuple[str, tuple[bool, ...]]] = []
+    visible_paths: set[str] = set()
+    tree_entries = sorted(
+        raw_entries, key=lambda entry: tuple(entry.path.split("/"))
+    )
+    for entry in tree_entries:
+        while active_directories and not entry.path.startswith(
+            f"{active_directories[-1][0]}/"
+        ):
+            active_directories.pop()
+
+        parent = posixpath.dirname(entry.path)
+        if parent:
+            if not active_directories or active_directories[-1][0] != parent:
+                raise DockerContextError(
+                    f"context walk omitted directory entry: {parent!r}"
+                )
+            parent_results = active_directories[-1][1]
+        else:
+            parent_results = ()
+
+        ignored, match_results = ignore_matcher.match_with_parent_results(
+            entry.path, parent_results
+        )
+        if entry.kind == "directory":
+            active_directories.append((entry.path, match_results))
+        if not _is_reserved_root_path(entry.path) and not ignored:
+            visible_paths.add(entry.path)
+    for path in tuple(visible_paths):
+        parent = posixpath.dirname(path)
+        while parent not in ("", "."):
+            ancestor = raw_by_path[parent]
+            if ancestor.kind != "directory":
+                raise DockerContextError(
+                    f"context walk yielded a file-as-ancestor path: {parent!r}"
+                )
+            visible_paths.add(parent)
+            parent = posixpath.dirname(parent)
+    return tuple(entry for entry in raw_entries if entry.path in visible_paths)
+
+
+def _read_ignore_matcher(
     context: DockerContext, raw_files: tuple[str, ...]
-) -> GitIgnoreSpec:
+) -> _DockerIgnoreMatcher:
     """Read and compile the root .dockerignore when it was walked."""
 
     if ".dockerignore" not in raw_files:
-        return GitIgnoreSpec.from_lines(())
+        return _DockerIgnoreMatcher(())
 
     try:
         with context.open(".dockerignore") as stream:
             content = stream.read()
         lines = _prepare_ignore_lines(content.decode("utf-8-sig"))
-        return GitIgnoreSpec.from_lines(lines)
+        return _DockerIgnoreMatcher.from_lines(lines)
     except DockerContextError:
         raise
     except Exception as error:
         raise DockerContextError("failed to read .dockerignore") from error
 
 
+_MOBY_TRIM_SPACE = (
+    " \t\n\v\f\r\u0085\u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005"
+    "\u2006\u2007\u2008\u2009\u200a\u2028"
+    "\u2029\u202f\u205f\u3000"
+)
+
+
+def _trim_moby_space(value: str) -> str:
+    """Trim exactly the Unicode White_Space set used by Go."""
+
+    return value.strip(_MOBY_TRIM_SPACE)
+
+
 def _prepare_ignore_lines(content: str) -> list[str]:
-    """Normalize common Docker .dockerignore syntax for GitIgnoreSpec."""
+    """Apply Moby ignorefile preprocessing to .dockerignore content."""
 
     lines: list[str] = []
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if not line or line == ".":
-            continue
-        if line.startswith("#"):
+    for line_index, raw_line in enumerate(content.split("\n")):
+        if line_index == 0:
+            raw_line = raw_line.removeprefix("\ufeff")
+        if raw_line.endswith("\r"):
+            raw_line = raw_line[:-1]
+        if raw_line.startswith("#"):
             continue
 
-        negation = ""
-        pattern = line
-        if pattern.startswith("!"):
-            negation = "!"
-            pattern = pattern[1:]
-
-        while pattern.startswith("/"):
-            pattern = pattern[1:]
-        while pattern.endswith("/") and not _is_escaped(pattern, len(pattern) - 1):
-            pattern = pattern[:-1]
-
-        if not pattern or pattern == ".":
+        pattern = _trim_moby_space(raw_line)
+        if not pattern:
             continue
-        lines.append(f"{negation}{pattern}")
+
+        invert = pattern.startswith("!")
+        if invert:
+            pattern = _trim_moby_space(pattern[1:])
+        if pattern:
+            pattern = _clean_posix_pattern(pattern)
+            if len(pattern) > 1 and pattern.startswith("/"):
+                pattern = pattern[1:]
+        lines.append(("!" if invert else "") + pattern)
     return lines
 
 
-def _is_escaped(value: str, index: int) -> bool:
-    """Return whether a character is preceded by an odd number of backslashes."""
+def _clean_posix_pattern(pattern: str) -> str:
+    """Return the Unix filepath.Clean equivalent used by Moby."""
 
-    count = 0
-    index -= 1
-    while index >= 0 and value[index] == "\\":
-        count += 1
-        index -= 1
-    return count % 2 == 1
+    cleaned = posixpath.normpath(pattern)
+    if cleaned.startswith("//"):
+        cleaned = "/" + cleaned.lstrip("/")
+    return cleaned
+
+
+def _compile_ignore_pattern(line: str) -> _DockerIgnorePattern:
+    """Compile one preprocessed pattern with Moby patternmatcher semantics."""
+
+    cleaned = _clean_posix_pattern(_trim_moby_space(line))
+    exclusion = cleaned.startswith("!")
+    value = cleaned[1:] if exclusion else cleaned
+    if not value:
+        raise DockerContextError("invalid .dockerignore pattern: '!'")
+    if "\0" in value:
+        raise DockerContextError("invalid .dockerignore pattern containing NUL")
+
+    tokens: list[_DockerIgnoreToken] = []
+    match_type: Literal["exact", "prefix", "suffix", "tokens"] = "exact"
+    index = 0
+    token_index = 0
+    while index < len(value):
+        character = value[index]
+        if character == "*":
+            if index + 1 < len(value) and value[index + 1] == "*":
+                index += 2
+                if index < len(value) and value[index] == "/":
+                    index += 1
+                if index == len(value):
+                    if match_type == "exact":
+                        match_type = "prefix"
+                    else:
+                        tokens.append(_DockerIgnoreToken("globstar"))
+                        match_type = "tokens"
+                else:
+                    tokens.append(_DockerIgnoreToken("globstar_directory"))
+                    match_type = "tokens"
+                if token_index == 0:
+                    match_type = "suffix"
+            else:
+                tokens.append(_DockerIgnoreToken("star"))
+                match_type = "tokens"
+                index += 1
+        elif character == "?":
+            tokens.append(_DockerIgnoreToken("question"))
+            match_type = "tokens"
+            index += 1
+        elif character == "[":
+            character_class, index = _compile_ignore_character_class(
+                value, index, line
+            )
+            tokens.append(_DockerIgnoreToken("class", character_class))
+            match_type = "tokens"
+        elif character == "\\":
+            index += 1
+            if index >= len(value):
+                raise DockerContextError(
+                    f"invalid .dockerignore pattern: {line!r}"
+                )
+            # Moby passes alphanumeric escapes through to RE2. Reject
+            # them rather than silently downgrading their matching semantics.
+            if (
+                value[index] == "/"
+                or value[index].isalnum()
+                or value[index] == "_"
+            ):
+                raise DockerContextError(
+                    f"unsupported .dockerignore escape: {line!r}"
+                )
+            tokens.append(_DockerIgnoreToken("literal", value[index]))
+            match_type = "tokens"
+            index += 1
+        else:
+            kind: Literal["literal", "anchor"] = (
+                "anchor" if character == "^" else "literal"
+            )
+            tokens.append(_DockerIgnoreToken(kind, character))
+            index += 1
+        token_index += 1
+
+    return _DockerIgnorePattern(value, exclusion, match_type, tuple(tokens))
+
+
+def _compile_ignore_character_class(
+    pattern: str, index: int, original: str
+) -> tuple[_CharacterClass, int]:
+    """Compile one strict Go filepath-compatible ignore character class."""
+
+    index += 1
+    negated = index < len(pattern) and pattern[index] == "^"
+    if negated:
+        index += 1
+
+    ranges: list[tuple[str, str]] = []
+    while True:
+        if index >= len(pattern) or pattern[index] == "]":
+            if index < len(pattern) and ranges:
+                index += 1
+                break
+            raise DockerContextError(
+                f"invalid .dockerignore pattern: {original!r}"
+            )
+
+        low, index, low_escaped = _read_ignore_class_character(
+            pattern, index, original
+        )
+        if low == "-" and not low_escaped:
+            raise DockerContextError(
+                f"invalid .dockerignore pattern: {original!r}"
+            )
+        high = low
+        if index < len(pattern) and pattern[index] == "-":
+            index += 1
+            if index >= len(pattern) or pattern[index] == "]":
+                raise DockerContextError(
+                    f"invalid .dockerignore pattern: {original!r}"
+                )
+            high, index, _ = _read_ignore_class_character(
+                pattern, index, original
+            )
+            if ord(high) < ord(low):
+                raise DockerContextError(
+                    f"invalid .dockerignore pattern: {original!r}"
+                )
+        ranges.append((low, high))
+
+    return _CharacterClass(negated, tuple(ranges)), index
+
+
+def _read_ignore_class_character(
+    pattern: str, index: int, original: str
+) -> tuple[str, int, bool]:
+    """Read one literal or escaped character inside an ignore class."""
+
+    escaped = pattern[index] == "\\"
+    if escaped:
+        index += 1
+        if index >= len(pattern):
+            raise DockerContextError(
+                f"invalid .dockerignore pattern: {original!r}"
+            )
+    character = pattern[index]
+    if (
+        character == "["
+        or (escaped and (character.isalnum() or character in "_/"))
+    ):
+        raise DockerContextError(
+            f"unsupported .dockerignore character class: {original!r}"
+        )
+    return character, index + 1, escaped
+
+
+def _ignore_tokens_match(
+    tokens: tuple[_DockerIgnoreToken, ...], path: str
+) -> bool:
+    """Match compiled tokens in O(pattern length * path length) time."""
+
+    previous = [False] * (len(path) + 1)
+    previous[0] = True
+    for token in tokens:
+        current = [False] * (len(path) + 1)
+        if token.kind == "star":
+            current[0] = previous[0]
+            for path_index in range(1, len(path) + 1):
+                current[path_index] = previous[path_index] or (
+                    path[path_index - 1] != "/" and current[path_index - 1]
+                )
+        elif token.kind == "globstar":
+            current[0] = previous[0]
+            for path_index in range(1, len(path) + 1):
+                current[path_index] = (
+                    previous[path_index] or current[path_index - 1]
+                )
+        elif token.kind == "globstar_directory":
+            previous_prefix = False
+            for path_index in range(len(path) + 1):
+                current[path_index] = previous[path_index]
+                if path_index > 0:
+                    previous_prefix = (
+                        previous_prefix or previous[path_index - 1]
+                    )
+                    if path[path_index - 1] == "/" and previous_prefix:
+                        current[path_index] = True
+        elif token.kind == "anchor":
+            current[0] = previous[0]
+        elif token.kind in ("question", "literal", "class"):
+            for path_index in range(1, len(path) + 1):
+                character = path[path_index - 1]
+                token_matches = False
+                if token.kind == "question":
+                    token_matches = character != "/"
+                elif token.kind == "literal":
+                    token_matches = character == token.value
+                elif isinstance(token.value, _CharacterClass):
+                    token_matches = token.value.matches(character)
+                current[path_index] = (
+                    previous[path_index - 1] and token_matches
+                )
+        else:
+            raise DockerContextError("invalid compiled .dockerignore token")
+        previous = current
+    return previous[len(path)]
 
 
 def _normalize_source(source: str) -> str:
