@@ -20,11 +20,15 @@ sets runtime state. RUN/COPY/ADD execute for every launch, without a snapshot
 or build cache.
 
 Sections:
-    1. Core path — filtered COPY ., wildcard directory COPY, modes, empty dirs
+    1. Core path, ignore filtering, wildcard COPY, modes, and empty directories
     2. Root cwd plus ENTRYPOINT + CMD exec-form combination
-    3. COPY --chown ownership
-    4. Builder/root ADD after USER
-    5. Fail-closed pre-check without a sandbox
+    3. Exec-form ENTRYPOINT without CMD
+    4. Shell-form CMD
+    5. Shell-form ENTRYPOINT ignoring CMD
+    6. Disabled automatic startup dispatch
+    7. COPY --chown ownership
+    8. Builder/root ADD after USER
+    9. Fail-closed pre-check without a sandbox
 """
 
 import tarfile
@@ -47,7 +51,10 @@ def section_core_path() -> None:
     print("\n=== Section 1: filtered core path ===")
     with tempfile.TemporaryDirectory() as directory:
         context_dir = Path(directory)
-        (context_dir / ".dockerignore").write_text("secret.txt\n", encoding="utf-8")
+        (context_dir / ".dockerignore").write_text(
+            "secret.txt\ndocs\n!docs/README.md\n",
+            encoding="utf-8",
+        )
         (context_dir / "secret.txt").write_text("do not upload\n", encoding="utf-8")
         (context_dir / "app.py").write_text(
             "import os\n"
@@ -57,6 +64,10 @@ def section_core_path() -> None:
             encoding="utf-8",
         )
         (context_dir / "greeting.txt").write_text("hello\n", encoding="utf-8")
+        docs = context_dir / "docs"
+        docs.mkdir()
+        (docs / "README.md").write_text("visible\n", encoding="utf-8")
+        (docs / "private.txt").write_text("hidden\n", encoding="utf-8")
         executable = context_dir / "entrypoint.sh"
         executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         executable.chmod(0o755)
@@ -79,6 +90,8 @@ USER app
 COPY empty/ /srv/core/literal-empty/
 COPY . /srv/core/
 COPY wild/* /srv/wild/
+COPY docs /srv/reincluded-literal/
+COPY doc* /srv/reincluded-wildcard/
 CMD ["python3", "/srv/core/app.py"]
 """
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
@@ -110,6 +123,15 @@ CMD ["python3", "/srv/core/app.py"]
                 "test -f /srv/wild/dir2/foo && test ! -e /srv/wild/dir1"
             )
             assert wildcard.exit_code == 0, wildcard.stderr
+            reincluded = sandbox.commands.run(
+                "test -f /srv/core/docs/README.md "
+                "&& test ! -e /srv/core/docs/private.txt "
+                "&& test -f /srv/reincluded-literal/README.md "
+                "&& test ! -e /srv/reincluded-literal/private.txt "
+                "&& test -f /srv/reincluded-wildcard/README.md "
+                "&& test ! -e /srv/reincluded-wildcard/private.txt"
+            )
+            assert reincluded.exit_code == 0, reincluded.stderr
             print(
                 f"  sandbox: {sandbox.id}; marker: {marker.stdout.strip()}; "
                 f"modes: {modes.stdout.splitlines()}"
@@ -147,9 +169,98 @@ CMD ["ignored-argv-zero", "entrypoint+cmd merged"]
             )
 
 
+def section_entrypoint_only() -> None:
+    """Dispatch an exec-form ENTRYPOINT when CMD is absent."""
+    print("\n=== Section 3: ENTRYPOINT only ===")
+    with tempfile.TemporaryDirectory() as directory:
+        context = LocalDockerContext(
+            "FROM ubuntu:22.04\n"
+            'ENTRYPOINT ["/bin/sh", "-c", '
+            '"printf entrypoint-only > /tmp/entrypoint-only.out"]\n',
+            context_dir=directory,
+        )
+        _precheck(context)
+
+        with Sandbox(context=context) as sandbox:
+            startup = sandbox.startup_command
+            assert startup is not None
+            result = startup.wait(timeout=60)
+            assert result.exit_code == 0, result.stderr
+            marker = sandbox.commands.run("cat /tmp/entrypoint-only.out")
+            assert marker.exit_code == 0, marker.stderr
+            assert marker.stdout == "entrypoint-only", marker.stdout
+            print(f"  sandbox: {sandbox.id}; output: {marker.stdout}")
+
+
+def section_shell_cmd() -> None:
+    """Dispatch a shell-form CMD with the declared WORKDIR."""
+    print("\n=== Section 4: shell-form CMD ===")
+    with tempfile.TemporaryDirectory() as directory:
+        context = LocalDockerContext(
+            "FROM ubuntu:22.04\nWORKDIR /tmp\nCMD pwd > /tmp/shell-cmd.out\n",
+            context_dir=directory,
+        )
+        _precheck(context)
+
+        with Sandbox(context=context) as sandbox:
+            startup = sandbox.startup_command
+            assert startup is not None
+            result = startup.wait(timeout=60)
+            assert result.exit_code == 0, result.stderr
+            marker = sandbox.commands.run("cat /tmp/shell-cmd.out")
+            assert marker.exit_code == 0, marker.stderr
+            assert marker.stdout.strip() == "/tmp", marker.stdout
+            print(f"  sandbox: {sandbox.id}; cwd: {marker.stdout.strip()}")
+
+
+def section_shell_entrypoint_ignores_cmd() -> None:
+    """Ensure shell-form ENTRYPOINT replaces rather than appends CMD."""
+    print("\n=== Section 5: shell ENTRYPOINT ignores CMD ===")
+    with tempfile.TemporaryDirectory() as directory:
+        context = LocalDockerContext(
+            "FROM ubuntu:22.04\n"
+            "ENTRYPOINT printf shell-entrypoint > /tmp/shell-entrypoint.out\n"
+            'CMD ["/bin/sh", "-c", '
+            '"printf unexpected > /tmp/cmd-should-not-run.out"]\n',
+            context_dir=directory,
+        )
+        _precheck(context)
+
+        with Sandbox(context=context) as sandbox:
+            startup = sandbox.startup_command
+            assert startup is not None
+            result = startup.wait(timeout=60)
+            assert result.exit_code == 0, result.stderr
+            marker = sandbox.commands.run(
+                "cat /tmp/shell-entrypoint.out && test ! -e /tmp/cmd-should-not-run.out"
+            )
+            assert marker.exit_code == 0, marker.stderr
+            assert marker.stdout == "shell-entrypoint", marker.stdout
+            print(f"  sandbox: {sandbox.id}; output: {marker.stdout}")
+
+
+def section_auto_start_disabled() -> None:
+    """Keep CMD undispatched when auto_start_cmd is disabled."""
+    print("\n=== Section 6: auto startup disabled ===")
+    with tempfile.TemporaryDirectory() as directory:
+        context = LocalDockerContext(
+            "FROM ubuntu:22.04\n"
+            'CMD ["/bin/sh", "-c", '
+            '"printf unexpected > /tmp/disabled-start.out"]\n',
+            context_dir=directory,
+        )
+        _precheck(context)
+
+        with Sandbox(context=context, auto_start_cmd=False) as sandbox:
+            assert sandbox.startup_command is None
+            absent = sandbox.commands.run("test ! -e /tmp/disabled-start.out")
+            assert absent.exit_code == 0, absent.stderr
+            print(f"  sandbox: {sandbox.id}; startup dispatch: disabled")
+
+
 def section_copy_chown() -> None:
     """Verify COPY --chown without dispatching a startup command."""
-    print("\n=== Section 3: COPY --chown ===")
+    print("\n=== Section 7: COPY --chown ===")
     with tempfile.TemporaryDirectory() as directory:
         context_dir = Path(directory)
         (context_dir / "payload.txt").write_text("owned\n", encoding="utf-8")
@@ -171,7 +282,7 @@ COPY --chown=myuser:myuser payload.txt /data/payload.txt
 
 def section_add_tar() -> None:
     """Verify literal local ADD tar extraction without a startup command."""
-    print("\n=== Section 4: ADD local tar ===")
+    print("\n=== Section 8: ADD local tar ===")
     with tempfile.TemporaryDirectory() as directory:
         context_dir = Path(directory)
         payload = context_dir / "payload"
@@ -203,7 +314,7 @@ def section_add_tar() -> None:
 
 def section_fail_closed_precheck() -> None:
     """Reject remote ADD and unsupported USER forms before sandbox creation."""
-    print("\n=== Section 5: fail-closed precheck ===")
+    print("\n=== Section 9: fail-closed precheck ===")
     cases = (
         (
             "FROM ubuntu:22.04\nADD https://example.test/app.tar /opt/app/\n",
@@ -224,6 +335,10 @@ def section_fail_closed_precheck() -> None:
 def main() -> None:
     section_core_path()
     section_entrypoint_cmd_merge()
+    section_entrypoint_only()
+    section_shell_cmd()
+    section_shell_entrypoint_ignores_cmd()
+    section_auto_start_disabled()
     section_copy_chown()
     section_add_tar()
     section_fail_closed_precheck()
