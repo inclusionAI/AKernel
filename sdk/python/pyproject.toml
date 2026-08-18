@@ -31,7 +31,6 @@ dependencies = [
     "openyuanrong-sandbox==0.9.7",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
-    "pathspec>=0.12,<2",
 ]
 
 [project.optional-dependencies]

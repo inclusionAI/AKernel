@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import BinaryIO
 from unittest.mock import patch
 
+import akernel_sdk._dockercontext as dockercontext_module
 from akernel_sdk._dockercontext import (
     DockerContext,
     DockerContextEntry,
@@ -135,6 +136,151 @@ class TestContextManifest(unittest.TestCase):
                 with self.assertRaisesRegex(DockerContextError, "ignored"):
                     manifest.select(source)
         self.assertEqual(context.open_paths, [".dockerignore"])
+
+    def test_dockerignore_moby_preprocessing_and_embedded_double_star(self) -> None:
+        context = MemoryDockerContext(
+            {
+                ".dockerignore": (
+                    b"# column-one comment\n"
+                    b"  #secret\n"
+                    b"a**/*.txt\n"
+                    b"foo/../cleaned-secret\n"
+                    b"[^/]*.pem\n"
+                    b"foo[/]bar\n"
+                ),
+                "#secret": b"hidden",
+                "a/file.txt": b"hidden",
+                "a/dir/dir/secret.txt": b"hidden",
+                "a/keep.bin": b"visible",
+                "cleaned-secret": b"hidden",
+                "foo/bar": b"hidden",
+                "nested/root.pem": b"visible",
+                "root.pem": b"hidden",
+                "safe": b"visible",
+            }
+        )
+        manifest = _ContextManifest.from_context(context)
+        self.assertEqual(
+            paths(manifest.select(".")),
+            [
+                ("a/keep.bin", "a/keep.bin"),
+                ("nested/root.pem", "nested/root.pem"),
+                ("safe", "safe"),
+            ],
+        )
+        for source in (
+            "#secret",
+            "a/file.txt",
+            "a/dir/dir/secret.txt",
+            "cleaned-secret",
+            "foo/bar",
+            "root.pem",
+        ):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(DockerContextError, "ignored"):
+                    manifest.select(source)
+        self.assertEqual(context.open_paths, [".dockerignore"])
+
+    def test_reincluded_descendants_make_virtual_source_directories(self) -> None:
+        context = MemoryDockerContext(
+            {
+                ".dockerignore": (
+                    b"docs\n"
+                    b"!docs/README.md\n"
+                    b"!docs/nested/guide.md\n"
+                ),
+                "docs/README.md": b"visible",
+                "docs/nested/guide.md": b"visible",
+                "docs/private.txt": b"hidden",
+            }
+        )
+        manifest = _ContextManifest.from_context(context)
+        expected = [
+            ("docs", "", "directory"),
+            ("docs/README.md", "README.md", "file"),
+            ("docs/nested", "nested", "directory"),
+            ("docs/nested/guide.md", "nested/guide.md", "file"),
+        ]
+        literal = manifest.select("docs")
+        self.assertEqual(
+            [
+                (entry.source_path, entry.relative_target, entry.kind)
+                for entry in literal.entries
+            ],
+            expected,
+        )
+        wildcard = manifest.select("*")
+        self.assertEqual(
+            [
+                (entry.source_path, entry.relative_target, entry.kind)
+                for entry in wildcard.entries
+            ],
+            expected,
+        )
+        self.assertEqual(wildcard.top_level_source_count, 1)
+        with self.assertRaisesRegex(DockerContextError, "ignored"):
+            manifest.select("docs/private.txt")
+        self.assertEqual(context.open_paths, [".dockerignore"])
+
+    def test_malformed_dockerignore_patterns_fail_closed(self) -> None:
+        for pattern in (b"!\n", b"[\n", b"trailing\\\n", b"[z-a]\n"):
+            with self.subTest(pattern=pattern):
+                context = MemoryDockerContext(
+                    {".dockerignore": pattern, "safe": b"visible"}
+                )
+                with self.assertRaisesRegex(
+                    DockerContextError, "invalid .dockerignore pattern"
+                ):
+                    _ContextManifest.from_context(context)
+                self.assertEqual(context.open_paths, [".dockerignore"])
+
+
+    def test_unsupported_dockerignore_regex_escapes_fail_closed(self) -> None:
+        cases = (
+            (br"\d*.pem" + NL, "unsupported .dockerignore escape"),
+            (br"\s*" + NL, "unsupported .dockerignore escape"),
+            (br"\x41*" + NL, "unsupported .dockerignore escape"),
+            (br"\foo" + NL, "unsupported .dockerignore escape"),
+            (br"[\d]*.pem" + NL, "unsupported .dockerignore character class"),
+            (b"[[:digit:]]*.pem" + NL, "unsupported .dockerignore character class"),
+        )
+        for pattern, message in cases:
+            with self.subTest(pattern=pattern):
+                context = MemoryDockerContext(
+                    {".dockerignore": pattern, "1secret.pem": b"hidden"}
+                )
+                with self.assertRaisesRegex(DockerContextError, message):
+                    _ContextManifest.from_context(context)
+                self.assertEqual(context.open_paths, [".dockerignore"])
+
+    def test_parent_match_stack_handles_path_prefix_siblings(self) -> None:
+        context = MemoryDockerContext(
+            {
+                ".dockerignore": b"never-match*\n",
+                "a/file": b"nested",
+                "a-b": b"sibling",
+            }
+        )
+        manifest = _ContextManifest.from_context(context)
+        self.assertEqual(
+            paths(manifest.select(".")),
+            [("a-b", "a-b"), ("a/file", "a/file")],
+        )
+
+    def test_manifest_reuses_parent_ignore_results(self) -> None:
+        nested = "/".join(f"level-{index}" for index in range(40))
+        path = f"{nested}/visible.txt"
+        context = MemoryDockerContext(
+            {".dockerignore": b"never-match*\n", path: b"visible"}
+        )
+        with patch.object(
+            dockercontext_module,
+            "_ignore_tokens_match",
+            wraps=dockercontext_module._ignore_tokens_match,
+        ) as token_match:
+            manifest = _ContextManifest.from_context(context)
+        self.assertEqual(paths(manifest.select(path)), [(path, "visible.txt")])
+        self.assertLessEqual(token_match.call_count, len(context.paths))
 
     def test_escaped_ignore_patterns_and_invalid_utf8(self) -> None:
         slash = chr(92).encode()

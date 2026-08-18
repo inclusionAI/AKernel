@@ -165,21 +165,30 @@ or `directory`, and a permission-bit `mode` from `0o000` through `0o777`;
 custom contexts must expose files and every ancestor or empty directory.
 `LocalDockerContext` uses a local directory and rejects symbolic links. Before
 any sandbox operation, direct launch walks and validates the manifest, applies
-root `.dockerignore` rules to files and directories, excludes `Dockerfile` and
-`.dockerignore` from selection, plans every `COPY`/`ADD`, and materializes all
-selected files. Selected directory entries create empty and nested directories,
-while each copied child file or directory has its own non-recursive mode
-restored. For a literal directory source, the source root itself is only a
-content container: the destination is created when needed, but does not inherit
-that source-root mode. A wildcard that matches a directory likewise copies its
-contents, rather than the matched directory name. Wildcard source patterns
-follow Go `filepath.Match`-style segment matching, so `**` has the same
-one-segment behavior as `*`; `[^a]` negates a character class while `[!a]`
-matches `!` or `a`. Backslash escapes are outside this strict subset, and
-malformed classes fail closed. When one wildcard expands to multiple top-level
-sources after `.dockerignore` filtering, the destination must end in `/`. Paths
-and target collisions fail closed. `--chown` affects only files and directories
-created by the current instruction. Local tar `ADD` accepts only regular files
+Moby-compatible root `.dockerignore` preprocessing and ordered matching to files
+and directories, excludes `Dockerfile` and `.dockerignore` from selection,
+plans every `COPY`/`ADD`, and materializes all selected files. Docker ignore
+patterns are cleaned like `filepath.Clean`, comments require `#` in column one,
+embedded `**` can span directories, and later `!` patterns can re-include
+descendants. Alphanumeric backslash escapes and nested POSIX character
+classes that Moby routes through its regular-expression engine are rejected
+rather than treated as literals. When a descendant is re-included beneath an
+ignored directory, its
+required directory ancestors remain selectable as virtual source directories;
+fully ignored directories remain unavailable. Selected directory entries create
+empty and nested directories, while each copied child file or directory has its
+own non-recursive mode restored. For a literal directory source, the source root
+itself is only a content container: the destination is created when needed, but
+does not inherit that source-root mode. A wildcard that matches a directory
+likewise copies its contents, rather than the matched directory name. Dockerfile
+`COPY`/`ADD` source patterns follow Go `filepath.Match`-style segment
+matching, so `**` has the same one-segment behavior as `*`; `[^a]`
+negates a character class while `[!a]` matches `!` or `a`. Backslash
+escapes are outside this strict source-pattern subset, and malformed classes fail
+closed. When one wildcard expands to multiple top-level sources after
+`.dockerignore` filtering, the destination must end in `/`. Paths and target
+collisions fail closed. `--chown` affects only files and directories created by
+the current instruction. Local tar `ADD` accepts only regular files
 and directories with safe paths, preserves tar member metadata, and always
 extracts as the builder/root identity before applying `--chown`. Remote `ADD`
 URLs are rejected; the SDK never fetches them. Secure local context opening
@@ -200,8 +209,9 @@ the desired command explicitly with `sandbox.commands.run(..., background=True)`
 image configuration does not auto-start a process in this SDK path.
 
 Parsing uses [`dockerfile-parse`](https://github.com/containerbuildsystem/dockerfile-parse)
-(BSD-3-Clause), and context matching uses [`pathspec`](https://github.com/cpburnz/python-path-specification)
-(MIT). The value post-processing approach was informed by the
+(BSD-3-Clause). `.dockerignore` behavior follows
+[`moby/patternmatcher`](https://github.com/moby/patternmatcher) (Apache-2.0).
+The value post-processing approach was informed by the
 [E2B Python SDK](https://github.com/e2b-dev/E2B) (MIT).
 
 ### Experimental GPU and writable storage
