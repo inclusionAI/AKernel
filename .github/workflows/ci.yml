@@ -41,12 +41,10 @@ jobs:
 
       - name: Install SDK dependencies
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           python -m pip install -e './sdk/python[all]'
 
       - name: Run unit tests
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           make sdk-test
 
   sdk-quality:
@@ -89,7 +87,6 @@ jobs:
 
       - name: Check deployment script syntax
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           make deploy-script-check
 
   standalone-e2e:
@@ -105,7 +102,6 @@ jobs:
 
       - name: Initialize build submodules
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           git submodule update --init src/sandboxd src/distill-fs
 
       - name: Set up Python
@@ -117,12 +113,10 @@ jobs:
 
       - name: Install SDK dependencies
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           python -m pip install -e './sdk/python[all]'
 
       - name: Prepare host kernel modules
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           sudo modprobe loop
           sudo modprobe erofs
           sudo modprobe br_netfilter
@@ -130,7 +124,6 @@ jobs:
 
       - name: Build all-in-one image
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           AKERNEL_ENABLE_KATA=false \
             make build \
               IMAGE_REPOSITORY=akernel-ci/all-in-one \
@@ -139,14 +132,12 @@ jobs:
 
       - name: Start standalone AKernel
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           IMAGE="akernel-ci/all-in-one:${GITHUB_SHA}" \
             AKERNEL_NAT_BACKEND=iptables \
             ./deploy/standalone/start.sh
 
       - name: Run SDK end-to-end examples
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           gateway_ip="$(docker inspect \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
             akernel-traefik)"
@@ -175,7 +166,6 @@ jobs:
       - name: Show standalone diagnostics
         if: failure()
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           docker ps -a
           for container in akernel-node akernel-traefik; do
             if docker container inspect "${container}" >/dev/null 2>&1; then
@@ -192,7 +182,6 @@ jobs:
       - name: Stop standalone AKernel
         if: always()
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           if [[ -x ./deploy/standalone/stop.sh ]]; then
             ./deploy/standalone/stop.sh
           else

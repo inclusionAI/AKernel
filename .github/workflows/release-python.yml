@@ -35,8 +35,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
-
           if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag must use the stable vX.Y.Z format: ${RELEASE_TAG}" >&2
             exit 1
@@ -68,18 +66,15 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           python -m pip install --upgrade pip
           python -m pip install -e './sdk/python[dev]' 'twine>=5,<7'
 
       - name: Check SDK
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           make sdk-check
 
       - name: Build distributions
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           rm -rf sdk/python/dist
           python -m build --outdir sdk/python/dist sdk/python
           test "$(find sdk/python/dist -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
@@ -88,7 +83,6 @@ jobs:
 
       - name: Test installed wheel
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
           python -m venv /tmp/akernel-wheel-test
           /tmp/akernel-wheel-test/bin/python -m pip install \
             --no-deps sdk/python/dist/*.whl
