@@ -163,11 +163,22 @@ A `DockerContext` exposes Dockerfile text plus structured `DockerContextEntry`
 values from `walk()`. Each entry has a relative POSIX `path`, `kind` of `file`
 or `directory`, and a permission-bit `mode` from `0o000` through `0o777`;
 custom contexts must expose files and every ancestor or empty directory.
+Custom contexts may implement `dockerfile_ignore()`: returning a
+`(diagnostic_name, bytes)` tuple supplies the active matcher, while only
+returning `None` falls back to the manifest-root `.dockerignore`; empty `bytes`
+still denote a present, higher-priority matcher. Dockerfiles and ignore files
+that belong to the filesystem context must still be enumerated by `walk()`.
 `LocalDockerContext` uses a local directory and rejects symbolic links. Before
-any sandbox operation, direct launch walks and validates the manifest, applies
-Moby-compatible root `.dockerignore` preprocessing and ordered matching to files
-and directories, excludes `Dockerfile` and `.dockerignore` from selection,
-plans every `COPY`/`ADD`, and materializes all selected files. Docker ignore
+any sandbox operation, direct launch walks and validates the manifest, then applies
+Moby-compatible ordered ignore matching to files and directories. For a path-form
+Dockerfile, its adjacent `<Dockerfile>.dockerignore` is the active ignore file when
+it exists, including when it is empty.
+An inline Dockerfile creates no virtual context file, while a Dockerfile outside the
+context and its companion remain outside the manifest even when that companion supplies
+the active matcher. Dockerfiles, the root `.dockerignore`, and Dockerfile-specific
+ignore files are ordinary context files: `COPY`/`ADD` can select them unless the
+active ignore file explicitly excludes them. Direct launch then plans every
+`COPY`/`ADD` and materializes all selected files. Docker ignore
 patterns are cleaned like `filepath.Clean`, comments require `#` in column one,
 embedded `**` can span directories, and later `!` patterns can re-include
 descendants. Alphanumeric backslash escapes and nested POSIX character

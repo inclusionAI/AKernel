@@ -593,7 +593,7 @@ class TestDockerfileManifestCopies(unittest.TestCase):
         )
         return sandbox, context
 
-    def test_dot_honors_dockerignore_and_skips_reserved_files(self) -> None:
+    def test_dot_honors_dockerignore_and_copies_visible_control_files(self) -> None:
         files = {
             ".dockerignore": b".env\n.git/**\n",
             "Dockerfile": b"FROM scratch\n",
@@ -606,8 +606,14 @@ class TestDockerfileManifestCopies(unittest.TestCase):
         copies = [
             operation[2] for operation in sandbox.files.ops if operation[0] == "cp"
         ]
-        self.assertEqual(copies, ["/app/allowed", "/app/sub/x"])
-        self.assertEqual(context.open_paths, [".dockerignore", "allowed", "sub/x"])
+        self.assertEqual(
+            copies,
+            ["/app/.dockerignore", "/app/Dockerfile", "/app/allowed", "/app/sub/x"],
+        )
+        self.assertEqual(
+            context.open_paths,
+            [".dockerignore", ".dockerignore", "Dockerfile", "allowed", "sub/x"],
+        )
 
     def test_reincluded_dockerignore_descendant_copies_from_virtual_dir(self) -> None:
         files = {
@@ -625,11 +631,13 @@ class TestDockerfileManifestCopies(unittest.TestCase):
                     for operation in sandbox.files.ops
                     if operation[0] == "cp"
                 ]
-                self.assertEqual(copies, ["/out/README.md"])
-                self.assertEqual(
-                    context.open_paths,
-                    [".dockerignore", "docs/README.md"],
-                )
+                expected = ["/out/README.md"]
+                opened = [".dockerignore", "docs/README.md"]
+                if source == "*":
+                    expected.insert(0, "/out/.dockerignore")
+                    opened.insert(1, ".dockerignore")
+                self.assertEqual(copies, expected)
+                self.assertEqual(context.open_paths, opened)
 
     def test_local_and_memory_contexts_have_same_copy_targets(self) -> None:
         import os
@@ -925,7 +933,7 @@ class TestDockerfileManifestCopies(unittest.TestCase):
             ("COPY . /dest/\n", {}),
             (
                 "COPY . /dest/\n",
-                {".dockerignore": b"*.txt\n", "hidden.txt": b""},
+                {".dockerignore": b"*\n", "hidden.txt": b""},
             ),
         )
         for instruction, files in cases:
@@ -1438,7 +1446,7 @@ class TestLocalDockerContext(unittest.TestCase):
             self.assertEqual(ctx.dockerfile_text(), "FROM node:20\n")
             self.assertEqual(ctx.context_dir, os.path.abspath(d))
 
-    def test_walk_excludes_dockerfile(self):
+    def test_walk_includes_control_files(self):
         import os
         import tempfile
 
@@ -1451,7 +1459,10 @@ class TestLocalDockerContext(unittest.TestCase):
             ctx = LocalDockerContext("FROM ubuntu\n", context_dir=d)
             self.assertEqual(
                 list(ctx.walk()),
-                [DockerContextEntry("app.py", "file", 0o640)],
+                [
+                    DockerContextEntry("Dockerfile", "file", 0o644),
+                    DockerContextEntry("app.py", "file", 0o640),
+                ],
             )
 
     def test_open_path_escape_rejected(self):

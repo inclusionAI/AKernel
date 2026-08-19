@@ -351,10 +351,13 @@ The SDK also supports a strict Dockerfile direct-launch subset through
 `DockerContext` and `Sandbox(context=...)`. `FROM` supplies only the root
 filesystem; inherited OCI image configuration is not applied. `DockerContext.walk()`
 uses public structured entries for files and directories, including permission
-modes and empty directories. Context transfer must remain backend-neutral, honor
-`.dockerignore`, and fail closed for syntax outside the documented subset. Keep
-the contract, security boundaries, public types, unit tests, SDK README, and
-`examples/dockerfile_launch.py` in sync.
+modes and empty directories. Context transfer must remain backend-neutral and
+fail closed for syntax outside the documented subset. A path-form Dockerfile uses an existing adjacent
+`<Dockerfile>.dockerignore` ahead of the root `.dockerignore`, including an empty
+companion; only its absence permits root fallback. Dockerfiles and active or root
+ignore files remain ordinary context entries and are selectable unless the active
+matcher excludes them. Keep the contract, security boundaries, public types, unit
+tests, SDK README, and `examples/dockerfile_launch.py` in sync.
 
 When changing a public SDK method, update its type annotations and docstring,
 add or update unit coverage, and keep the SDK README and maintained examples in

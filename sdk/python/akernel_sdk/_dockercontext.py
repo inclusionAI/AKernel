@@ -270,6 +270,16 @@ class DockerContext(ABC):
     def dockerfile_text(self) -> str:
         """Return the Dockerfile content."""
 
+    def dockerfile_ignore(self) -> tuple[str, bytes] | None:
+        """Return the selected Dockerfile-specific ignore file, if any.
+
+        The returned name is used for diagnostics and the bytes are compiled as
+        the active ignore matcher. Returning None lets the caller fall back to
+        the root .dockerignore.
+        """
+
+        return None
+
     @abstractmethod
     @contextmanager
     def open(self, path: str) -> Iterator[BinaryIO]:
@@ -283,9 +293,11 @@ class DockerContext(ABC):
     def walk(self) -> Iterator[DockerContextEntry]:
         """Enumerate every context file and directory as structured entries.
 
-        Entries use relative POSIX paths. The Dockerfile itself is not included.
-        File entries must be readable through :meth:`open`; directory entries
-        make empty directories and their permission modes representable.
+        Entries use relative POSIX paths. Control files that belong to the
+        filesystem context, including Dockerfiles and ignore files, must also
+        be enumerated; their COPY visibility is determined by the active
+        ignore matcher. File entries must be readable through :meth:`open`; directory
+        entries make empty directories and their permission modes representable.
         """
 
 
@@ -337,12 +349,6 @@ def _validate_walk_entries(entries: tuple[object, ...]) -> None:
                     f"context walk yielded a file-as-ancestor path: {parent!r}"
                 )
             parent = posixpath.dirname(parent)
-
-
-def _is_reserved_root_path(path: str) -> bool:
-    """Return whether a root metadata file is never selectable."""
-
-    return path.lower() == "dockerfile" or path == ".dockerignore"
 
 
 # The matcher below adapts moby/patternmatcher commit 5a6d8429a19b
@@ -472,7 +478,7 @@ def _visible_entries_with_ancestors(
         )
         if entry.kind == "directory":
             active_directories.append((entry.path, match_results))
-        if not _is_reserved_root_path(entry.path) and not ignored:
+        if not ignored:
             visible_paths.add(entry.path)
     for path in tuple(visible_paths):
         parent = posixpath.dirname(path)
@@ -490,20 +496,53 @@ def _visible_entries_with_ancestors(
 def _read_ignore_matcher(
     context: DockerContext, raw_files: tuple[str, ...]
 ) -> _DockerIgnoreMatcher:
-    """Read and compile the root .dockerignore when it was walked."""
-
-    if ".dockerignore" not in raw_files:
-        return _DockerIgnoreMatcher(())
+    """Read and compile the active Dockerfile or root ignore file."""
 
     try:
-        with context.open(".dockerignore") as stream:
-            content = stream.read()
-        lines = _prepare_ignore_lines(content.decode("utf-8-sig"))
-        return _DockerIgnoreMatcher.from_lines(lines)
+        selected = context.dockerfile_ignore()
     except DockerContextError:
         raise
     except Exception as error:
-        raise DockerContextError("failed to read .dockerignore") from error
+        raise DockerContextError(
+            "failed to obtain Dockerfile-specific ignore file"
+        ) from error
+
+    if selected is None:
+        if ".dockerignore" not in raw_files:
+            return _DockerIgnoreMatcher(())
+        name = ".dockerignore"
+        try:
+            with context.open(name) as stream:
+                content = stream.read()
+        except DockerContextError:
+            raise
+        except Exception as error:
+            raise DockerContextError(f"failed to read {name}") from error
+    else:
+        if (
+            type(selected) is not tuple
+            or len(selected) != 2
+            or type(selected[0]) is not str
+            or not selected[0]
+            or type(selected[1]) is not bytes
+        ):
+            raise DockerContextError(
+                "dockerfile_ignore() must return None or a "
+                "(non-empty str, bytes) tuple"
+            )
+        name, content = selected
+
+    try:
+        lines = _prepare_ignore_lines(content.decode("utf-8-sig"))
+        return _DockerIgnoreMatcher.from_lines(lines)
+    except DockerContextError as error:
+        raise DockerContextError(
+            f"invalid active ignore file {name!r}: {error}"
+        ) from error
+    except Exception as error:
+        raise DockerContextError(
+            f"failed to read active ignore file {name!r}"
+        ) from error
 
 
 _MOBY_TRIM_SPACE = (
@@ -929,6 +968,65 @@ def _validate_selection_entries(
     return ordered
 
 
+@contextmanager
+def _open_absolute_regular_file(path: str) -> Iterator[BinaryIO]:
+    """Open an absolute regular file without following symbolic links."""
+
+    if not _SECURE_OPEN_SUPPORTED:
+        raise DockerContextError(
+            "secure Dockerfile-specific ignore file opening is not supported "
+            "on this platform"
+        )
+    absolute_path = os.path.abspath(path)
+    segments = tuple(segment for segment in absolute_path.split(os.sep) if segment)
+    if not segments:
+        raise DockerContextError("Dockerfile-specific ignore path must name a file")
+
+    common_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    directory_flags = common_flags | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = common_flags | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+    directory_fds: list[int] = []
+    final_fd: int | None = None
+    handle: BinaryIO | None = None
+    try:
+        root_fd = os.open(os.sep, directory_flags)
+        directory_fds.append(root_fd)
+        parent_fd = root_fd
+        for segment in segments[:-1]:
+            parent_fd = os.open(segment, directory_flags, dir_fd=parent_fd)
+            directory_fds.append(parent_fd)
+        final_fd = os.open(segments[-1], file_flags, dir_fd=parent_fd)
+        if not stat.S_ISREG(os.fstat(final_fd).st_mode):
+            raise DockerContextError(
+                "Dockerfile-specific ignore path is not a regular file: "
+                f"{absolute_path!r}"
+            )
+        handle = os.fdopen(final_fd, "rb")
+        final_fd = None
+    except DockerContextError:
+        raise
+    except (OSError, TypeError, ValueError) as error:
+        raise DockerContextError(
+            "cannot securely open Dockerfile-specific ignore file: "
+            f"{absolute_path!r}"
+        ) from error
+    finally:
+        if handle is None:
+            if final_fd is not None:
+                os.close(final_fd)
+            for descriptor in reversed(directory_fds):
+                os.close(descriptor)
+
+    try:
+        yield handle
+    finally:
+        try:
+            handle.close()
+        finally:
+            for descriptor in reversed(directory_fds):
+                os.close(descriptor)
+
+
 class LocalDockerContext(DockerContext):
     """Local filesystem backed DockerContext.
 
@@ -962,6 +1060,51 @@ class LocalDockerContext(DockerContext):
 
     def dockerfile_text(self) -> str:
         return self._dockerfile_text
+
+    def dockerfile_ignore(self) -> tuple[str, bytes] | None:
+        """Return the adjacent Dockerfile-specific ignore file, if present."""
+
+        if not self._dockerfile_path:
+            return None
+        companion_path = f"{self._dockerfile_path}.dockerignore"
+        try:
+            info = os.lstat(companion_path)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            raise DockerContextError(
+                "cannot inspect Dockerfile-specific ignore file: "
+                f"{companion_path!r}"
+            ) from error
+        if not stat.S_ISREG(info.st_mode):
+            raise DockerContextError(
+                "Dockerfile-specific ignore path is not a regular file: "
+                f"{companion_path!r}"
+            )
+
+        try:
+            relative_path = os.path.relpath(companion_path, self._context_dir)
+        except ValueError:
+            relative_path = os.pardir
+        inside_context = relative_path != os.pardir and not relative_path.startswith(
+            f"{os.pardir}{os.sep}"
+        )
+        name = _to_posix(relative_path) if inside_context else companion_path
+        try:
+            if inside_context:
+                with self.open(name) as stream:
+                    content = stream.read()
+            else:
+                with _open_absolute_regular_file(companion_path) as stream:
+                    content = stream.read()
+        except DockerContextError:
+            raise
+        except Exception as error:
+            raise DockerContextError(
+                "failed to read Dockerfile-specific ignore file: "
+                f"{name!r}"
+            ) from error
+        return name, content
 
     @contextmanager
     def open(self, path: str) -> Iterator[BinaryIO]:
@@ -1040,10 +1183,6 @@ class LocalDockerContext(DockerContext):
 
         if not os.path.isdir(self._context_dir):
             return
-        dockerfile_abs = (
-            os.path.normpath(self._dockerfile_path) if self._dockerfile_path else None
-        )
-
         def traversal_error(error: OSError, path: str) -> DockerContextError:
             candidate = error.filename or path
             try:
@@ -1092,14 +1231,6 @@ class LocalDockerContext(DockerContext):
                     raise DockerContextError(
                         f"context path is not a regular file: {name!r}"
                     )
-                if dockerfile_abs and os.path.normpath(full) == dockerfile_abs:
-                    continue
-                if (
-                    not self._dockerfile_path
-                    and root == os.path.normpath(self._context_dir)
-                    and name.lower() == "dockerfile"
-                ):
-                    continue
                 rel = _to_posix(os.path.relpath(full, self._context_dir))
                 entries.append(
                     DockerContextEntry(rel, "file", stat.S_IMODE(info.st_mode))

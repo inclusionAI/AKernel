@@ -47,15 +47,19 @@ def _precheck(context: LocalDockerContext) -> None:
 
 
 def section_core_path() -> None:
-    """Copy a filtered context and wildcard directory, then run a finite CMD."""
-    print("\n=== Section 1: filtered core path ===")
+    """Copy a companion-filtered context and wildcard directory."""
+    print("\n=== Section 1: companion-filtered core path ===")
     with tempfile.TemporaryDirectory() as directory:
         context_dir = Path(directory)
-        (context_dir / ".dockerignore").write_text(
-            "secret.txt\ndocs\n!docs/README.md\n",
-            encoding="utf-8",
-        )
+        build = context_dir / "build"
+        build.mkdir()
+        (context_dir / ".dockerignore").write_text("greeting.txt\n", encoding="utf-8")
         (context_dir / "secret.txt").write_text("do not upload\n", encoding="utf-8")
+        (context_dir / "greeting.txt").write_text("hello\n", encoding="utf-8")
+        docs = context_dir / "docs"
+        docs.mkdir()
+        (docs / "README.md").write_text("visible\n", encoding="utf-8")
+        (docs / "private.txt").write_text("hidden\n", encoding="utf-8")
         (context_dir / "app.py").write_text(
             "import os\n"
             "open('/tmp/app.started', 'w').write(\n"
@@ -63,11 +67,6 @@ def section_core_path() -> None:
             ")\n",
             encoding="utf-8",
         )
-        (context_dir / "greeting.txt").write_text("hello\n", encoding="utf-8")
-        docs = context_dir / "docs"
-        docs.mkdir()
-        (docs / "README.md").write_text("visible\n", encoding="utf-8")
-        (docs / "private.txt").write_text("hidden\n", encoding="utf-8")
         executable = context_dir / "entrypoint.sh"
         executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         executable.chmod(0o755)
@@ -80,20 +79,30 @@ def section_core_path() -> None:
         wildcard_file.write_text("wildcard\n", encoding="utf-8")
         empty.chmod(0o711)
         nested_empty.chmod(0o750)
-        dockerfile = """\
-FROM ubuntu:22.04
+        dockerfile = build / "custom.Dockerfile"
+        dockerfile.write_text(
+            """FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y --no-install-recommends python3
 RUN useradd -m app
 ENV WHOAMI=app
 WORKDIR /srv
 USER app
+COPY greeting.txt /srv/control/greeting.txt
+COPY build/custom.Dockerfile /srv/control/
+COPY .dockerignore /srv/control/
+COPY build/*.dockerignore /srv/control/
 COPY empty/ /srv/core/literal-empty/
 COPY . /srv/core/
 COPY wild/* /srv/wild/
 COPY docs /srv/reincluded-literal/
 COPY doc* /srv/reincluded-wildcard/
 CMD ["python3", "/srv/core/app.py"]
-"""
+""",
+            encoding="utf-8",
+        )
+        (build / "custom.Dockerfile.dockerignore").write_text(
+            "secret.txt\ndocs\n!docs/README.md\n", encoding="utf-8"
+        )
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
         _precheck(context)
 
@@ -102,23 +111,27 @@ CMD ["python3", "/srv/core/app.py"]
             assert startup is not None
             result = startup.wait(timeout=60)
             assert result.exit_code == 0, result.stderr
-
             marker = sandbox.commands.run("cat /tmp/app.started")
             assert marker.exit_code == 0, marker.stderr
             assert marker.stdout.strip() == "whoami=app cwd=/srv", marker.stdout
-            absent = sandbox.commands.run("test ! -e /srv/core/secret.txt")
-            assert absent.exit_code == 0, absent.stderr
+            controls = sandbox.commands.run(
+                "test -f /srv/control/greeting.txt "
+                "&& test -f /srv/control/custom.Dockerfile "
+                "&& test -f /srv/control/.dockerignore "
+                "&& test -f /srv/control/custom.Dockerfile.dockerignore "
+                "&& test -f /srv/core/greeting.txt "
+                "&& test -f /srv/core/build/custom.Dockerfile "
+                "&& test -f /srv/core/.dockerignore "
+                "&& test -f /srv/core/build/custom.Dockerfile.dockerignore "
+                "&& test ! -e /srv/core/secret.txt"
+            )
+            assert controls.exit_code == 0, controls.stderr
             modes = sandbox.commands.run(
                 "stat -c '%a' /srv/core/entrypoint.sh /srv/core/empty "
                 "/srv/core/tree/nested-empty /srv/core/literal-empty"
             )
             assert modes.exit_code == 0, modes.stderr
-            assert modes.stdout.splitlines() == [
-                "755",
-                "711",
-                "750",
-                "755",
-            ], modes.stdout
+            assert modes.stdout.splitlines() == ["755", "711", "750", "755"], modes.stdout
             wildcard = sandbox.commands.run(
                 "test -f /srv/wild/dir2/foo && test ! -e /srv/wild/dir1"
             )
