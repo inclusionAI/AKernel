@@ -9,11 +9,12 @@ project guidance.
 AKernel provides cluster-backed remote sandbox environments for agents and
 developer workflows. The current public user-facing surface is the Python
 `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI.
-The default sandbox runtime is gVisor runsc; callers may select Kata
-Containers when the cluster has a KVM-capable node. Creation-time network
-policies support unrestricted networking, blocking new flows except the
-YuanRong control and published sandbox-port routes, or denying exact and
-leading-wildcard DNS names.
+The default sandbox runtime is gVisor runsc. Runtime identifiers are forwarded
+to the selected backend, which owns availability and compatibility checks; the
+bundled deployment also advertises Kata Containers on KVM-capable nodes.
+Creation-time network policies support unrestricted networking, blocking new
+flows except the YuanRong control and published sandbox-port routes, or denying
+exact and leading-wildcard DNS names.
 Experimental whole-device NVIDIA GPU and configurable writable-storage
 requests currently require runsc.
 

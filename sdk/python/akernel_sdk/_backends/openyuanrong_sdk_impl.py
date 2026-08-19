@@ -171,10 +171,6 @@ def build_options(
         raise ValueError("mem_limit must be 0 or greater than or equal to memory")
     normalized_xpu = normalize_xpu(xpu)
     validate_storage_mb(storage_mb)
-    if normalized_xpu is not None and runtime != "runsc":
-        raise ValueError("xpu is currently supported only by runsc")
-    if storage_mb is not None and runtime != "runsc":
-        raise ValueError("storage_mb is currently supported only by runsc")
 
     options = yr.InvokeOptions()
     # A Sandbox is driven by one sequential SDK client. Disabling ordered RPC

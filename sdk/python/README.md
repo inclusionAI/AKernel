@@ -115,8 +115,9 @@ with Sandbox(xpu="gpu:l20:1") as sandbox:
 
 The `type:model:count` value is case-insensitive and canonicalized to lower
 case. The model is required and matched exactly; wildcard models are not
-supported. GPU sandboxes currently require the gVisor `runsc` runtime and a
-node configured for gVisor nvproxy.
+supported. The bundled backend currently requires the gVisor `runsc` runtime
+and a node configured for gVisor nvproxy. Runtime compatibility is validated
+by the backend rather than the SDK.
 
 Set the writable root filesystem quota in MiB:
 
@@ -125,9 +126,10 @@ with Sandbox(storage_mb=20 * 1024) as sandbox:
     print(sandbox.commands.run("df -h /").stdout)
 ```
 
-An explicit `storage_mb` quota currently requires `runsc` and uses sandboxd's
-disk-backed XFS filestore. When it is omitted, sandboxd retains its configured
-default 10 GiB memory-backed writable overlay. See
+The bundled backend currently requires `runsc` for an explicit `storage_mb`
+quota and uses sandboxd's disk-backed XFS filestore. Runtime compatibility is
+validated by the backend. When `storage_mb` is omitted, sandboxd retains its
+configured default 10 GiB memory-backed writable overlay. See
 [`examples/gpu_sandbox.py`](./examples/gpu_sandbox.py) and
 [`examples/storage_sandbox.py`](./examples/storage_sandbox.py).
 
@@ -195,7 +197,10 @@ configuration, as described in the
 
 ## Sandbox runtimes
 
-AKernel uses the gVisor `runsc` runtime when `runtime` is omitted. Callers may also select `runsc` explicitly or request Kata Containers:
+AKernel uses the gVisor `runsc` runtime when `runtime` is omitted. Runtime
+identifiers are forwarded to the selected backend instead of being restricted
+by an SDK-owned registry. The bundled deployment advertises `runsc` and Kata
+Containers:
 
 ```python
 default_sandbox = Sandbox()
@@ -203,7 +208,10 @@ runsc_sandbox = Sandbox(runtime="runsc")
 kata_sandbox = Sandbox(runtime="kata")
 ```
 
-Kata requires at least one cluster node whose sandboxd instance successfully initialized the Kata runtime with a usable `/dev/kvm` device. Nodes without KVM remain available for runsc workloads and do not advertise Kata; when no eligible Kata node exists, the scheduler returns a no-resource error.
+Kata requires at least one cluster node whose sandboxd instance successfully
+initialized the Kata runtime with a usable `/dev/kvm` device. Nodes without
+KVM remain available for runsc workloads and do not advertise Kata. A runtime
+that is unavailable in the cluster fails scheduling or backend validation.
 
 See [`examples/sandbox_runtime.py`](./examples/sandbox_runtime.py) for a runnable example.
 

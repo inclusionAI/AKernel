@@ -419,7 +419,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--runtime",
-        choices=("runsc", "kata"),
         default=DEFAULT_RUNTIME,
         help="sandbox runtime (default: AKERNEL_PRESSURE_RUNTIME or runsc)",
     )

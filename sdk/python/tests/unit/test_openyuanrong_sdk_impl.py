@@ -112,8 +112,10 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
             ):
                 self.build_options(schedule_timeout=value)
 
-    def test_xpu_and_storage_translation(self):
-        options = self.build_options(xpu="GPU:L20:2", storage_mb=256)
+    def test_xpu_and_storage_translation_is_runtime_agnostic(self):
+        options = self.build_options(
+            runtime="gvisor-next", xpu="GPU:L20:2", storage_mb=256
+        )
         self.assertEqual(
             options.custom_resources,
             {
@@ -121,12 +123,10 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
                 "storage": float(256 * 1024 * 1024),
             },
         )
-
-    def test_xpu_and_storage_require_runsc(self):
-        with self.assertRaisesRegex(ValueError, "xpu.*runsc"):
-            self.build_options(runtime="kata", xpu="gpu:l20:1")
-        with self.assertRaisesRegex(ValueError, "storage_mb.*runsc"):
-            self.build_options(runtime="kata", storage_mb=256)
+        self.assertEqual(
+            json.loads(options.custom_extensions["rootfs"]),
+            {"runtime": "gvisor-next"},
+        )
 
     def test_network_policy_uses_custom_extension_wire_format(self):
         options = self.build_options(

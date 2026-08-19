@@ -278,7 +278,6 @@ class OpenYuanRongSandboxBackend:
     namespace = _NAMESPACE
     capabilities = frozenset(
         {
-            Capability.KATA_RUNTIME,
             Capability.S3_ROOTFS,
             Capability.NODE_PLACEMENT,
         }

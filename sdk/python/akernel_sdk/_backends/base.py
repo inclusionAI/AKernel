@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Literal, Protocol
+from typing import Protocol
 
 from .._addresses import Endpoint
 from ..types import (
@@ -37,7 +37,6 @@ from ..types import (
 class Capability(Enum):
     """Features whose availability differs between backends."""
 
-    KATA_RUNTIME = auto()
     S3_ROOTFS = auto()
     NODE_PLACEMENT = auto()
     CUSTOM_REVERSE_TUNNEL_PORTS = auto()
@@ -59,7 +58,7 @@ class SandboxSpec:
 
     image: str | None
     rootfs: S3Config | None
-    runtime: Literal["runsc", "kata"]
+    runtime: str
     cpu: int
     memory: int
     cpu_limit: int

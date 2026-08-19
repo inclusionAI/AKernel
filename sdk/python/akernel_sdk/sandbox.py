@@ -22,7 +22,6 @@ import ssl
 import urllib.request
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
-from typing import Literal, cast
 
 from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_env
 from ._backends.base import BackendSession, SandboxSpec
@@ -33,7 +32,6 @@ from .filesystem import Filesystem
 from .pty import Pty
 from .types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config, SandboxInfo
 
-_SUPPORTED_RUNTIMES = ("runsc", "kata")
 _traefik_internal_ip_cache: str | None = None
 logger = logging.getLogger(__name__)
 
@@ -108,8 +106,8 @@ def _get_traefik_internal_ip(gateway: Endpoint) -> tuple[str, int]:
 class Sandbox:
     """A remote AKernel sandbox.
 
-    The public API is backend-neutral. AKernel supports the gVisor ``runsc``
-    runtime and Kata Containers on KVM-capable nodes.
+    The public API is backend-neutral. The selected backend and cluster
+    determine which sandbox runtime identifiers are available.
     """
 
     def __init__(
@@ -141,7 +139,8 @@ class Sandbox:
         Args:
             image: OCI image used as the sandbox root filesystem.
             rootfs: S3-compatible EROFS root filesystem configuration.
-            runtime: Sandbox runtime name: ``runsc`` or ``kata``.
+            runtime: Sandbox runtime identifier. Defaults to ``runsc``;
+                availability is determined by the backend and cluster.
             cpu: Requested CPU in millicores.
             memory: Requested memory in MiB.
             cpu_limit: CPU limit in millicores, or zero to follow ``cpu``.
@@ -158,10 +157,11 @@ class Sandbox:
             node_id: Require placement on a specific AKernel node.
             xpu: Experimental whole-device accelerator request in
                 ``type:model:count`` format. Currently only exact-model NVIDIA
-                GPU requests with the ``runsc`` runtime are supported.
+                GPU requests are supported. The backend validates runtime
+                compatibility.
             storage_mb: Experimental writable root filesystem quota in MiB.
                 When omitted, the configured default is used. Explicit quotas
-                currently require the ``runsc`` runtime.
+                are validated against the selected runtime by the backend.
             network_policy: Optional creation-time network policy. Omitting it
                 leaves sandbox networking unrestricted.
 
@@ -177,21 +177,17 @@ class Sandbox:
             raise TypeError("rootfs must be an S3Config")
         if image is not None and rootfs is not None:
             raise ValueError("image and rootfs are mutually exclusive")
-        if runtime not in _SUPPORTED_RUNTIMES:
-            raise ValueError(
-                f"unsupported runtime {runtime!r}; "
-                f"supported runtimes: {', '.join(_SUPPORTED_RUNTIMES)}"
-            )
+        if not isinstance(runtime, str):
+            raise TypeError("runtime must be a string")
+        runtime = runtime.strip()
+        if not runtime:
+            raise ValueError("runtime must be a non-empty string")
         normalized_xpu = normalize_xpu(xpu)
         validate_storage_mb(storage_mb)
         if network_policy is not None and not isinstance(
             network_policy, NetworkPolicy
         ):
             raise TypeError("network_policy must be a NetworkPolicy or None")
-        if normalized_xpu is not None and runtime != "runsc":
-            raise ValueError("xpu is currently supported only by runsc")
-        if storage_mb is not None and runtime != "runsc":
-            raise ValueError("storage_mb is currently supported only by runsc")
         _validate_integer("cpu", cpu, minimum=1)
         _validate_integer("memory", memory, minimum=1)
         _validate_integer("cpu_limit", cpu_limit, minimum=0)
@@ -255,7 +251,7 @@ class Sandbox:
         spec = SandboxSpec(
             image=image,
             rootfs=rootfs,
-            runtime=cast(Literal["runsc", "kata"], runtime),
+            runtime=runtime,
             cpu=cpu,
             memory=memory,
             cpu_limit=cpu_limit,

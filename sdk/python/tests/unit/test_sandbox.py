@@ -136,17 +136,30 @@ class SandboxTest(unittest.TestCase):
             )
         self.backend.create.assert_not_called()
 
-    def test_supported_runtimes(self):
-        sandbox = Sandbox(runtime="kata")
+    def test_runtime_identifier_is_normalized_and_passed_to_backend(self):
+        sandbox = Sandbox(runtime=" gvisor-next ")
+        spec = self.backend.create.call_args.args[0]
+        self.assertEqual(spec.runtime, "gvisor-next")
         sandbox.kill()
 
-        with self.assertRaisesRegex(ValueError, "unsupported runtime"):
-            Sandbox(runtime="unknown")
+    def test_runtime_identifier_validation(self):
+        for value in (None, 1):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                TypeError, "runtime must be a string"
+            ):
+                Sandbox(runtime=value)
+        for value in ("", "   "):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "runtime must be a non-empty string"
+            ):
+                Sandbox(runtime=value)
+        self.backend.create.assert_not_called()
 
-    def test_xpu_request_is_normalized_and_passed_to_backend(self):
-        sandbox = Sandbox(xpu=" GPU:L20:02 ")
+    def test_xpu_request_is_normalized_and_delegated_to_backend(self):
+        sandbox = Sandbox(runtime="gpu-runtime", xpu=" GPU:L20:02 ")
         self.assertEqual(sandbox.get_info().xpu, "gpu:l20:2")
         spec = self.backend.create.call_args.args[0]
+        self.assertEqual(spec.runtime, "gpu-runtime")
         self.assertEqual(spec.xpu, "gpu:l20:2")
         sandbox.kill()
 
@@ -163,14 +176,13 @@ class SandboxTest(unittest.TestCase):
         for value, error_type in invalid:
             with self.subTest(value=value), self.assertRaises(error_type):
                 Sandbox(xpu=value)
-        with self.assertRaisesRegex(ValueError, "xpu.*runsc"):
-            Sandbox(runtime="kata", xpu="gpu:l20:1")
         self.backend.create.assert_not_called()
 
-    def test_storage_request_is_passed_to_backend(self):
-        sandbox = Sandbox(storage_mb=256)
+    def test_storage_request_is_delegated_to_backend(self):
+        sandbox = Sandbox(runtime="storage-runtime", storage_mb=256)
         self.assertEqual(sandbox.get_info().storage_mb, 256)
         spec = self.backend.create.call_args.args[0]
+        self.assertEqual(spec.runtime, "storage-runtime")
         self.assertEqual(spec.storage_mb, 256)
         sandbox.kill()
 
@@ -178,8 +190,6 @@ class SandboxTest(unittest.TestCase):
         for value in (True, 0, -1, 1.5):
             with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
                 Sandbox(storage_mb=value)
-        with self.assertRaisesRegex(ValueError, "storage_mb.*runsc"):
-            Sandbox(runtime="kata", storage_mb=256)
         self.backend.create.assert_not_called()
 
     def test_block_network_policy_is_passed_to_backend(self):
