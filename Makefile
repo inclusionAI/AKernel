@@ -145,7 +145,8 @@ sdk-test:
 
 .PHONY: sdk-check
 sdk-check: sdk-test
-	@cd sdk/python; \
+	@set -e; \
+	cd sdk/python; \
 	python3 -m ruff check akernel_sdk tests; \
 	python3 -m mypy akernel_sdk
 
