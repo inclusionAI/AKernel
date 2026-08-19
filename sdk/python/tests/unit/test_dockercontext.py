@@ -29,13 +29,22 @@ CRLF = bytes([13, 10])
 class MemoryDockerContext(DockerContext):
     """A context fixture that records manifest file opens."""
 
-    def __init__(self, files: dict[str, bytes], paths: list[object] | None = None):
+    def __init__(
+        self,
+        files: dict[str, bytes],
+        paths: list[object] | None = None,
+        dockerfile_ignore: tuple[str, bytes] | None = None,
+    ):
         self.files = files
         self.paths = _entries(files) if paths is None else paths
+        self._dockerfile_ignore = dockerfile_ignore
         self.open_paths: list[str] = []
 
     def dockerfile_text(self) -> str:
         return "FROM scratch"
+
+    def dockerfile_ignore(self) -> tuple[str, bytes] | None:
+        return self._dockerfile_ignore
 
     @contextmanager
     def open(self, path: str) -> Iterator[BinaryIO]:
@@ -88,7 +97,219 @@ class TestContextManifest(unittest.TestCase):
         )
         self.assertEqual(context.open_paths, [])
 
-    def test_dockerignore_semantics_and_reserved_files(self) -> None:
+    def test_dockerfile_specific_ignore_precedence_and_hook_failures(self) -> None:
+        files = {
+            ".dockerignore": b"root-only\n",
+            "docker/custom.Dockerfile": b"FROM scratch\n",
+            "docker/custom.Dockerfile.dockerignore": b"companion-only\n",
+            "companion-only": b"",
+            "root-only": b"",
+        }
+        cases = (
+            (("docker/custom.Dockerfile.dockerignore", b"companion-only\n"),
+             [".dockerignore", "docker/custom.Dockerfile",
+              "docker/custom.Dockerfile.dockerignore", "root-only"], []),
+            (("docker/custom.Dockerfile.dockerignore", b""), sorted(files), []),
+            (None, [".dockerignore", "companion-only", "docker/custom.Dockerfile",
+                    "docker/custom.Dockerfile.dockerignore"], [".dockerignore"]),
+        )
+        for selected, expected, opened in cases:
+            with self.subTest(selected=selected):
+                context = MemoryDockerContext(files, dockerfile_ignore=selected)
+                manifest = _ContextManifest.from_context(context)
+                self.assertEqual(
+                    [path for path, _ in paths(manifest.select("."))],
+                    expected,
+                )
+                self.assertEqual(context.open_paths, opened)
+
+        bad_pattern = MemoryDockerContext(
+            {"safe": b""}, dockerfile_ignore=("custom.Dockerfile.dockerignore", b"[\n")
+        )
+        with self.assertRaisesRegex(
+            DockerContextError, "custom.Dockerfile.dockerignore"
+        ):
+            _ContextManifest.from_context(bad_pattern)
+
+        class RaisingContext(MemoryDockerContext):
+            def __init__(self, error: Exception) -> None:
+                super().__init__({"safe": b""})
+                self.error = error
+
+            def dockerfile_ignore(self) -> tuple[str, bytes] | None:
+                raise self.error
+
+        with self.assertRaisesRegex(DockerContextError, "failed to obtain"):
+            _ContextManifest.from_context(RaisingContext(OSError("unreadable")))
+        with self.assertRaisesRegex(DockerContextError, "sentinel"):
+            _ContextManifest.from_context(
+                RaisingContext(DockerContextError("sentinel"))
+            )
+
+        for value in ([], ("name",), ("name", b"", b"x"), ("", b""),
+                      (1, b""), ("name", "text"), ["name", b""]):
+            with self.subTest(value=repr(value)):
+                context = MemoryDockerContext({"safe": b""})
+                context._dockerfile_ignore = value  # type: ignore[assignment]
+                with self.assertRaisesRegex(DockerContextError, "dockerfile_ignore"):
+                    _ContextManifest.from_context(context)
+
+    def test_default_dockerfile_ignore_method_remains_root_compatible(self) -> None:
+        class DefaultIgnoreContext(DockerContext):
+            def dockerfile_text(self) -> str:
+                return "FROM scratch"
+
+            @contextmanager
+            def open(self, path: str) -> Iterator[BinaryIO]:
+                yield io.BytesIO({".dockerignore": b"hidden\n", "hidden": b""}[path])
+
+            def walk(self) -> Iterator[DockerContextEntry]:
+                yield DockerContextEntry(".dockerignore", "file", 0o644)
+                yield DockerContextEntry("hidden", "file", 0o644)
+
+        manifest = _ContextManifest.from_context(DefaultIgnoreContext())
+        with self.assertRaisesRegex(DockerContextError, "ignored"):
+            manifest.select("hidden")
+
+    def test_local_companion_visibility_and_explicit_control_exclusion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dockerfile = root / "docker" / "custom.Dockerfile"
+            dockerfile.parent.mkdir()
+            dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+            (root / ".dockerignore").write_text("root-only\n", encoding="utf-8")
+            companion = dockerfile.with_name("custom.Dockerfile.dockerignore")
+            companion.write_text("companion-only\n", encoding="utf-8")
+            for name in ("root-only", "companion-only", "visible"):
+                (root / name).write_text(name, encoding="utf-8")
+
+            context = LocalDockerContext(dockerfile, context_dir=root)
+            manifest = _ContextManifest.from_context(context)
+            self.assertEqual(
+                [path for path, _ in paths(manifest.select("."))],
+                [".dockerignore", "docker/custom.Dockerfile",
+                 "docker/custom.Dockerfile.dockerignore", "root-only", "visible"],
+            )
+            for name in (".dockerignore", "docker/custom.Dockerfile",
+                         "docker/custom.Dockerfile.dockerignore"):
+                self.assertEqual(
+                    paths(manifest.select(name)),
+                    [(name, Path(name).name)],
+                )
+
+            companion.write_text(
+                ".dockerignore\ndocker/custom.Dockerfile\n"
+                "docker/custom.Dockerfile.dockerignore\n", encoding="utf-8"
+            )
+            filtered = _ContextManifest.from_context(
+                LocalDockerContext(dockerfile, context_dir=root)
+            )
+            for name in (".dockerignore", "docker/custom.Dockerfile",
+                         "docker/custom.Dockerfile.dockerignore"):
+                with self.assertRaisesRegex(DockerContextError, "ignored"):
+                    filtered.select(name)
+
+    def test_inline_and_external_dockerfiles_are_not_synthesized(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+            self.assertEqual(
+                list(LocalDockerContext("FROM scratch\n", context_dir=root).walk()),
+                [DockerContextEntry("Dockerfile", "file", 0o644)],
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            context_dir = root / "context"
+            context_dir.mkdir()
+            dockerfile = root / "outside.Dockerfile"
+            dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+            dockerfile.with_name("outside.Dockerfile.dockerignore").write_text(
+                "hidden\n", encoding="utf-8"
+            )
+            (context_dir / ".dockerignore").write_text("visible\n", encoding="utf-8")
+            (context_dir / "hidden").write_text("", encoding="utf-8")
+            (context_dir / "visible").write_text("", encoding="utf-8")
+            manifest = _ContextManifest.from_context(
+                LocalDockerContext(dockerfile, context_dir=context_dir)
+            )
+            self.assertEqual(
+                [entry.path for entry in manifest._raw_entries],
+                [".dockerignore", "hidden", "visible"],
+            )
+            self.assertEqual(
+                [path for path, _ in paths(manifest.select("."))],
+                [".dockerignore", "visible"],
+            )
+
+    def test_context_companion_non_regular_files_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dockerfile = root / "Dockerfile"
+            dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+            companion = root / "Dockerfile.dockerignore"
+            local = LocalDockerContext(dockerfile, context_dir=root)
+            target = root / "target"
+            target.write_text("", encoding="utf-8")
+            companion.symlink_to(target)
+            with self.assertRaisesRegex(DockerContextError, "regular file"):
+                local.dockerfile_ignore()
+            companion.unlink()
+            companion.mkdir()
+            with self.assertRaisesRegex(DockerContextError, "regular file"):
+                local.dockerfile_ignore()
+            companion.rmdir()
+            if not hasattr(os, "mkfifo"):
+                self.skipTest("mkfifo is unavailable on this platform")
+            try:
+                os.mkfifo(companion)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"mkfifo is unavailable: {error}")
+            try:
+                with self.assertRaisesRegex(DockerContextError, "regular file"):
+                    local.dockerfile_ignore()
+            finally:
+                companion.unlink()
+
+    def test_context_companion_lstat_symlink_race_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dockerfile = root / "Dockerfile"
+            dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+            companion = root / "Dockerfile.dockerignore"
+            companion.write_bytes(b"safe\n")
+            target = root / "target"
+            target.write_bytes(b"target\n")
+            local = LocalDockerContext(dockerfile, context_dir=root)
+            real_lstat = os.lstat
+            replaced = False
+
+            def racing_lstat(
+                path: str | bytes,
+                *,
+                dir_fd: int | None = None,
+            ) -> os.stat_result:
+                nonlocal replaced
+                info = real_lstat(path, dir_fd=dir_fd)
+                if (
+                    os.path.abspath(os.fsdecode(path)) == str(companion)
+                    and not replaced
+                ):
+                    replaced = True
+                    companion.unlink()
+                    companion.symlink_to(target)
+                return info
+
+            with (
+                patch(
+                    "akernel_sdk._dockercontext.os.lstat",
+                    side_effect=racing_lstat,
+                ),
+                self.assertRaises(DockerContextError),
+            ):
+                local.dockerfile_ignore()
+            self.assertTrue(replaced)
+
+    def test_dockerignore_semantics_and_control_file_visibility(self) -> None:
         ignore = (
             bytes([0xEF, 0xBB, 0xBF])
             + b"# comment"
@@ -129,9 +350,14 @@ class TestContextManifest(unittest.TestCase):
         self.assertEqual(context.open_paths, [".dockerignore"])
         self.assertEqual(
             paths(manifest.select(".")),
-            [("keep.txt", "keep.txt"), ("src/ok.py", "src/ok.py")],
+            [
+                (".dockerignore", ".dockerignore"),
+                ("Dockerfile", "Dockerfile"),
+                ("keep.txt", "keep.txt"),
+                ("src/ok.py", "src/ok.py"),
+            ],
         )
-        for source in (".dockerignore", "Dockerfile", ".env", ".git", "drop.txt"):
+        for source in (".env", ".git", "drop.txt"):
             with self.subTest(source=source):
                 with self.assertRaisesRegex(DockerContextError, "ignored"):
                     manifest.select(source)
@@ -163,6 +389,7 @@ class TestContextManifest(unittest.TestCase):
         self.assertEqual(
             paths(manifest.select(".")),
             [
+                (".dockerignore", ".dockerignore"),
                 ("a/keep.bin", "a/keep.bin"),
                 ("nested/root.pem", "nested/root.pem"),
                 ("safe", "safe"),
@@ -215,9 +442,9 @@ class TestContextManifest(unittest.TestCase):
                 (entry.source_path, entry.relative_target, entry.kind)
                 for entry in wildcard.entries
             ],
-            expected,
+            [(".dockerignore", ".dockerignore", "file"), *expected],
         )
-        self.assertEqual(wildcard.top_level_source_count, 1)
+        self.assertEqual(wildcard.top_level_source_count, 2)
         with self.assertRaisesRegex(DockerContextError, "ignored"):
             manifest.select("docs/private.txt")
         self.assertEqual(context.open_paths, [".dockerignore"])
@@ -264,7 +491,11 @@ class TestContextManifest(unittest.TestCase):
         manifest = _ContextManifest.from_context(context)
         self.assertEqual(
             paths(manifest.select(".")),
-            [("a-b", "a-b"), ("a/file", "a/file")],
+            [
+                (".dockerignore", ".dockerignore"),
+                ("a-b", "a-b"),
+                ("a/file", "a/file"),
+            ],
         )
 
     def test_manifest_reuses_parent_ignore_results(self) -> None:
@@ -294,7 +525,10 @@ class TestContextManifest(unittest.TestCase):
         )
         self.assertEqual(
             paths(_ContextManifest.from_context(escaped).select(".")),
-            [("visible", "visible")],
+            [
+                (".dockerignore", ".dockerignore"),
+                ("visible", "visible"),
+            ],
         )
         invalid = MemoryDockerContext({".dockerignore": bytes([0xFF]), "ok": b""})
         with self.assertRaisesRegex(DockerContextError, "dockerignore"):
@@ -424,8 +658,7 @@ class TestContextManifest(unittest.TestCase):
     def test_dot_distinguishes_empty_and_fully_filtered_contexts(self) -> None:
         cases = (
             ({}, "no match"),
-            ({"Dockerfile": b""}, "ignored"),
-            ({".dockerignore": b"*.txt" + NL, "hidden.txt": b""}, "ignored"),
+            ({".dockerignore": b"*" + NL, "hidden.txt": b""}, "ignored"),
         )
         for files, message in cases:
             with self.subTest(files=files):
@@ -654,7 +887,11 @@ class TestContextManifest(unittest.TestCase):
                 (entry.source_path, entry.relative_target)
                 for entry in manifest.select(".").entries
             ],
-            [("visible", "visible"), ("visible/nested", "visible/nested")],
+            [
+                (".dockerignore", ".dockerignore"),
+                ("visible", "visible"),
+                ("visible/nested", "visible/nested"),
+            ],
         )
         with self.assertRaisesRegex(DockerContextError, "ignored"):
             manifest.select("ignored")
