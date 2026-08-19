@@ -213,6 +213,7 @@ class TestContextManifest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+            (root / "Dockerfile").chmod(0o644)
             self.assertEqual(
                 list(LocalDockerContext("FROM scratch\n", context_dir=root).walk()),
                 [DockerContextEntry("Dockerfile", "file", 0o644)],

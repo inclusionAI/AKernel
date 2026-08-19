@@ -1453,6 +1453,7 @@ class TestLocalDockerContext(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "Dockerfile"), "w") as _f:
                 _f.write("FROM ubuntu\n")
+            os.chmod(os.path.join(d, "Dockerfile"), 0o644)
             with open(os.path.join(d, "app.py"), "w") as _f:
                 _f.write("print(1)")
             os.chmod(os.path.join(d, "app.py"), 0o640)
