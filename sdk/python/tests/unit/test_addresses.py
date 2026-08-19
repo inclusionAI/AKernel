@@ -51,7 +51,9 @@ class AddressConfigTest(unittest.TestCase):
             gateway_expected = ("http", "10.0.0.1", 8888, False)
             self.assertEqual(endpoint_tuple(api_endpoint_from_env()), expected)
             self.assertEqual(endpoint_tuple(exec_endpoint_from_env()), expected)
-            self.assertEqual(endpoint_tuple(gateway_endpoint_from_env()), gateway_expected)
+            self.assertEqual(
+                endpoint_tuple(gateway_endpoint_from_env()), gateway_expected
+            )
 
     def test_gateway_override_defaults_to_plain_http(self):
         with patch.dict(
