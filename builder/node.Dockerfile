@@ -6,6 +6,7 @@ ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG AKERNEL_RUNTIME_PROFILE=rrt
 ARG AKERNEL_ENABLE_KATA=true
+ARG AKERNEL_ENABLE_RUNC=false
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.9.7
@@ -16,6 +17,10 @@ ARG OPEN_YR_CORE_AMD64_SHA256=0a890db1785e349bfd625844a05059bdd494e32a429cea771c
 ARG OPEN_YR_CORE_ARM64_SHA256=64e14233fcbbb3418311d2f242e164e7be6e7bee0315c7619b18d9c5ddd01a76
 ARG GVISOR_RELEASE=release-20260706.0
 ARG GVISOR_RELEASE_BASE_URL=https://storage.googleapis.com/gvisor/releases
+ARG RUNC_VERSION=1.5.1
+ARG RUNC_AMD64_SHA256=177df879d50c913eb205e898d5c1c05a18f574053c0ce5524c471208eaf06f6f
+ARG RUNC_RELEASE_BASE_URL=https://github.com/opencontainers/runc/releases/download
+ARG RUNC_BUILD_IMAGE=ubuntu:24.04
 ARG LIBNVIDIA_CONTAINER_VERSION=1.19.1-1
 ARG KATA_BUILD_IMAGE=ubuntu:24.04
 ARG KATA_RELEASE=4.0.0
@@ -78,6 +83,30 @@ WORKDIR /src/sandboxd
 COPY ./src/sandboxd/ ./
 RUN make release
 
+FROM ${RUNC_BUILD_IMAGE} AS runc-runtime-true
+ARG RUNC_VERSION
+ARG RUNC_AMD64_SHA256
+ARG RUNC_RELEASE_BASE_URL
+ARG TARGETARCH
+RUN set -eux; \
+    test "${TARGETARCH:-amd64}" = "amd64"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    rm -rf /var/lib/apt/lists/*; \
+    asset=/tmp/runc.amd64; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "${RUNC_RELEASE_BASE_URL}/v${RUNC_VERSION}/runc.amd64" \
+      -o "${asset}"; \
+    echo "${RUNC_AMD64_SHA256}  ${asset}" | sha256sum -c -; \
+    install -D -m 0755 "${asset}" /runc/usr/local/bin/runc; \
+    rm -f "${asset}"
+COPY --from=sandboxd-builder /src/sandboxd/output/runc-shim /runc/usr/local/bin/runc-shim
+
+FROM ${RUNC_BUILD_IMAGE} AS runc-runtime-false
+RUN mkdir -p /runc/usr/local/bin
+
+FROM runc-runtime-${AKERNEL_ENABLE_RUNC} AS runc-runtime
+
 FROM ${DISTILL_FS_BUILD_IMAGE} AS distill-fs-builder
 ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_NET_GIT_FETCH_WITH_CLI=true
@@ -98,6 +127,7 @@ RUN cargo build --locked --release --bin distill_fs
 
 FROM ${AKERNEL_NODE_BASE_IMAGE}
 ARG AKERNEL_ENABLE_KATA
+ARG AKERNEL_ENABLE_RUNC
 ARG AKERNEL_RUNTIME_PROFILE
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
@@ -109,6 +139,7 @@ ARG OPEN_YR_CORE_AMD64_SHA256
 ARG OPEN_YR_CORE_ARM64_SHA256
 ARG GVISOR_RELEASE
 ARG GVISOR_RELEASE_BASE_URL
+ARG RUNC_VERSION
 ARG LIBNVIDIA_CONTAINER_VERSION
 ARG OTELCOL_CONTRIB_URL
 ARG TARGETARCH
@@ -249,6 +280,7 @@ COPY --from=sandboxd-builder /src/sandboxd/output/sbox /usr/local/bin/sbox
 COPY --from=sandboxd-builder /src/sandboxd/output/sandbox-logger /usr/local/bin/sandbox-logger
 COPY --from=distill-fs-builder /src/distill-fs/target/release/distill_fs /usr/local/bin/distill_fs
 COPY --from=kata-runtime /kata/opt/kata /opt/kata
+COPY --from=runc-runtime /runc/usr/local/bin/ /usr/local/bin/
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
       ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2; \
     fi
@@ -266,6 +298,12 @@ RUN chmod 0755 \
         /usr/local/bin/ensure-component-cert \
         /usr/local/bin/sandboxd-network-prepare
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then chmod 0755 /usr/local/bin/containerd-shim-kata-v2; fi
+RUN if [ "${AKERNEL_ENABLE_RUNC}" = "true" ]; then \
+      chmod 0755 /usr/local/bin/runc /usr/local/bin/runc-shim; \
+    else \
+      test ! -e /usr/local/bin/runc; \
+      test ! -e /usr/local/bin/runc-shim; \
+    fi
 
 COPY ./builder/config/yr_services.yaml /tmp/yr_services_rrt.yaml
 COPY ./builder/config/yr_services_python.yaml /tmp/yr_services_python.yaml
@@ -305,6 +343,8 @@ RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INS
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
       org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \
+      org.akernel.runc.version="${RUNC_VERSION}" \
+      org.akernel.runc.enabled="${AKERNEL_ENABLE_RUNC}" \
       org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}"
 
 ENV YR_LOG_PATH=${YR_INSTALLATION_DIR}/logs

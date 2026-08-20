@@ -127,6 +127,11 @@ if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
   tag="${tag:-${IMAGE_TAG}}"
 fi
 
+case "${AKERNEL_ENABLE_RUNC:-false}" in
+  true|false) ;;
+  *) die "AKERNEL_ENABLE_RUNC must be true or false" ;;
+esac
+
 repository="${repository:-akernel-all-in-one}"
 tag="${tag:-$(git -C "${AKERNEL_REPO_ROOT}" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)}"
 
@@ -173,6 +178,7 @@ node_build_args=(
   --build-arg "AKERNEL_RUNTIME_IMAGE=${runtime_image}"
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
   --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA:-true}"
+  --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC:-false}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"
 )

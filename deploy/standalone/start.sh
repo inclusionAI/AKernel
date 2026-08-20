@@ -22,6 +22,7 @@ IAM_SEED_FILE="${DATA_DIR}/iam-seed"
 TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
+AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
 LITEBUS_DATA_KEY=""
 
 # Container runtime command (docker or pouch)
@@ -93,6 +94,15 @@ check_prerequisites() {
         log_error "python3 is required to generate standalone credentials"
         exit 1
     fi
+
+    case "${AKERNEL_ENABLE_RUNC}" in
+        true|false)
+            ;;
+        *)
+            log_error "AKERNEL_ENABLE_RUNC must be true or false"
+            exit 1
+            ;;
+    esac
 
     # Create data directory
     mkdir -p "${DATA_DIR}"
@@ -228,6 +238,10 @@ configure_gpu() {
 
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
+    local sed_args=(
+        -E
+        -e "s/^[[:space:]]*nat_backend[[:space:]]*=.*/nat_backend=\"${AKERNEL_NAT_BACKEND}\"/"
+    )
 
     case "${AKERNEL_NAT_BACKEND}" in
         iptables|bpfnat)
@@ -243,10 +257,22 @@ configure_network() {
         log_error "Missing nat_backend in ${CONFIG_DIR}/sandboxd_config.toml"
         exit 1
     fi
-    sed -E \
-        "s/^[[:space:]]*nat_backend[[:space:]]*=.*/nat_backend=\"${AKERNEL_NAT_BACKEND}\"/" \
-        "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
+    if [[ "${AKERNEL_ENABLE_RUNC}" == "true" ]]; then
+        if ! grep -q '^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$' \
+            "${CONFIG_DIR}/sandboxd_config.toml"; then
+            log_error "AKERNEL_ENABLE_RUNC requires the # AKERNEL_RUNTIME_RUNC marker in sandboxd_config.toml"
+            exit 1
+        fi
+        sed_args+=(
+            -e 's|^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$|runc="/usr/local/bin/runc"|'
+        )
+    fi
+    sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
     mv "${config_tmp}" "${SANDBOXD_CONFIG_FILE}"
+
+    if [[ "${AKERNEL_ENABLE_RUNC}" == "true" ]]; then
+        log_info "Enabling the optional runc sandbox runtime"
+    fi
 
     if [[ "${AKERNEL_NAT_BACKEND}" == "bpfnat" ]]; then
         log_warn "Using the experimental bpfnat network backend"

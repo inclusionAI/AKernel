@@ -16,7 +16,10 @@
 
 The Kata case requires at least one cluster node that advertises Kata support.
 Otherwise, the scheduler returns a no-resource error.
+Set AKERNEL_EXAMPLE_RUNC=true to include the optional runc runtime.
 """
+
+import os
 
 from akernel_sdk import Sandbox
 
@@ -25,7 +28,11 @@ def run(runtime: str | None) -> None:
     sandbox = (
         Sandbox(cpu=1000, memory=2048)
         if runtime is None
-        else Sandbox(runtime=runtime, cpu=1000, memory=2048)
+        else Sandbox(
+            runtime=runtime,
+            cpu=1000,
+            memory=2048,
+        )
     )
     with sandbox:
         result = sandbox.commands.run("uname -s")
@@ -37,6 +44,8 @@ def main() -> None:
     run(None)
     run("runsc")
     run("kata")
+    if os.environ.get("AKERNEL_EXAMPLE_RUNC", "").lower() == "true":
+        run("runc")
 
 
 if __name__ == "__main__":

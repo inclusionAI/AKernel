@@ -31,6 +31,7 @@ ACR_NAMESPACE ?=
 MONITOR_STORAGE_CLASS ?=
 INSTALL_MONITOR ?=
 INSTALL_DRAGONFLY ?=
+ENABLE_RUNC ?=
 GRAFANA_PUBLIC_ACCESS ?=
 GRAFANA_ADMIN_PASSWORD ?=
 IAM_SEED_HEX ?=
@@ -47,9 +48,11 @@ help:
 	@echo "  make config FORCE=1                Overwrite an existing config without prompting"
 	@echo "  make config NON_INTERACTIVE=1 ...  Generate config from Make variables"
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
+	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
 	@echo "  make build IMAGE_TAG=<tag>          Build the all-in-one image"
 	@echo "  make build RUNTIME_PROFILE=python   Include optional Python runtimes"
 	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
+	@echo "  make build AKERNEL_ENABLE_RUNC=true Include the optional runc payload"
 	@echo "  make build GVISOR_RELEASE=<tag>     Override the pinned official gVisor tag"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
@@ -87,6 +90,7 @@ config:
 	if [[ -n "$(IMAGE_TAG)" ]]; then args+=(--image-tag "$(IMAGE_TAG)"); fi; \
 	if [[ -n "$(INSTALL_MONITOR)" ]]; then args+=(--install-monitor "$(INSTALL_MONITOR)"); fi; \
 	if [[ -n "$(INSTALL_DRAGONFLY)" ]]; then args+=(--install-dragonfly "$(INSTALL_DRAGONFLY)"); fi; \
+	if [[ -n "$(ENABLE_RUNC)" ]]; then args+=(--enable-runc "$(ENABLE_RUNC)"); fi; \
 	if [[ -n "$(GRAFANA_PUBLIC_ACCESS)" ]]; then args+=(--grafana-public-access "$(GRAFANA_PUBLIC_ACCESS)"); fi; \
 	if [[ -n "$(GRAFANA_ADMIN_PASSWORD)" ]]; then args+=(--grafana-admin-password "$(GRAFANA_ADMIN_PASSWORD)"); fi; \
 	if [[ -n "$(IAM_SEED_HEX)" ]]; then args+=(--iam-seed-hex "$(IAM_SEED_HEX)"); fi; \

@@ -315,6 +315,12 @@ variable "sandboxd_nat_backend" {
   default     = "iptables"
 }
 
+variable "enable_runc" {
+  type        = bool
+  description = "Request the optional runc runtime; the selected node image must be built with AKERNEL_ENABLE_RUNC=true."
+  default     = false
+}
+
 variable "node_home_use_csi_ephemeral" {
   type        = bool
   description = "Mount /home/akernel from a per-node CSI ephemeral volume instead of hostPath /home/akernel."

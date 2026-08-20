@@ -451,6 +451,9 @@ node:
       cpuQuota: "800%"
 
     sandboxd:
+      # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
+      # Sandboxd probes runc and runc-shim before advertising the runtime.
+      enableRunc: false
       config: |-
         rootDir="/home/akernel/sandboxd/root"
         storeDir="/home/akernel/sandboxd/store"
@@ -488,16 +491,23 @@ node:
 
         [plugin.runtime.basic_spec]
         runsc="/home/akernel/images/config.json"
+        runc=""
 
         [plugin.runtime.runtime_binary]
         runsc="/usr/local/bin/runsc"
         kata="/usr/local/bin/containerd-shim-kata-v2"
+        # AKERNEL_RUNTIME_RUNC
 
         [plugin.runtime.kata]
         config_path="/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-dragonball.toml"
         kvm_device="/dev/kvm"
         dan_config_dir="/run/kata-containers/dans"
         logger_binary="/usr/local/bin/sandbox-logger"
+
+        [plugin.runtime.runc]
+        state_root="/run/sandboxd/runc"
+        shim_binary="/usr/local/bin/runc-shim"
+        kvm_device="/dev/kvm"
 
         # image-manager config. root holds image-manager runtime state
         # (daemons/, mount_records.db) and is wiped on pod change; input

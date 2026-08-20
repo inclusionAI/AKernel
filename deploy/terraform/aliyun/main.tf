@@ -220,6 +220,7 @@ locals {
     master_service_type               = (var.master_public_access_8888 && !var.traefik_enabled) ? var.master_service_type : "ClusterIP"
     traefik_enabled                   = var.traefik_enabled
     sandboxd_nat_backend              = var.sandboxd_nat_backend
+    enable_runc                       = var.enable_runc
     node_secret_create                = var.node_secret_create
     node_home_use_csi_ephemeral       = var.node_home_use_csi_ephemeral
     node_home_csi_storage_class       = local.effective_node_home_csi_sc

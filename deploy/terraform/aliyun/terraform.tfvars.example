@@ -170,6 +170,10 @@ prereq_kruise_chart_version = "1.8.3"
 # Node secret control.
 node_secret_create = true
 
+# Optional host-kernel runc runtime. The node image must be built with the
+# matching AKERNEL_ENABLE_RUNC=true profile setting.
+enable_runc = false
+
 # --- Monitor ---
 install_monitor        = true
 monitor_namespace      = "akernel-monitor"

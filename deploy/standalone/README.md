@@ -14,6 +14,21 @@ also enables its local-output DNAT support.
 
 The default runtime is gVisor `runsc`. `Sandbox(runtime="kata")` additionally requires `/dev/kvm` and hardware or nested virtualization on the Docker host. Nodes without KVM remain usable with runsc and do not advertise Kata to the scheduler.
 
+Default image builds exclude the optional native Linux `runc` runtime, and
+standalone does not advertise it by default. Build an image containing the
+payload, then enable it when host-kernel container isolation is appropriate:
+
+```bash
+AKERNEL_ENABLE_RUNC=true make build \
+  IMAGE_REPOSITORY=akernel-runc IMAGE_TAG=local
+
+IMAGE=akernel-runc:local AKERNEL_ENABLE_RUNC=true ./start.sh
+```
+
+Clients then select it with `Sandbox(runtime="runc")`. A sandbox may request
+the configured KVM character device with
+`extra_config={"enableKVM": True}` when the host exposes `/dev/kvm`.
+
 Experimental NVIDIA GPU sandboxes use gVisor nvproxy. The host must provide a
 compatible NVIDIA driver and NVIDIA Container Toolkit. Enable GPU access to
 the node container with:

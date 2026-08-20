@@ -179,7 +179,8 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 
 **Node-Level Infrastructure**
 - **Sandbox runtimes**: gVisor by default, including experimental NVIDIA GPU
-  and writable-storage support, and Kata Containers on KVM-capable nodes
+  and writable-storage support; Kata Containers on KVM-capable nodes; and an
+  explicitly enabled native Linux runc backend
 - **sandboxd**: Sandbox lifecycle daemon with pluggable sandbox runtime integration
 - **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication
 
@@ -201,6 +202,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 ## Roadmap
 
 - [x] Kata Containers runtime on KVM-capable nodes
+- [x] Optional native Linux runc runtime
 - [x] Sandbox network ACL
 - [ ] Fork-based sandbox launch based on gVisor
 - [ ] Sandbox checkpoint and restore

@@ -47,7 +47,9 @@ build tooling, and examples. Node runtime components such as `sandboxd` and
 `distill-fs` are maintained in their own upstream repositories. The all-in-one
 Docker build copies and compiles their pinned Git submodules in dedicated
 builder stages. It also downloads `runsc` from the official gVisor release
-bucket and verifies its published SHA-512 checksum. The node image includes
+bucket and verifies its published SHA-512 checksum. When
+`AKERNEL_ENABLE_RUNC=true`, it also installs a pinned runc release after
+verifying its SHA-256 digest. The node image includes
 the pinned `nvidia-container-cli` userspace tooling for experimental gVisor
 GPU sandboxes; NVIDIA kernel drivers remain host-provided.
 It installs the checksum-pinned openYuanRong core wheel as the control plane
@@ -109,6 +111,7 @@ deployment entrypoint and environment.
 ```bash
 make build
 make build RUNTIME_PROFILE=python
+make build AKERNEL_ENABLE_RUNC=true
 ```
 
 For a build that will be pushed and deployed, set `IMAGE_REPOSITORY` and
@@ -126,11 +129,13 @@ node components and produces the AKernel all-in-one image using the selected
 runtime image and its matching service configuration.
 
 Initialize submodules with `git submodule update --init --recursive` before
-building. The all-in-one image builds `sandboxd` and `sbox` from
+building. The all-in-one image builds `sandboxd`, `sbox`, and `runc-shim` from
 `src/sandboxd`, builds `sandbox-logger`, builds `distill_fs` from
 `src/distill-fs`, downloads the official gVisor `runsc` release pinned by
 `GVISOR_RELEASE`, and extracts the required amd64 artifacts from the
-checksum-pinned Kata release.
+checksum-pinned Kata release. `AKERNEL_ENABLE_RUNC=true` additionally downloads
+the checksum-pinned official runc release and copies both runc binaries into
+the final image.
 
 The submodule gitlinks are the single source of truth for the sandboxd and
 distill-fs revisions included in a clean release. `make build` always compiles
@@ -178,6 +183,17 @@ from the node container. A node without KVM remains ready and advertises only
 runsc; a Kata request fails scheduling with a no-resource error when no
 eligible node exists. Do not treat a configured runtime as an advertised
 runtime.
+
+Runc is excluded from default image builds and from the default advertised
+runtime set. Guided cloud profiles use `make config ENABLE_RUNC=true`; this
+records both the image build flag and Terraform runtime registration. For
+direct configuration, build an image with `AKERNEL_ENABLE_RUNC=true`, then use
+`AKERNEL_ENABLE_RUNC=true` for standalone,
+`node.config.sandboxd.enableRunc=true` for Helm, or `enable_runc=true` for
+Terraform. Runc uses the host kernel and therefore has a different isolation
+boundary from runsc. It does not support experimental GPU or explicit
+`storage_mb` requests. Its optional `enableKVM` extra configuration requires a
+usable `/dev/kvm` device.
 
 The bundled sandboxd configuration enables per-sandbox network ACLs. The
 default iptables backend requires `br_netfilter`, conntrack,

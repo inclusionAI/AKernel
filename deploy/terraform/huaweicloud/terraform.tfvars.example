@@ -89,6 +89,10 @@ node_image_tag            = "<release-tag>"
 # automatically; direct Terraform users can use `openssl rand -hex 32`.
 # iam_litebus_data_key = "<64-character-hex-seed>"
 
+# Optional host-kernel runc runtime. The node image must be built with the
+# matching AKERNEL_ENABLE_RUNC=true profile setting.
+enable_runc = false
+
 # Enable the /internal-stats endpoint sidecar on Traefik.
 # traefik_internal_stats_enabled = true
 # traefik_internal_stats_image   = "my-registry.example.com/busybox:1.37.0-musl"
