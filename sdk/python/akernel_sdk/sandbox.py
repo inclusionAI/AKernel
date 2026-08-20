@@ -169,12 +169,15 @@ class Sandbox:
                 are validated against the selected runtime by the backend.
             network_policy: Optional creation-time network policy. Omitting it
                 leaves sandbox networking unrestricted.
-            dockerfile: Experimental Dockerfile launch configuration. ``FROM``
-                supplies only the root filesystem; its OCI ENV, USER, WORKDIR,
-                CMD and ENTRYPOINT configuration is not inherited. The sandbox
-                applies only state explicitly declared in this Dockerfile, then
-                executes build-time instructions in-sandbox. Mutually exclusive
-                with ``image`` and ``rootfs``.
+            dockerfile: Supported Dockerfile direct-launch configuration. This
+                API will not be deprecated; future releases may expand the
+                documented strict subset through backward-compatible additions,
+                and unsupported inputs fail closed. ``FROM`` supplies only the
+                root filesystem; its OCI ENV, USER, WORKDIR, CMD and ENTRYPOINT
+                configuration is not inherited. The sandbox applies only state
+                explicitly declared in this Dockerfile, then executes build-time
+                instructions in-sandbox. Mutually exclusive with ``image`` and
+                ``rootfs``.
 
         Raises:
             TypeError: An argument has an invalid type.

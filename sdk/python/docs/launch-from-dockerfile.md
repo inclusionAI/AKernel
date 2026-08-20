@@ -1,9 +1,11 @@
-# Experimental: Launch a sandbox from a Dockerfile
+# Launch a sandbox from a Dockerfile
 
-> **Warning:** This is the first AKernel release of direct Dockerfile launch. It
-> implements a deliberately strict, narrow subset whose API and behavior can
-> change. It is not a general-purpose Docker build facility and does not replace
-> Docker, BuildKit, a registry, or an external image build pipeline.
+Dockerfile direct launch is a supported, currently available AKernel SDK
+capability. This API will not be deprecated and is not scheduled for removal.
+Future releases may expand the documented strict subset through
+backward-compatible additions; unsupported inputs continue to fail closed. It
+is not a general-purpose Docker build facility and does not replace Docker,
+BuildKit, a registry, or an external image build pipeline.
 
 ## Scope and root filesystem semantics
 

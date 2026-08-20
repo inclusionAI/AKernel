@@ -347,10 +347,13 @@ Keep public `Sandbox`, `Commands`, `Filesystem`, and value types independent
 of both native packages; all native conversions belong under
 `akernel_sdk._backends`.
 
-The SDK also supports an experimental, strict Dockerfile direct-launch subset
-through `DockerContext` and
+Dockerfile direct launch is a supported AKernel SDK capability through
+`DockerContext` and
 `Sandbox(dockerfile=DockerfileLaunch(context=..., auto_start_cmd=..., run_timeout=...))`.
-Read [`sdk/python/docs/launch-from-dockerfile.md`](./sdk/python/docs/launch-from-dockerfile.md)
+This API will not be deprecated. Future releases may expand the documented
+strict subset only through backward-compatible additions; unsupported inputs
+continue to fail closed. Read
+[`sdk/python/docs/launch-from-dockerfile.md`](./sdk/python/docs/launch-from-dockerfile.md)
 before changing this path. `FROM` supplies only the root filesystem; inherited
 OCI configuration is not applied. Runtime availability and compatibility remain
 backend-owned. `DockerContext.walk()` exposes public structured file and
