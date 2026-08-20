@@ -1,0 +1,183 @@
+{#
+  AKernel runtime profile template.
+
+  Deployment values are resolved from the CLI-provided env mapping. Strings
+  containing Python CLI runtime expressions remain escaped for its second
+  rendering pass.
+#}
+{% macro toml_string(value) -%}
+"{%- for char in value -%}
+{%- set encoded = char | tojson -%}
+{{- char if encoded | length == 14 else encoded[1:-1] -}}
+{%- endfor -%}"
+{%- endmacro %}
+{% set role = env["AKERNEL_ROLE"] %}
+{% set cluster_roles = ["master", "frontend"] %}
+{% set node_roles = ["node", "standalone"] %}
+{% if role not in cluster_roles + node_roles %}
+{{ unsupported_akernel_role }}
+{% endif %}
+{% set is_cluster = role in cluster_roles %}
+{% set is_node = role in node_roles %}
+{% set is_agent = role == "node" %}
+{% set is_standalone = role == "standalone" %}
+{% set has_master_mode = not is_agent %}
+{% set enable_metrics = env.get("ENABLE_METRICS", "false") | lower %}
+{% set enable_trace = env.get("ENABLE_TRACE", "false") | lower %}
+{% set traefik_enable_tls = "true" if env.get("TRAEFIK_ENABLE_TLS", "false") | lower == "true" else "false" %}
+{% set configured_host_ip = env.get("YR_NODE_IP", "") | trim %}
+{% set configured_local_ip = env.get("YR_LOCAL_IP", "") | trim %}
+{% set enable_faas_frontend = env.get("ENABLE_FAAS_FRONTEND", "true") | lower %}
+{% set enable_iam_server = env.get("ENABLE_IAM_SERVER", "true") | lower %}
+{% set runtime_hostname = "{{ hostname }}" %}
+
+# Generated at startup from builder/config/yr/config.toml.jinja.
+
+[values]
+node_id = "{{ runtime_hostname }}"
+{% if configured_host_ip %}
+host_ip = {{ toml_string(configured_host_ip) }}
+{% endif %}
+{% if configured_local_ip %}
+local_ip = {{ toml_string(configured_local_ip) }}
+{% endif %}
+{% if is_cluster %}
+cpu_num = 1
+memory_num = 3904
+shared_memory_num = 4096
+deploy_path = "/home/yuanrong/master"
+{% endif %}
+
+[values.fs.log]
+path = "{{ '/home/yuanrong/master/log' if is_cluster else '/home/yuanrong/logs' }}"
+
+[values.fs.tls]
+base_path = "/home/yuanrong/.cert"
+
+{% if not is_standalone %}
+[values.etcd]
+enable_multi_master = true
+{% endif %}
+
+{% if is_cluster or is_node %}
+[[values.etcd.address]]
+ip = {{ toml_string(configured_host_ip if is_standalone else env["ETCD_ADDRESS"]) }}
+port = {{ env.get("ETCD_PORT", "2379") }}
+peer_port = {{ env.get("ETCD_PEER_PORT", "2378") }}
+{% endif %}
+
+[values.frontend]
+ssl_enable = true
+client_auth_type = "NoClientCert"
+frontend_lease_bypass = true
+enable_function_token_auth = true
+enable_func_token_auth = true
+{% if role == "frontend" %}
+meta_service_address = {{ toml_string(env["META_SERVICE_ADDRESS"]) }}
+{% endif %}
+iam_server_address = "127.0.0.1:31113"
+
+[values.meta_service]
+port = 31111
+
+{% if has_master_mode %}
+[mode.master]
+etcd = {{ "true" if is_standalone else "false" }}
+ds_master = {{ "true" if is_standalone else "false" }}
+frontend = {{ enable_faas_frontend if role == "master" else "true" if role in ["frontend", "standalone"] else "false" }}
+function_master = {{ "true" if role in ["master", "standalone"] else "false" }}
+function_scheduler = false
+meta_service = {{ "true" if role in ["master", "standalone"] else "false" }}
+iam_server = {{ enable_iam_server if role == "master" else "true" if role in ["frontend", "standalone"] else "false" }}
+{% endif %}
+
+[ds_worker.args]
+{% if is_cluster %}
+rpc_thread_num = 128
+{% endif %}
+{% if is_node %}
+node_timeout_s = 30
+client_dead_timeout_s = 60
+heartbeat_interval_ms = 1000
+node_dead_timeout_s = 120
+log_dir = "/home/yuanrong/logs"
+{% endif %}
+
+[function_master.args]
+services_path = "/home/yuanrong/deploy/process/services.yaml"
+metrics_config_file = "/home/yuanrong/metrics/metrics_config.json"
+traefik_enable_tls = {{ traefik_enable_tls }}
+traefik_http_entry_point = {{ toml_string(env.get("TRAEFIK_HTTP_ENTRYPOINT", "websecure")) }}
+traefik_forward_timeout_ms = 3000
+{% if enable_metrics == "true" and (is_cluster or is_standalone) %}
+enable_metrics = true
+{% endif %}
+{% if enable_trace == "true" and (is_cluster or is_standalone) %}
+enable_trace = true
+trace_config = {{ toml_string(env["YR_TRACE_CONFIG_CONTENT"]) }}
+{% endif %}
+{% if is_cluster or is_standalone %}
+enable_traefik_provider = {{ "true" if env.get("TRAEFIK_MODE", "etcd") == "http" else "false" }}
+{% endif %}
+{% if is_cluster %}
+system_timeout = 300000
+schedule_relaxed = 20
+{% elif is_standalone %}
+system_timeout = 60000
+{% endif %}
+
+[function_proxy.args]
+services_path = "/home/yuanrong/deploy/process/services.yaml"
+enable_inherit_env = false
+npu_collection_mode = "off"
+metrics_config_file = "/home/yuanrong/metrics/metrics_config.json"
+enable_direct_routing = false
+force_low_reliability_instance = true
+traefik_enable_tls = {{ traefik_enable_tls }}
+{% if enable_metrics == "true" %}
+enable_metrics = true
+{% endif %}
+{% if enable_trace == "true" %}
+enable_trace = true
+trace_config = {{ toml_string(env["YR_TRACE_CONFIG_CONTENT"]) }}
+{% endif %}
+{% if is_node %}
+enable_traefik_registry = {{ "true" if env.get("TRAEFIK_MODE", "etcd") == "etcd" else "false" }}
+traefik_http_entrypoint = {{ toml_string(env.get("TRAEFIK_HTTP_ENTRYPOINT", "websecure")) }}
+{% endif %}
+log_expiration_enable = true
+log_expiration_time_threshold = {{ 10 if is_agent else 7200 }}
+log_expiration_cleanup_interval = {{ 10 if is_agent else 600 }}
+log_expiration_max_file_count = {{ 50 if is_agent else 256 }}
+{% if is_cluster %}
+system_timeout = 300000
+pseudo_data_plane = true
+{% elif is_node %}
+system_timeout = 60000
+fc_agent_mgr_retry_times = 30
+fc_agent_mgr_retry_cycle = 60000
+runtime_logs_dir = "/home/yuanrong/logs"
+{% endif %}
+{% if is_node %}
+metrics_collector_type = "external"
+{% endif %}
+
+# The CLI exposes the meta-service component port separately from values.meta_service.
+[meta_service]
+port = 31111
+
+[iam_server.args]
+token_expired_time_span = 604800
+ssl_enable = true
+iam_ssl_enable = true
+local_listen_port = 31113
+local_ip = "127.0.0.1"
+{% if enable_trace == "true" and (is_cluster or is_standalone) %}
+enable_trace = true
+{% endif %}
+
+{% if enable_trace == "true" and (is_cluster or is_standalone) %}
+[frontend.env]
+ENABLE_TRACE = "true"
+TRACE_CONFIG = {{ toml_string(env["YR_TRACE_CONFIG_CONTENT"]) }}
+{% endif %}

@@ -8,12 +8,12 @@ ARG AKERNEL_RUNTIME_PROFILE=rrt
 ARG AKERNEL_ENABLE_KATA=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
-ARG OPEN_YR_VERSION=0.9.7
+ARG OPEN_YR_VERSION=0.9.8
 ARG OPEN_YR_CORE_WHEEL_URL=
 ARG OPEN_YR_CORE_WHEEL_SHA256=
 ARG OPEN_YR_RELEASE_BASE_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download
-ARG OPEN_YR_CORE_AMD64_SHA256=0a890db1785e349bfd625844a05059bdd494e32a429cea771cf969f09e3aba2c
-ARG OPEN_YR_CORE_ARM64_SHA256=64e14233fcbbb3418311d2f242e164e7be6e7bee0315c7619b18d9c5ddd01a76
+ARG OPEN_YR_CORE_AMD64_SHA256=733218f65ca1d46c468d699f4b24bac5a1f749b6328270c3b8c300442df36daa
+ARG OPEN_YR_CORE_ARM64_SHA256=34556071bb0b31d6ef0086ec4ae9e6ccd144ddcec1404b39c6ff1c33861ac65b
 ARG GVISOR_RELEASE=release-20260706.0
 ARG GVISOR_RELEASE_BASE_URL=https://storage.googleapis.com/gvisor/releases
 ARG LIBNVIDIA_CONTAINER_VERSION=1.19.1-1
@@ -21,6 +21,7 @@ ARG KATA_BUILD_IMAGE=ubuntu:24.04
 ARG KATA_RELEASE=4.0.0
 ARG KATA_AMD64_SHA256=2c3b9dfeba355582b40aee462b12916c9740654d0230f696adf719d67b063a8c
 ARG KATA_RELEASE_BASE_URL=https://github.com/kata-containers/kata-containers/releases/download
+ARG KATA_LICENSE_URL=https://raw.githubusercontent.com/kata-containers/kata-containers/${KATA_RELEASE}/LICENSE
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
 ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_amd64.tar.gz
 ARG AKERNEL_VERSION=unknown
@@ -30,6 +31,7 @@ FROM ${KATA_BUILD_IMAGE} AS kata-runtime-true
 ARG KATA_RELEASE
 ARG KATA_AMD64_SHA256
 ARG KATA_RELEASE_BASE_URL
+ARG KATA_LICENSE_URL
 ARG TARGETARCH
 RUN set -eux; \
     test "${TARGETARCH:-amd64}" = "amd64"; \
@@ -52,8 +54,8 @@ RUN set -eux; \
     ln -sfn configuration-dragonball.toml \
       /kata/opt/kata/share/defaults/kata-containers/runtime-rs/configuration.toml; \
     mkdir -p /kata/opt/kata/share/licenses/kata-containers; \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-      "https://raw.githubusercontent.com/kata-containers/kata-containers/${KATA_RELEASE}/LICENSE" \
+    curl -fSL --max-time 30 --retry 10 --retry-delay 2 --retry-all-errors \
+      "${KATA_LICENSE_URL}" \
       -o /kata/opt/kata/share/licenses/kata-containers/LICENSE; \
     rm -f "${archive}"
 
@@ -133,6 +135,7 @@ RUN apt-get update && \
         procps \
         python3 \
         python3-pip \
+        python3-venv \
         systemd \
         systemd-sysv \
         tzdata \
@@ -197,6 +200,10 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 
 ENV YR_INSTALLATION_DIR=/home/yuanrong
+ENV PATH=/opt/openyuanrong/bin:${PATH}
+
+COPY ./builder/config/yr/config.toml.jinja /etc/yuanrong/config.toml.jinja
+COPY ./builder/config/openyuanrong-core-0.9.8.constraints.txt /tmp/openyuanrong-core.constraints.txt
 
 # Install the complete, language-runtime-free openYuanRong control plane from
 # its checksum-pinned core wheel. A URL and checksum pair may override the
@@ -226,21 +233,30 @@ RUN set -eux; \
       test -z "${OPEN_YR_CORE_WHEEL_SHA256}"; \
     fi; \
     wheel="/tmp/${wheel_name}"; \
-    target=/tmp/openyuanrong-core; \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
       "${wheel_url}" -o "${wheel}"; \
     echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
-    python3 -m pip install \
-      --break-system-packages \
+    python3 -m venv /opt/openyuanrong; \
+    /opt/openyuanrong/bin/python -m pip install \
       --no-cache-dir \
-      --no-deps \
-      --target "${target}" \
+      --index-url "${PIP_INDEX_URL}" \
+      --constraint /tmp/openyuanrong-core.constraints.txt \
       "${wheel}"; \
-    test -x "${target}/yr/functionsystem/bin/yr"; \
-    mkdir -p "${YR_INSTALLATION_DIR}"; \
-    cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
-    rm -rf "${target}" "${wheel}"; \
-    ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
+    site_packages="$(/opt/openyuanrong/bin/python -c 'import site; print(site.getsitepackages()[0])')"; \
+    base_py="${site_packages}/yr/cli/component/base.py"; \
+    launcher_py="${site_packages}/yr/cli/system_launcher.py"; \
+    grep -Fq 'logger.info(f"Environment: {full_env}")' "${base_py}"; \
+    sed -i \
+      's/logger.info(f"Environment: {full_env}")/logger.info(f"Environment keys: {sorted(full_env)}")/' \
+      "${base_py}"; \
+    grep -Fq 'logger.info(f"Environment keys: {sorted(full_env)}")' "${base_py}"; \
+    ! grep -Fq 'logger.info(f"Environment: {full_env}")' "${base_py}"; \
+    grep -Fq '"env_vars": comp.env_vars,' "${launcher_py}"; \
+    sed -i 's/"env_vars": comp.env_vars,/"env_vars": {},/' "${launcher_py}"; \
+    grep -Fq '"env_vars": {},' "${launcher_py}"; \
+    ! grep -Fq '"env_vars": comp.env_vars,' "${launcher_py}"; \
+    test -x /opt/openyuanrong/bin/yr; \
+    rm -f "${wheel}" /tmp/openyuanrong-core.constraints.txt
 
 COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img
 

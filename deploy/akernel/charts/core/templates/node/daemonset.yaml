@@ -59,6 +59,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- $nodeEtcd := .Values.node.etcd | default dict }}
+      {{- $sandboxResolverIP := first (splitList "/" .Values.node.sandboxIPRange) }}
       containers:
       - name: akernel-node
         image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
@@ -72,7 +73,11 @@ spec:
               - bash
               - -c
               - |
-                cp /etc/resolv.conf /etc/resolv_akernel.conf && sed -i 's/127.0.0.1/172.17.0.1/g' /etc/resolv_akernel.conf
+                sandbox_resolver_ip={{ $sandboxResolverIP | quote }}
+                awk -v resolver="${sandbox_resolver_ip}" '
+                  $1 == "nameserver" && $2 ~ /^127\./ { $2 = resolver }
+                  { print }
+                ' /etc/resolv.conf > /etc/resolv_akernel.conf
         resources:
           {{- toYaml .Values.node.resources | nindent 10 }}
         env:
@@ -118,16 +123,24 @@ spec:
         {{- end }}
         - name: AKERNEL_ENV
           value: {{ .Values.monitoring.akernelEnv | default "default" | quote }}
+        {{- if .Values.monitoring.prometheusEndpoint }}
         - name: ENABLE_METRICS
-          value: {{ ne (.Values.monitoring.prometheusEndpoint | default "") "" | ternary "true" "false" | quote }}
+          value: "true"
+        {{- end }}
+        {{- if .Values.monitoring.tempoEndpoint }}
         - name: ENABLE_TRACE
-          value: {{ ne (.Values.monitoring.tempoEndpoint | default "") "" | ternary "true" "false" | quote }}
+          value: "true"
+        {{- end }}
         - name: TRAEFIK_MODE
           value: {{ .Values.traefik.mode | default "http" | quote }}
+        {{- if and (not (.Values.traefik.enableWebEntrypoint | default false)) (.Values.traefik.enableTLS | default false) }}
         - name: TRAEFIK_ENABLE_TLS
-          value: {{ .Values.traefik.enableWebEntrypoint | default false | ternary false (.Values.traefik.enableTLS | default false) | quote }}
+          value: "true"
+        {{- end }}
+        {{- if .Values.traefik.enableWebEntrypoint }}
         - name: TRAEFIK_HTTP_ENTRYPOINT
-          value: {{ .Values.traefik.enableWebEntrypoint | default false | ternary "web" "websecure" | quote }}
+          value: "web"
+        {{- end }}
         securityContext:
           privileged: true
         volumeMounts:
