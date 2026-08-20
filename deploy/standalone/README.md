@@ -137,6 +137,9 @@ This will:
   default)
 - Print the Traefik container IP to use as `AKERNEL_SERVER_ADDRESS`
 
+The openYuanRong bootstrap waits for `sandbox0` and uses the IPv4 address
+actually assigned to that interface as `yr start --local_ip`.
+
 No host ports are published. On Linux, the host accesses Traefik directly
 through its Docker bridge IP.
 

@@ -26,6 +26,16 @@ if [ -z "${role}" ]; then
 fi
 
 case "${role}" in
+    master|frontend|node|standalone)
+        export AKERNEL_ROLE="${role}"
+        ;;
+    *)
+        echo "unsupported AKERNEL_ROLE: ${role}; expected master, frontend, node, or standalone" >&2
+        exit 1
+        ;;
+esac
+
+case "${role}" in
     master|frontend)
         /usr/local/bin/ensure-component-cert
         exec /bin/bash /home/yuanrong/entrypoint.sh "$@"
@@ -37,9 +47,5 @@ case "${role}" in
     standalone)
         /usr/local/bin/ensure-component-cert
         exec /usr/sbin/init "$@"
-        ;;
-    *)
-        echo "unsupported AKERNEL_ROLE: ${role}" >&2
-        exit 1
         ;;
 esac
