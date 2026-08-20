@@ -24,7 +24,7 @@ It supports two backends:
   - [Port forwarding](#port-forwarding)
   - [Reverse tunnels](#reverse-tunnels)
   - [Rootfs and mounts](#rootfs-and-mounts)
-  - [Experimental: launch from a Dockerfile](#experimental-launch-from-a-dockerfile)
+  - [Launch from a Dockerfile](#launch-from-a-dockerfile)
   - [Resources and lifecycle](#resources-and-lifecycle)
   - [CLI](#cli)
   - [Examples and tests](#examples-and-tests)
@@ -412,9 +412,12 @@ OCI images can also be mounted read-only:
 mount = Mount(target="/opt/tools", image_url="ubuntu:24.04")
 ```
 
-## Experimental: launch from a Dockerfile
-> **Warning:** This first direct-launch release supports a strict, changing
-> Dockerfile subset. It is not a general-purpose Docker build.
+## Launch from a Dockerfile
+
+Dockerfile direct launch is a supported AKernel SDK capability. This API will
+not be deprecated. Future releases may expand the documented strict subset
+through backward-compatible additions; unsupported inputs continue to fail
+closed. It is not a general-purpose Docker build.
 
 `FROM` supplies only the root filesystem; inherited OCI configuration is not
 applied. Precheck the context, then pass its launch configuration to `Sandbox`:

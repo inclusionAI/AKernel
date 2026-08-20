@@ -33,7 +33,10 @@ from ._dockercontext import DockerContext
 
 @dataclass(frozen=True)
 class DockerfileLaunch:
-    """Experimental immutable configuration for a Dockerfile sandbox launch.
+    """Immutable supported configuration for Dockerfile direct launch.
+
+    Dockerfile direct launch accepts the documented strict subset. Unsupported
+    inputs fail closed.
 
     Args:
         context: Dockerfile and build context to apply in the sandbox.
