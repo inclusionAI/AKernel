@@ -24,6 +24,7 @@ It supports two backends:
   - [Port forwarding](#port-forwarding)
   - [Reverse tunnels](#reverse-tunnels)
   - [Rootfs and mounts](#rootfs-and-mounts)
+  - [Experimental: launch from a Dockerfile](#experimental-launch-from-a-dockerfile)
   - [Resources and lifecycle](#resources-and-lifecycle)
   - [CLI](#cli)
   - [Examples and tests](#examples-and-tests)
@@ -101,129 +102,9 @@ Sandbox(
     xpu: str | None = None,
     storage_mb: int | None = None,
     network_policy: NetworkPolicy | None = None,
-    context: DockerContext | None = None,
-    auto_start_cmd: bool = True,
-    build_run_timeout: int = 600,
+    dockerfile: DockerfileLaunch | None = None,
 )
 ```
-
-### Launch a sandbox from a Dockerfile
-
-`image`, `rootfs`, and `context` are mutually exclusive. `Sandbox(context=...)`
-implements a deliberately narrow, direct-launch subset of Dockerfile syntax
-through the public `Sandbox`, `Commands`, and `Filesystem` facades. It needs no
-BuildKit, Docker daemon, or registry push.
-
-**`FROM` is rootfs-only.** The selected image supplies the sandbox root
-filesystem only. Its OCI `ENV`, `USER`, `WORKDIR`, `CMD`, and `ENTRYPOINT`
-configuration is not inherited. Declare every required runtime setting in the
-Dockerfile passed to `DockerContext`.
-
-Pre-check the Dockerfile before creating a sandbox. A check returning `False`
-means direct launch will fail closed; pre-build externally instead. This example
-creates one context instance, reports diagnostic warnings, launches it, and
-inspects the optional startup handle:
-
-```python
-from akernel_sdk import LocalDockerContext, Sandbox, check_direct_launch
-
-context = LocalDockerContext("Dockerfile", context_dir=".")
-check = check_direct_launch(context)
-for warning in check.warnings:
-    print(f"Dockerfile warning: {warning}")
-
-if check.direct_launchable:
-    with Sandbox(context=context, build_run_timeout=300) as sandbox:
-        startup = sandbox.startup_command
-        if startup is not None:
-            result = startup.wait(timeout=60)
-            print(result.exit_code, result.stderr)
-        # Perform the application's own health check here when it is long-lived.
-else:
-    image = build_image_externally("Dockerfile")
-    with Sandbox(image=image) as sandbox:
-        # An image launch does not auto-start its configured CMD or ENTRYPOINT.
-        sandbox.commands.run("/srv/app --serve", background=True)
-```
-
-`check_direct_launch()` is diagnostic and returns reason codes such as
-`multi_stage`, `remote_add`, `no_from`, `unsupported_instruction`, and
-`unsupported_syntax`. `Sandbox(context=...)` parses strictly, while
-`parse_dockerfile(strict=False)` is diagnostic only. `apply_dockerfile()` also
-rejects a parsed result containing unsupported syntax.
-
-| Supported direct-launch subset | Rejected and requires an external build |
-| --- | --- |
-| Exactly one literal `FROM`, optionally `AS alias`; shell-form `RUN` | Multiple stages, `COPY --from`, `FROM` flags or variables, and exec-form `RUN` |
-| Shell-form local `COPY` and `ADD` paths: files, directories, `.`, and wildcards; literal `--chown`; literal local tar extraction for `ADD` | JSON-form `COPY`/`ADD`, remote `ADD` URLs, `--chmod`, `--link`, unknown flags, or build-time variable expansion |
-| Literal `ENV`, absolute `WORKDIR`, named `USER` values such as `app` or `root`, and `EXPOSE` metadata | Any `ARG`, relative `WORKDIR`, `USER user:group` or numeric UID/GID values, and `VOLUME`, `LABEL`, `HEALTHCHECK`, `SHELL`, `STOPSIGNAL`, `ONBUILD`, `MAINTAINER`, or unknown instructions |
-| Exec- or shell-form `CMD` and `ENTRYPOINT`, normalized and combined | — |
-
-A `DockerContext` exposes Dockerfile text plus structured `DockerContextEntry`
-values from `walk()`. Each entry has a relative POSIX `path`, `kind` of `file`
-or `directory`, and a permission-bit `mode` from `0o000` through `0o777`;
-custom contexts must expose files and every ancestor or empty directory.
-Custom contexts may implement `dockerfile_ignore()`: returning a
-`(diagnostic_name, bytes)` tuple supplies the active matcher, while only
-returning `None` falls back to the manifest-root `.dockerignore`; empty `bytes`
-still denote a present, higher-priority matcher. Dockerfiles and ignore files
-that belong to the filesystem context must still be enumerated by `walk()`.
-`LocalDockerContext` uses a local directory and rejects symbolic links. Before
-any sandbox operation, direct launch walks and validates the manifest, then applies
-Moby-compatible ordered ignore matching to files and directories. For a path-form
-Dockerfile, its adjacent `<Dockerfile>.dockerignore` is the active ignore file when
-it exists, including when it is empty.
-An inline Dockerfile creates no virtual context file, while a Dockerfile outside the
-context and its companion remain outside the manifest even when that companion supplies
-the active matcher. Dockerfiles, the root `.dockerignore`, and Dockerfile-specific
-ignore files are ordinary context files: `COPY`/`ADD` can select them unless the
-active ignore file explicitly excludes them. Direct launch then plans every
-`COPY`/`ADD` and materializes all selected files. Docker ignore
-patterns are cleaned like `filepath.Clean`, comments require `#` in column one,
-embedded `**` can span directories, and later `!` patterns can re-include
-descendants. Alphanumeric backslash escapes and nested POSIX character
-classes that Moby routes through its regular-expression engine are rejected
-rather than treated as literals. When a descendant is re-included beneath an
-ignored directory, its
-required directory ancestors remain selectable as virtual source directories;
-fully ignored directories remain unavailable. Selected directory entries create
-empty and nested directories, while each copied child file or directory has its
-own non-recursive mode restored. For a literal directory source, the source root
-itself is only a content container: the destination is created when needed, but
-does not inherit that source-root mode. A wildcard that matches a directory
-likewise copies its contents, rather than the matched directory name. Dockerfile
-`COPY`/`ADD` source patterns follow Go `filepath.Match`-style segment
-matching, so `**` has the same one-segment behavior as `*`; `[^a]`
-negates a character class while `[!a]` matches `!` or `a`. Backslash
-escapes are outside this strict source-pattern subset, and malformed classes fail
-closed. When one wildcard expands to multiple top-level sources after
-`.dockerignore` filtering, the destination must end in `/`. Paths and target
-collisions fail closed. `--chown` affects only files and directories created by
-the current instruction. Local tar `ADD` accepts only regular files
-and directories with safe paths, preserves tar member metadata, and always
-extracts as the builder/root identity before applying `--chown`. Remote `ADD`
-URLs are rejected; the SDK never fetches them. Secure local context opening
-requires platform support for directory-relative file descriptors and no-follow
-flags; unsupported platforms fail closed.
-
-Each launch executes `RUN`, `COPY`, and `ADD` again in a new sandbox. There is
-no snapshot or build cache. After instructions finish, the SDK polls **sandbox
-readiness** and dispatches the resolved `CMD`/`ENTRYPOINT` in the background.
-`Sandbox.startup_command` is a `CommandHandle | None`; use `wait()` for finite
-commands or `kill()` when needed. Construction confirms dispatch, not that an
-application remains running or passes a health check. Callers own
-application-specific readiness checks.
-
-For Dockerfiles outside this subset, or for build-once reuse, pre-build the
-image with your chosen build system and use `Sandbox(image=...)`. Then launch
-the desired command explicitly with `sandbox.commands.run(..., background=True)`;
-image configuration does not auto-start a process in this SDK path.
-
-Parsing uses [`dockerfile-parse`](https://github.com/containerbuildsystem/dockerfile-parse)
-(BSD-3-Clause). `.dockerignore` behavior follows
-[`moby/patternmatcher`](https://github.com/moby/patternmatcher) (Apache-2.0).
-The value post-processing approach was informed by the
-[E2B Python SDK](https://github.com/e2b-dev/E2B) (MIT).
 
 ### Experimental GPU and writable storage
 
@@ -531,6 +412,27 @@ OCI images can also be mounted read-only:
 mount = Mount(target="/opt/tools", image_url="ubuntu:24.04")
 ```
 
+## Experimental: launch from a Dockerfile
+> **Warning:** This first direct-launch release supports a strict, changing
+> Dockerfile subset. It is not a general-purpose Docker build.
+
+`FROM` supplies only the root filesystem; inherited OCI configuration is not
+applied. Precheck the context, then pass its launch configuration to `Sandbox`:
+
+```python
+from akernel_sdk import DockerfileLaunch, LocalDockerContext, Sandbox, check_direct_launch
+context = LocalDockerContext("Dockerfile", context_dir=".")
+if check_direct_launch(context).direct_launchable:
+    with Sandbox(dockerfile=DockerfileLaunch(context, run_timeout=300)) as sandbox:
+        pass
+```
+
+`RUN`, `COPY`, and `ADD` run on every launch without a snapshot or cache;
+unsupported Dockerfiles must be built externally. Read the complete contract,
+security boundaries, and supported syntax in
+[the Dockerfile launch guide](./docs/launch-from-dockerfile.md). See the
+[runnable example](./examples/dockerfile_launch.py).
+
 ## Resources and lifecycle
 
 `resources()` returns stable `NodeInfo` values rather than backend objects:
@@ -623,3 +525,7 @@ not part of the default test suite.
 | `Mount` | `target`, one source, and `type` |
 | `HttpReverseTunnel` | `target`, `reverse_port`, `listen_port`, `connect_timeout` |
 | `NetworkPolicy` | `block_network`, `dns_blacklist` |
+| `DockerfileLaunch` | `context`, `auto_start_cmd`, `run_timeout` |
+| `DockerContext` | Abstract Dockerfile and build-context source |
+| `DockerContextEntry` | `path`, `kind`, `mode` |
+| `LocalDockerContext` | Local Dockerfile and context implementation |

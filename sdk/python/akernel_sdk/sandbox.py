@@ -22,16 +22,19 @@ import ssl
 import urllib.request
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_env
 from ._backends.base import BackendSession, SandboxSpec
 from ._backends.registry import load_backend
-from ._dockercontext import DockerContext
 from ._sandbox_resources import normalize_xpu, validate_storage_mb
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
 from .pty import Pty
 from .types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config, SandboxInfo
+
+if TYPE_CHECKING:
+    from ._dockerfile import DockerfileLaunch
 
 _traefik_internal_ip_cache: str | None = None
 logger = logging.getLogger(__name__)
@@ -134,9 +137,7 @@ class Sandbox:
         xpu: str | None = None,
         storage_mb: int | None = None,
         network_policy: NetworkPolicy | None = None,
-        context: DockerContext | None = None,
-        auto_start_cmd: bool = True,
-        build_run_timeout: int = 600,
+        dockerfile: DockerfileLaunch | None = None,
     ) -> None:
         """Create and wait for a sandbox to become ready.
 
@@ -168,19 +169,12 @@ class Sandbox:
                 are validated against the selected runtime by the backend.
             network_policy: Optional creation-time network policy. Omitting it
                 leaves sandbox networking unrestricted.
-            context: A :class:`DockerContext` carrying a Dockerfile and build
-                context. ``FROM`` supplies only the root filesystem; its OCI
-                ENV, USER, WORKDIR, CMD and ENTRYPOINT configuration is not
-                inherited. The sandbox applies only state explicitly declared
-                in this Dockerfile, then executes build-time instructions
-                in-sandbox. Mutually exclusive with ``image`` and ``rootfs``.
-            auto_start_cmd: When ``context`` is given, wait for sandbox
-                readiness and dispatch CMD/ENTRYPOINT in the background after
-                build-time instructions complete. Construction confirms only
-                successful dispatch, not that the process remains running or
-                healthy. Default ``True``.
-            build_run_timeout: Per-``RUN`` timeout in seconds when ``context``
-                is given. Default ``600``.
+            dockerfile: Experimental Dockerfile launch configuration. ``FROM``
+                supplies only the root filesystem; its OCI ENV, USER, WORKDIR,
+                CMD and ENTRYPOINT configuration is not inherited. The sandbox
+                applies only state explicitly declared in this Dockerfile, then
+                executes build-time instructions in-sandbox. Mutually exclusive
+                with ``image`` and ``rootfs``.
 
         Raises:
             TypeError: An argument has an invalid type.
@@ -192,11 +186,14 @@ class Sandbox:
             raise ValueError("image must be a non-empty string")
         if rootfs is not None and not isinstance(rootfs, S3Config):
             raise TypeError("rootfs must be an S3Config")
-        if context is not None and not isinstance(context, DockerContext):
-            raise TypeError("context must be a DockerContext")
-        if sum(value is not None for value in (image, rootfs, context)) > 1:
+        if dockerfile is not None:
+            from ._dockerfile import DockerfileLaunch
+
+            if not isinstance(dockerfile, DockerfileLaunch):
+                raise TypeError("dockerfile must be a DockerfileLaunch")
+        if sum(value is not None for value in (image, rootfs, dockerfile)) > 1:
             raise ValueError(
-                "image, rootfs and context are mutually exclusive: at most one "
+                "image, rootfs and dockerfile are mutually exclusive: at most one "
                 "may be given"
             )
         if not isinstance(runtime, str):
@@ -258,10 +255,10 @@ class Sandbox:
                 )
 
         parsed_dockerfile = None
-        if context is not None:
+        if dockerfile is not None:
             from ._dockerfile import parse_dockerfile
 
-            parsed_dockerfile = parse_dockerfile(context, strict=True)
+            parsed_dockerfile = parse_dockerfile(dockerfile.context, strict=True)
             image = parsed_dockerfile.base_image
             if not isinstance(image, str) or not image.strip():
                 raise ValueError("Dockerfile base image must be a non-empty string")
@@ -312,15 +309,15 @@ class Sandbox:
             self._files = Filesystem(self._session.files)
             self._commands = Commands(self._session.commands)
             self._pty = Pty(self._id)
-            if context is not None and parsed_dockerfile is not None:
+            if dockerfile is not None and parsed_dockerfile is not None:
                 from ._dockerfile_runner import apply_dockerfile
 
                 apply_result = apply_dockerfile(
                     self,
                     parsed_dockerfile,
-                    context,
-                    auto_start_cmd=auto_start_cmd,
-                    run_timeout=build_run_timeout,
+                    dockerfile.context,
+                    auto_start_cmd=dockerfile.auto_start_cmd,
+                    run_timeout=dockerfile.run_timeout,
                 )
                 self._startup_command = apply_result.startup_command
         except Exception:
@@ -355,13 +352,13 @@ class Sandbox:
 
     @property
     def startup_command(self) -> CommandHandle | None:
-        """Background CMD/ENTRYPOINT handle for a context launch, if dispatched.
+        """Background CMD/ENTRYPOINT handle for a Dockerfile launch, if dispatched.
 
-        The handle is available only when context and auto_start_cmd are used
-        with a startup command. It is None for normal image/rootfs launches,
-        auto_start_cmd=False, or Dockerfiles without CMD or ENTRYPOINT.
-        Sandbox construction does not guarantee that the process remains
-        running or healthy after dispatch.
+        The handle is available only when ``DockerfileLaunch.auto_start_cmd``
+        is true and the Dockerfile declares a startup command. It is None for
+        normal image/rootfs launches, disabled startup dispatch, or Dockerfiles
+        without CMD or ENTRYPOINT. Sandbox construction does not guarantee that
+        the process remains running or healthy after dispatch.
         """
 
         return self._startup_command

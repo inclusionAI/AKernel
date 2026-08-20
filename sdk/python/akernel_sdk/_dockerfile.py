@@ -32,6 +32,35 @@ from ._dockercontext import DockerContext
 
 
 @dataclass(frozen=True)
+class DockerfileLaunch:
+    """Experimental immutable configuration for a Dockerfile sandbox launch.
+
+    Args:
+        context: Dockerfile and build context to apply in the sandbox.
+        auto_start_cmd: Dispatch the Dockerfile CMD/ENTRYPOINT after applying
+            build-time instructions. Defaults to ``True``.
+        run_timeout: Positive per-``RUN`` timeout in seconds. Defaults to
+            ``600``.
+    """
+
+    context: DockerContext
+    auto_start_cmd: bool = True
+    run_timeout: int = 600
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.context, DockerContext):
+            raise TypeError("context must be a DockerContext")
+        if not isinstance(self.auto_start_cmd, bool):
+            raise TypeError("auto_start_cmd must be a boolean")
+        if isinstance(self.run_timeout, bool) or not isinstance(
+            self.run_timeout, int
+        ):
+            raise TypeError("run_timeout must be an integer")
+        if self.run_timeout <= 0:
+            raise ValueError("run_timeout must be greater than zero")
+
+
+@dataclass(frozen=True)
 class FromInstruction:
     image: str
 
@@ -404,7 +433,9 @@ def parse_dockerfile(
 def check_direct_launch(
     context: DockerContext, *, strict: bool = False
 ) -> DockerfileCheckResult:
-    """Check whether ``Sandbox(context=...)`` can execute a Dockerfile safely."""
+    """Check whether ``Sandbox(dockerfile=DockerfileLaunch(...))`` can
+    execute a Dockerfile safely.
+    """
     try:
         parsed = parse_dockerfile(context, strict=strict)
     except DockerfileParseError as exc:
@@ -426,8 +457,9 @@ def check_direct_launch(
     warnings = list(parsed.warnings)
     if has_build and not parsed.unsupported:
         warnings.append(
-            "Dockerfile contains RUN/COPY/ADD; Sandbox(context=...) re-runs "
-            "them on every launch (no snapshot). For build-once reuse, "
+            "Dockerfile contains RUN/COPY/ADD; "
+            "Sandbox(dockerfile=DockerfileLaunch(...)) re-runs them on every "
+            "launch (no snapshot). For build-once reuse, "
             "pre-build the image and launch with Sandbox(image=...)."
         )
     if not parsed.unsupported:

@@ -12,11 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import os
 import unittest
 from unittest.mock import MagicMock, patch
 
-from akernel_sdk import HttpReverseTunnel, NetworkPolicy, S3Config, Sandbox
+from akernel_sdk import (
+    DockerfileLaunch,
+    HttpReverseTunnel,
+    NetworkPolicy,
+    S3Config,
+    Sandbox,
+)
 from akernel_sdk import sandbox as sandbox_module
 from akernel_sdk._dockercontext import LocalDockerContext
 from akernel_sdk._dockerfile import DockerfileBuildError, DockerfileParseError
@@ -324,6 +331,30 @@ class SandboxTest(unittest.TestCase):
         self.session.terminate.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
+    def test_dockerfile_signature_and_mutual_exclusion(self):
+        parameters = inspect.signature(Sandbox).parameters
+        self.assertIn("dockerfile", parameters)
+        self.assertNotIn("context", parameters)
+        self.assertNotIn("auto_start_cmd", parameters)
+        self.assertNotIn("build_run_timeout", parameters)
+
+        dockerfile = DockerfileLaunch(LocalDockerContext("FROM ubuntu\n"))
+        for kwargs in (
+            {"image": "ubuntu", "dockerfile": dockerfile},
+            {
+                "rootfs": S3Config("https://s3.example.com", "bucket", "rootfs"),
+                "dockerfile": dockerfile,
+            },
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+                    Sandbox(**kwargs)
+        with self.assertRaisesRegex(TypeError, "dockerfile"):
+            Sandbox(dockerfile=object())  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            Sandbox(context=LocalDockerContext("FROM ubuntu\n"))  # type: ignore[call-arg]
+        self.backend.create.assert_not_called()
+
     def test_dockerfile_context_is_strict_before_backend_creation(self):
         unsupported = (
             "ADD https://example.test/a /opt/",
@@ -345,11 +376,16 @@ class SandboxTest(unittest.TestCase):
                     else f"FROM ubuntu\n{instruction}\n"
                 )
                 with self.assertRaises(DockerfileParseError):
-                    Sandbox(context=LocalDockerContext(dockerfile))
+                    Sandbox(dockerfile=DockerfileLaunch(LocalDockerContext(dockerfile)))
         self.backend.create.assert_not_called()
 
     def test_dockerfile_context_uses_base_image_and_applies_after_facades(self):
         context = LocalDockerContext("FROM ubuntu:24.04\nRUN true\n")
+        dockerfile = DockerfileLaunch(
+            context,
+            auto_start_cmd=False,
+            run_timeout=300,
+        )
         apply_result = DockerfileApplyResult(
             start_cmd=None,
             startup_command=None,
@@ -360,7 +396,7 @@ class SandboxTest(unittest.TestCase):
             "akernel_sdk._dockerfile_runner.apply_dockerfile",
             return_value=apply_result,
         ) as apply:
-            sandbox = Sandbox(context=context)
+            sandbox = Sandbox(dockerfile=dockerfile)
 
         spec = self.backend.create.call_args.args[0]
         self.assertEqual(spec.image, "ubuntu:24.04")
@@ -369,8 +405,8 @@ class SandboxTest(unittest.TestCase):
         self.assertIsNotNone(sandbox._commands)
         self.assertIsNotNone(sandbox._pty)
         self.assertIs(apply.call_args.args[2], context)
-        self.assertTrue(apply.call_args.kwargs["auto_start_cmd"])
-        self.assertEqual(apply.call_args.kwargs["run_timeout"], 600)
+        self.assertFalse(apply.call_args.kwargs["auto_start_cmd"])
+        self.assertEqual(apply.call_args.kwargs["run_timeout"], 300)
         self.assertIsNone(sandbox.startup_command)
         sandbox.kill()
 
@@ -387,7 +423,7 @@ class SandboxTest(unittest.TestCase):
             "akernel_sdk._dockerfile_runner.apply_dockerfile",
             return_value=apply_result,
         ):
-            sandbox = Sandbox(context=context)
+            sandbox = Sandbox(dockerfile=DockerfileLaunch(context))
 
         self.assertIs(sandbox.startup_command, startup_handle)
         sandbox.kill()
@@ -406,7 +442,12 @@ class SandboxTest(unittest.TestCase):
                     "akernel_sdk._dockerfile_runner.apply_dockerfile",
                     return_value=apply_result,
                 ):
-                    sandbox = Sandbox(context=context, auto_start_cmd=auto_start_cmd)
+                    sandbox = Sandbox(
+                        dockerfile=DockerfileLaunch(
+                            context,
+                            auto_start_cmd=auto_start_cmd,
+                        )
+                    )
                 self.assertIsNone(sandbox.startup_command)
                 sandbox.kill()
 
@@ -421,7 +462,9 @@ class SandboxTest(unittest.TestCase):
         ):
             with self.assertRaises(DockerfileBuildError) as raised:
                 Sandbox(
-                    context=LocalDockerContext('FROM ubuntu\nCMD ["server"]\n'),
+                    dockerfile=DockerfileLaunch(
+                        LocalDockerContext('FROM ubuntu\nCMD ["server"]\n')
+                    ),
                     detached=True,
                 )
 
@@ -437,7 +480,9 @@ class SandboxTest(unittest.TestCase):
         ):
             with self.assertRaises(DockerfileBuildError) as raised:
                 Sandbox(
-                    context=LocalDockerContext("FROM ubuntu\nRUN false\n"),
+                    dockerfile=DockerfileLaunch(
+                        LocalDockerContext("FROM ubuntu\nRUN false\n")
+                    ),
                     detached=True,
                 )
 

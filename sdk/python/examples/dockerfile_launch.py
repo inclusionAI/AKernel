@@ -35,7 +35,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from akernel_sdk import LocalDockerContext, Sandbox, check_direct_launch
+from akernel_sdk import DockerfileLaunch, LocalDockerContext, Sandbox, check_direct_launch
 
 
 def _precheck(context: LocalDockerContext) -> None:
@@ -106,7 +106,7 @@ CMD ["python3", "/srv/core/app.py"]
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
         _precheck(context)
 
-        with Sandbox(context=context, build_run_timeout=300) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context, run_timeout=300)) as sandbox:
             startup = sandbox.startup_command
             assert startup is not None
             result = startup.wait(timeout=60)
@@ -165,7 +165,7 @@ CMD ["ignored-argv-zero", "entrypoint+cmd merged"]
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
         _precheck(context)
 
-        with Sandbox(context=context) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context)) as sandbox:
             startup = sandbox.startup_command
             assert startup is not None
             result = startup.wait(timeout=60)
@@ -194,7 +194,7 @@ def section_entrypoint_only() -> None:
         )
         _precheck(context)
 
-        with Sandbox(context=context) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context)) as sandbox:
             startup = sandbox.startup_command
             assert startup is not None
             result = startup.wait(timeout=60)
@@ -215,7 +215,7 @@ def section_shell_cmd() -> None:
         )
         _precheck(context)
 
-        with Sandbox(context=context) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context)) as sandbox:
             startup = sandbox.startup_command
             assert startup is not None
             result = startup.wait(timeout=60)
@@ -239,7 +239,7 @@ def section_shell_entrypoint_ignores_cmd() -> None:
         )
         _precheck(context)
 
-        with Sandbox(context=context) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context)) as sandbox:
             startup = sandbox.startup_command
             assert startup is not None
             result = startup.wait(timeout=60)
@@ -264,7 +264,7 @@ def section_auto_start_disabled() -> None:
         )
         _precheck(context)
 
-        with Sandbox(context=context, auto_start_cmd=False) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context, auto_start_cmd=False)) as sandbox:
             assert sandbox.startup_command is None
             absent = sandbox.commands.run("test ! -e /tmp/disabled-start.out")
             assert absent.exit_code == 0, absent.stderr
@@ -285,7 +285,7 @@ COPY --chown=myuser:myuser payload.txt /data/payload.txt
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
         _precheck(context)
 
-        with Sandbox(context=context) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context)) as sandbox:
             assert sandbox.startup_command is None
             owner = sandbox.commands.run("stat -c '%U:%G' /data/payload.txt")
             assert owner.exit_code == 0, owner.stderr
@@ -317,7 +317,7 @@ def section_add_tar() -> None:
         )
         _precheck(context)
 
-        with Sandbox(context=context) as sandbox:
+        with Sandbox(dockerfile=DockerfileLaunch(context)) as sandbox:
             assert sandbox.startup_command is None
             listing = sandbox.commands.run("find /opt/app -type f -printf '%P\n'")
             assert listing.exit_code == 0, listing.stderr
