@@ -30,6 +30,8 @@ tunnels. The project overview and deployment quick start are in
 - `sdk/python/` - AKernel Python SDK and CLI.
 - `sdk/python/akernel_sdk/` - SDK implementation for `Sandbox`, commands,
   filesystem, PTY support, instance plumbing, and CLI helpers.
+- `sdk/python/akernel_sdk/_dockerfile_launch.py` - lightweight public
+  Dockerfile direct-launch configuration, independent of the parser and backend.
 - `sdk/python/examples/` - maintained AKernel SDK examples.
 - `sdk/python/tests/` - maintained AKernel SDK tests.
 - `src/yuanrong/` - pinned openYuanRong mirror checkout, including its
@@ -350,9 +352,10 @@ of both native packages; all native conversions belong under
 Dockerfile direct launch is a supported AKernel SDK capability through
 `DockerContext` and
 `Sandbox(dockerfile=DockerfileLaunch(context=..., auto_start_cmd=..., run_timeout=...))`.
-This API will not be deprecated. Future releases may expand the documented
-strict subset only through backward-compatible additions; unsupported inputs
-continue to fail closed. Read
+The capability will remain available. Its documented strict subset evolves
+incrementally with production experience, while unsupported inputs continue to
+fail closed. The specific API surface may evolve; material changes require
+documentation and migration guidance. Read
 [`sdk/python/docs/launch-from-dockerfile.md`](./sdk/python/docs/launch-from-dockerfile.md)
 before changing this path. `FROM` supplies only the root filesystem; inherited
 OCI configuration is not applied. Runtime availability and compatibility remain

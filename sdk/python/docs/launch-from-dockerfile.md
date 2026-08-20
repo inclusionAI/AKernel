@@ -1,9 +1,9 @@
 # Launch a sandbox from a Dockerfile
 
-Dockerfile direct launch is a supported, currently available AKernel SDK
-capability. This API will not be deprecated and is not scheduled for removal.
-Future releases may expand the documented strict subset through
-backward-compatible additions; unsupported inputs continue to fail closed. It
+Dockerfile direct launch is a supported AKernel SDK capability and will remain
+available. Its documented strict subset evolves incrementally with production
+experience; unsupported inputs continue to fail closed. The specific API surface
+may evolve, with documentation and migration guidance for material changes. It
 is not a general-purpose Docker build facility and does not replace Docker,
 BuildKit, a registry, or an external image build pipeline.
 

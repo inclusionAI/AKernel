@@ -29,38 +29,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ._dockercontext import DockerContext
-
-
-@dataclass(frozen=True)
-class DockerfileLaunch:
-    """Immutable supported configuration for Dockerfile direct launch.
-
-    Dockerfile direct launch accepts the documented strict subset. Unsupported
-    inputs fail closed.
-
-    Args:
-        context: Dockerfile and build context to apply in the sandbox.
-        auto_start_cmd: Dispatch the Dockerfile CMD/ENTRYPOINT after applying
-            build-time instructions. Defaults to ``True``.
-        run_timeout: Positive per-``RUN`` timeout in seconds. Defaults to
-            ``600``.
-    """
-
-    context: DockerContext
-    auto_start_cmd: bool = True
-    run_timeout: int = 600
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.context, DockerContext):
-            raise TypeError("context must be a DockerContext")
-        if not isinstance(self.auto_start_cmd, bool):
-            raise TypeError("auto_start_cmd must be a boolean")
-        if isinstance(self.run_timeout, bool) or not isinstance(
-            self.run_timeout, int
-        ):
-            raise TypeError("run_timeout must be an integer")
-        if self.run_timeout <= 0:
-            raise ValueError("run_timeout must be greater than zero")
+from ._dockerfile_launch import DockerfileLaunch  # noqa: F401
 
 
 @dataclass(frozen=True)

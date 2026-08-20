@@ -30,6 +30,8 @@ class PublicTypesTest(unittest.TestCase):
         code = """
 import os
 import sys
+from typing import get_type_hints
+
 os.environ.pop('YR_HTTP_CONNECTION_NUM', None)
 import akernel_sdk
 import akernel_sdk.cli
@@ -37,10 +39,21 @@ assert 'yr' not in sys.modules
 assert 'yr_sandbox' not in sys.modules
 assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
 assert 'akernel_sdk._dockerfile' not in sys.modules
-from akernel_sdk import Sandbox
+from akernel_sdk import DockerfileLaunch, Sandbox
+assert 'akernel_sdk._dockerfile_launch' in sys.modules
+assert 'akernel_sdk._dockercontext' in sys.modules
 assert 'akernel_sdk._dockerfile' not in sys.modules
-from akernel_sdk import DockerfileLaunch
-assert 'akernel_sdk._dockerfile' in sys.modules
+assert 'dockerfile_parse' not in sys.modules
+assert 'yr' not in sys.modules
+assert 'yr_sandbox' not in sys.modules
+assert 'akernel_sdk._backends.openyuanrong_sandbox' not in sys.modules
+assert 'akernel_sdk._backends.openyuanrong_sdk' not in sys.modules
+assert 'akernel_sdk._backends.openyuanrong_sdk_impl' not in sys.modules
+assert get_type_hints(Sandbox.__init__)['dockerfile'] == DockerfileLaunch | None
+from akernel_sdk._dockerfile import DockerfileLaunch as CompatDockerfileLaunch
+assert CompatDockerfileLaunch is DockerfileLaunch
+from akernel_sdk._dockerfile_runner import apply_dockerfile
+assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
 """
         result = subprocess.run(
             [sys.executable, "-c", code],
