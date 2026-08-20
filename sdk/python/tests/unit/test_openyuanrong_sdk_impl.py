@@ -42,6 +42,7 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
             "xpu": None,
             "storage_mb": None,
             "network_policy": None,
+            "extra_config": {},
         }
         values.update(overrides)
         return _impl.build_options(**values)
@@ -136,6 +137,17 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
         self.assertEqual(
             json.loads(options.custom_extensions["network_policy"]),
             {"dnsBlacklist": ["github.com", "*.github.com"]},
+        )
+
+    def test_extra_config_uses_custom_extension_wire_format(self):
+        options = self.build_options(
+            runtime="custom-runtime",
+            extra_config={"featureFlag": True, "labels": ["one", "two"]},
+        )
+
+        self.assertEqual(
+            json.loads(options.custom_extensions["extra_config"]),
+            {"featureFlag": True, "labels": ["one", "two"]},
         )
 
     def test_node_info_conversion(self):

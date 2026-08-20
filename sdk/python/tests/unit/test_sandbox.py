@@ -73,9 +73,41 @@ class SandboxTest(unittest.TestCase):
         self.assertIsNone(spec.xpu)
         self.assertIsNone(spec.storage_mb)
         self.assertIsNone(spec.network_policy)
+        self.assertEqual(dict(spec.extra_config), {})
         sandbox.kill()
         self.session.terminate.assert_called_once_with()
         self.session.close.assert_called_once_with()
+
+    def test_extra_config_is_validated_and_defensively_copied(self):
+        labels = ["worker"]
+        requested = {"featureFlag": True, "nested": {"labels": labels}}
+
+        sandbox = Sandbox(extra_config=requested)
+        spec = self.backend.create.call_args.args[0]
+        requested["featureFlag"] = False
+        labels.append("mutated")
+
+        self.assertEqual(
+            dict(spec.extra_config),
+            {"featureFlag": True, "nested": {"labels": ["worker"]}},
+        )
+        sandbox.kill()
+
+    def test_extra_config_rejects_non_json_values(self):
+        invalid = (
+            (["not", "a", "mapping"], TypeError),
+            ({1: "non-string key"}, TypeError),
+            ({"value": object()}, TypeError),
+            ({"value": float("inf")}, ValueError),
+        )
+        circular: dict[str, object] = {}
+        circular["self"] = circular
+        invalid += ((circular, ValueError),)
+
+        for value, error_type in invalid:
+            with self.subTest(value=value), self.assertRaises(error_type):
+                Sandbox(extra_config=value)
+        self.backend.create.assert_not_called()
 
     def test_kill_is_idempotent(self):
         sandbox = Sandbox()

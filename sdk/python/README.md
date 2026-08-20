@@ -103,6 +103,7 @@ Sandbox(
     storage_mb: int | None = None,
     network_policy: NetworkPolicy | None = None,
     dockerfile: DockerfileLaunch | None = None,
+    extra_config: Mapping[str, object] | None = None,
 )
 ```
 
@@ -200,9 +201,10 @@ configuration, as described in the
 ## Sandbox runtimes
 
 AKernel uses the gVisor `runsc` runtime when `runtime` is omitted. Runtime
-identifiers are forwarded to the selected backend instead of being restricted
-by an SDK-owned registry. The bundled deployment advertises `runsc` and Kata
-Containers:
+identifiers and optional `extra_config` are forwarded to the selected backend
+instead of being restricted or interpreted by an SDK-owned registry. Values in
+`extra_config` must be JSON-compatible. The bundled deployment advertises
+`runsc` and Kata Containers by default:
 
 ```python
 default_sandbox = Sandbox()
@@ -214,6 +216,32 @@ Kata requires at least one cluster node whose sandboxd instance successfully
 initialized the Kata runtime with a usable `/dev/kvm` device. Nodes without
 KVM remain available for runsc workloads and do not advertise Kata. A runtime
 that is unavailable in the cluster fails scheduling or backend validation.
+
+The all-in-one image can optionally package a native Linux `runc` backend.
+Operators build it with `AKERNEL_ENABLE_RUNC=true` and enable it explicitly
+because it provides host-kernel container isolation, not the user-space kernel
+boundary of runsc. Guided cloud profiles use
+`make config ENABLE_RUNC=true`; standalone deployments use
+`AKERNEL_ENABLE_RUNC=true`, and direct Helm deployments use
+`node.config.sandboxd.enableRunc=true`. After it is advertised:
+
+```python
+with Sandbox(runtime="runc") as sandbox:
+    print(sandbox.commands.run("uname -s").stdout)
+
+with Sandbox(
+    runtime="runc",
+    extra_config={"enableKVM": True},
+) as sandbox_with_kvm:
+    print(sandbox_with_kvm.commands.run("test -c /dev/kvm").exit_code)
+```
+
+`enableKVM` is owned by the runc backend and requires a usable `/dev/kvm` on
+the selected node. Runc supports OCI/EROFS root filesystems, read-only mounts,
+networking, command execution, and the default writable overlay. Experimental
+GPU requests and explicit `storage_mb` quotas remain runsc-only. See the
+[sandbox runtime comparison](../../src/sandboxd/doc/runtime.md) for the
+runtime capability boundaries.
 
 See [`examples/sandbox_runtime.py`](./examples/sandbox_runtime.py) for a runnable example.
 

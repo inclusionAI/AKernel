@@ -156,6 +156,7 @@ def build_options(
     xpu: str | None,
     storage_mb: int | None,
     network_policy: NetworkPolicy | None,
+    extra_config: Mapping[str, object],
 ) -> Any:
     """Translate the stable SDK configuration to openYuanrong options."""
 
@@ -206,6 +207,8 @@ def build_options(
         options.custom_extensions["network_policy"] = json.dumps(
             network_policy.to_dict()
         )
+    if extra_config:
+        options.custom_extensions["extra_config"] = json.dumps(dict(extra_config))
 
     forwarded = list(port_forwardings)
     if reverse_tunnel is not None:

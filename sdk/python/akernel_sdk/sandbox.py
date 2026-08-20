@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import ssl
 import urllib.request
 from collections.abc import Mapping, Sequence
@@ -66,6 +67,60 @@ def _normalize_mounts(mounts: Sequence[Mount] | None) -> list[Mount]:
     if not all(isinstance(mount, Mount) for mount in result):
         raise TypeError("mounts must contain only Mount objects")
     return result
+
+
+def _normalize_extra_config(
+    extra_config: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    """Validate and defensively copy runtime-owned JSON configuration."""
+
+    if extra_config is None:
+        return MappingProxyType({})
+    if not isinstance(extra_config, Mapping):
+        raise TypeError("extra_config must be a mapping")
+
+    active_containers: set[int] = set()
+
+    def normalize(value: object, path: str) -> object:
+        if value is None or isinstance(value, (bool, int, str)):
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise ValueError(f"{path} must contain only finite numbers")
+            return value
+        if isinstance(value, Mapping):
+            marker = id(value)
+            if marker in active_containers:
+                raise ValueError("extra_config must not contain circular references")
+            active_containers.add(marker)
+            try:
+                result: dict[str, object] = {}
+                for key, item in value.items():
+                    if not isinstance(key, str):
+                        raise TypeError(f"{path} keys must be strings")
+                    result[key] = normalize(item, f"{path}.{key}")
+                return result
+            finally:
+                active_containers.remove(marker)
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            marker = id(value)
+            if marker in active_containers:
+                raise ValueError("extra_config must not contain circular references")
+            active_containers.add(marker)
+            try:
+                return [
+                    normalize(item, f"{path}[{index}]")
+                    for index, item in enumerate(value)
+                ]
+            finally:
+                active_containers.remove(marker)
+        raise TypeError(f"{path} contains a non-JSON-compatible value")
+
+    normalized = normalize(extra_config, "extra_config")
+    assert isinstance(normalized, dict)
+    return MappingProxyType(normalized)
 
 
 def _validate_integer(
@@ -135,6 +190,7 @@ class Sandbox:
         storage_mb: int | None = None,
         network_policy: NetworkPolicy | None = None,
         dockerfile: DockerfileLaunch | None = None,
+        extra_config: Mapping[str, object] | None = None,
     ) -> None:
         """Create and wait for a sandbox to become ready.
 
@@ -177,6 +233,9 @@ class Sandbox:
                 explicitly declared in this Dockerfile, then executes build-time
                 instructions in-sandbox. Mutually exclusive with ``image`` and
                 ``rootfs``.
+            extra_config: Optional JSON-compatible configuration owned by the
+                selected runtime. AKernel validates and forwards it without
+                interpreting runtime-specific fields.
 
         Raises:
             TypeError: An argument has an invalid type.
@@ -244,6 +303,7 @@ class Sandbox:
 
         ports = _normalize_ports(port_forwardings)
         mount_list = _normalize_mounts(mounts)
+        normalized_extra_config = _normalize_extra_config(extra_config)
         if reverse_tunnel is not None:
             conflicts = set(ports).intersection(
                 {reverse_tunnel.reverse_port, reverse_tunnel.listen_port}
@@ -302,6 +362,7 @@ class Sandbox:
                 if network_policy is None or network_policy.is_empty
                 else network_policy
             ),
+            extra_config=normalized_extra_config,
         )
         self._session = load_backend().create(spec)
         try:

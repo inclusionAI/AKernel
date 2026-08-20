@@ -76,6 +76,7 @@ class SandboxSpec:
     xpu: str | None
     storage_mb: int | None
     network_policy: NetworkPolicy | None
+    extra_config: Mapping[str, object]
 
 
 class CommandsDriver(Protocol):

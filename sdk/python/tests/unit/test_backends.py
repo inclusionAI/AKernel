@@ -63,6 +63,7 @@ def _spec(**overrides):
         "xpu": None,
         "storage_mb": None,
         "network_policy": None,
+        "extra_config": MappingProxyType({}),
     }
     values.update(overrides)
     return SandboxSpec(**values)
@@ -175,6 +176,26 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
 
         self.assertEqual(sandbox_type.call_args.kwargs["runtime"], "runsc")
         self.assertIsNone(sandbox_type.call_args.kwargs["rootfs"])
+
+    def test_extra_config_is_forwarded_to_native_sdk(self):
+        native = MagicMock()
+        native.id = "default-custom-runtime"
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            self.backend.create(
+                _spec(
+                    runtime="custom-runtime",
+                    extra_config=MappingProxyType({"featureFlag": True}),
+                )
+            )
+
+        self.assertEqual(
+            sandbox_type.call_args.kwargs["extra_config"],
+            {"featureFlag": True},
+        )
 
     def test_explicit_kata_image_is_forwarded_to_native_sdk(self):
         native = MagicMock()

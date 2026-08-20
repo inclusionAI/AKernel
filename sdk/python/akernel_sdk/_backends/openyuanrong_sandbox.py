@@ -373,6 +373,7 @@ class OpenYuanRongSandboxBackend:
                 xpu=spec.xpu,
                 storage_mb=spec.storage_mb,
                 network=network,
+                extra_config=dict(spec.extra_config),
                 create_timeout=create_timeout,
             )
         except Exception as error:
