@@ -39,6 +39,7 @@ from akernel_sdk._dockerfile import (
     CmdInstruction,
     CopyInstruction,
     DockerfileBuildError,
+    DockerfileLaunch,
     DockerfileParseError,
     RunInstruction,
     UserInstruction,
@@ -188,6 +189,43 @@ class _MemoryDockerContext(DockerContext):
             DockerContextEntry(path, "file", 0o644)
             for path in sorted(self._files)
         )
+
+
+class TestDockerfileLaunch(unittest.TestCase):
+    def test_defaults_and_custom_values(self):
+        context = LocalDockerContext("FROM ubuntu\n")
+        defaults = DockerfileLaunch(context)
+        self.assertIs(defaults.context, context)
+        self.assertTrue(defaults.auto_start_cmd)
+        self.assertEqual(defaults.run_timeout, 600)
+
+        custom = DockerfileLaunch(
+            context,
+            auto_start_cmd=False,
+            run_timeout=300,
+        )
+        self.assertFalse(custom.auto_start_cmd)
+        self.assertEqual(custom.run_timeout, 300)
+
+    def test_is_frozen(self):
+        launch = DockerfileLaunch(LocalDockerContext("FROM ubuntu\n"))
+        with self.assertRaisesRegex(AttributeError, "cannot assign"):
+            launch.run_timeout = 300  # type: ignore[misc]
+
+    def test_rejects_invalid_values(self):
+        context = LocalDockerContext("FROM ubuntu\n")
+        with self.assertRaisesRegex(TypeError, "context"):
+            DockerfileLaunch(object())  # type: ignore[arg-type]
+        with self.assertRaisesRegex(TypeError, "auto_start_cmd"):
+            DockerfileLaunch(context, auto_start_cmd=1)  # type: ignore[arg-type]
+        for timeout in (True, 1.5):
+            with self.subTest(timeout=timeout):
+                with self.assertRaisesRegex(TypeError, "run_timeout"):
+                    DockerfileLaunch(context, run_timeout=timeout)  # type: ignore[arg-type]
+        for timeout in (0, -1):
+            with self.subTest(timeout=timeout):
+                with self.assertRaisesRegex(ValueError, "run_timeout"):
+                    DockerfileLaunch(context, run_timeout=timeout)
 
 
 class TestParseDockerfile(unittest.TestCase):

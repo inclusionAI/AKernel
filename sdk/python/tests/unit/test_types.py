@@ -36,6 +36,11 @@ import akernel_sdk.cli
 assert 'yr' not in sys.modules
 assert 'yr_sandbox' not in sys.modules
 assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
+assert 'akernel_sdk._dockerfile' not in sys.modules
+from akernel_sdk import Sandbox
+assert 'akernel_sdk._dockerfile' not in sys.modules
+from akernel_sdk import DockerfileLaunch
+assert 'akernel_sdk._dockerfile' in sys.modules
 """
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -71,6 +76,7 @@ assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
                 "UnsupportedBackendFeatureError",
                 "BackendOperationError",
                 "DockerContext",
+                "DockerfileLaunch",
                 "DockerContextEntry",
                 "LocalDockerContext",
                 "parse_dockerfile",
