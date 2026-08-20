@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -217,12 +216,14 @@ class _Session:
         self,
         sandbox: Any,
         spec: SandboxSpec,
+        connection: Any,
     ) -> None:
         self.id = str(sandbox.id)
         self.commands = _CommandsDriver(sandbox.commands)
         self.files = _FilesystemDriver(sandbox.files)
         self._sandbox = sandbox
         self._spec = spec
+        self._connection = connection
         self._terminated = False
         self._closed = False
 
@@ -255,7 +256,7 @@ class _Session:
         # client, so a failed deletion remains retryable after local cleanup.
         self.close()
         try:
-            yr_sandbox.Sandbox.delete(self.id)
+            yr_sandbox.Sandbox.delete(self.id, connection=self._connection)
         except Exception as error:
             raise _convert_error("terminate sandbox", error) from error
         self._terminated = True
@@ -284,13 +285,13 @@ class OpenYuanRongSandboxBackend:
     )
 
     def __init__(self, config: BackendConfig) -> None:
-        os.environ["YR_SERVER_ADDRESS"] = config.api_endpoint.authority()
-        os.environ["YR_TLS"] = "1" if config.api_endpoint.use_tls else "0"
-        os.environ["YR_GATEWAY_ADDRESS"] = config.gateway_endpoint.authority()
-        os.environ["YR_GATEWAY_TLS"] = (
-            "1" if config.gateway_endpoint.use_tls else "0"
+        self._connection = yr_sandbox.ConnectionConfig(
+            server_address=config.api_endpoint.authority(),
+            token=config.token,
+            use_tls=config.api_endpoint.use_tls,
+            gateway_address=config.gateway_endpoint.authority(),
+            gateway_use_tls=config.gateway_endpoint.use_tls,
         )
-        os.environ["YR_TOKEN"] = config.token
 
     def _validate(self, spec: SandboxSpec) -> None:
         tunnel = spec.reverse_tunnel
@@ -372,17 +373,22 @@ class OpenYuanRongSandboxBackend:
                 node_id=spec.node_id,
                 xpu=spec.xpu,
                 storage_mb=spec.storage_mb,
+                storage_limit_mb=spec.storage_mb or 0,
                 network=network,
                 create_timeout=create_timeout,
+                connection=self._connection,
             )
         except Exception as error:
             raise _convert_error("create sandbox", error) from error
-        return _Session(sandbox, spec)
+        return _Session(sandbox, spec, self._connection)
 
     def delete_named(self, name: str) -> None:
         sandbox_id = f"{self.namespace}-{name}"
         try:
-            yr_sandbox.Sandbox.delete(sandbox_id)
+            yr_sandbox.Sandbox.delete(
+                sandbox_id,
+                connection=self._connection,
+            )
         except Exception as error:
             raise _convert_error(f"delete sandbox {name!r}", error) from error
 

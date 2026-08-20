@@ -140,12 +140,18 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         self.backend = openyuanrong_sandbox.OpenYuanRongSandboxBackend(self.config)
 
-    def test_connection_config_maps_to_yr_environment(self):
-        self.assertEqual(os.environ["YR_SERVER_ADDRESS"], "api.example:443")
-        self.assertEqual(os.environ["YR_TLS"], "1")
-        self.assertEqual(os.environ["YR_GATEWAY_ADDRESS"], "gateway.example:80")
-        self.assertEqual(os.environ["YR_GATEWAY_TLS"], "0")
-        self.assertEqual(os.environ["YR_TOKEN"], "secret")
+    def test_connection_config_is_explicit_and_does_not_mutate_environment(self):
+        connection = self.backend._connection
+        self.assertIsInstance(
+            connection,
+            openyuanrong_sandbox.yr_sandbox.ConnectionConfig,
+        )
+        self.assertEqual(connection.server_address, "api.example:443")
+        self.assertTrue(connection.use_tls)
+        self.assertEqual(connection.gateway_address, "gateway.example:80")
+        self.assertFalse(connection.gateway_use_tls)
+        self.assertEqual(connection.token, "secret")
+        self.assertFalse(any(name.startswith("YR_") for name in os.environ))
 
     def test_runtime_identifier_without_explicit_rootfs_is_forwarded(self):
         native = MagicMock()
@@ -251,6 +257,7 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(kwargs["upstream"], "https://service.example")
         self.assertEqual(kwargs["create_timeout"], 60)
         self.assertEqual(kwargs["node_id"], "node-1")
+        self.assertIs(kwargs["connection"], self.backend._connection)
 
         self.assertEqual(
             session.commands.run("echo ok", envs=None, cwd=None, timeout=60),
@@ -295,6 +302,23 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(network.dns_blacklist, ("github.com", "*.github.com"))
         session.close()
 
+    def test_storage_mb_is_forwarded_as_reservation_and_hard_limit(self):
+        native = MagicMock()
+        native.id = "default-worker"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(_spec(storage_mb=256))
+
+        kwargs = sandbox_type.call_args.kwargs
+        self.assertEqual(kwargs["storage_mb"], 256)
+        self.assertEqual(kwargs["storage_limit_mb"], 256)
+        session.close()
+
     def test_terminate_forces_deletion_of_detached_native_sandbox(self):
         native = MagicMock()
         native.id = "default-worker"
@@ -309,7 +333,10 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             session.terminate()
             session.close()
 
-        sandbox_type.delete.assert_called_once_with("default-worker")
+        sandbox_type.delete.assert_called_once_with(
+            "default-worker",
+            connection=self.backend._connection,
+        )
         native.close.assert_called_once_with()
         native.kill.assert_not_called()
 
@@ -325,8 +352,8 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             "Sandbox",
             return_value=native,
         ) as sandbox_type:
-            sandbox_type.delete.side_effect = lambda _sandbox_id: lifecycle.append(
-                "delete"
+            sandbox_type.delete.side_effect = lambda _sandbox_id, **_kwargs: (
+                lifecycle.append("delete")
             )
             session = self.backend.create(_spec())
             session.terminate()
@@ -359,7 +386,10 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             session.terminate()
 
         self.assertEqual(sandbox_type.delete.call_count, 2)
-        sandbox_type.delete.assert_called_with("default-worker")
+        sandbox_type.delete.assert_called_with(
+            "default-worker",
+            connection=self.backend._connection,
+        )
         native.close.assert_called_once_with()
         native.kill.assert_not_called()
 
@@ -378,7 +408,10 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             session.terminate()
             session.close()
 
-        sandbox_type.delete.assert_called_once_with("default-anonymous")
+        sandbox_type.delete.assert_called_once_with(
+            "default-anonymous",
+            connection=self.backend._connection,
+        )
         native.close.assert_called_once_with()
         native.kill.assert_not_called()
 
@@ -400,7 +433,10 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             session.terminate()
 
         self.assertEqual(sandbox_type.delete.call_count, 2)
-        sandbox_type.delete.assert_called_with("default-anonymous")
+        sandbox_type.delete.assert_called_with(
+            "default-anonymous",
+            connection=self.backend._connection,
+        )
         native.kill.assert_not_called()
 
     def test_custom_reverse_tunnel_ports_are_forwarded(self):
@@ -441,7 +477,10 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             "delete",
         ) as delete:
             self.backend.delete_named("worker")
-        delete.assert_called_once_with("default-worker")
+        delete.assert_called_once_with(
+            "default-worker",
+            connection=self.backend._connection,
+        )
 
 
 class OpenYuanRongSdkBackendTest(unittest.TestCase):
