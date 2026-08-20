@@ -79,7 +79,7 @@ _LAZY_IMPORTS = {
     "PtyError": (".pty", "PtyError"),
     "resources": ("._resources", "resources"),
     "DockerContext": ("._dockercontext", "DockerContext"),
-    "DockerfileLaunch": ("._dockerfile", "DockerfileLaunch"),
+    "DockerfileLaunch": ("._dockerfile_launch", "DockerfileLaunch"),
     "DockerContextEntry": ("._dockercontext", "DockerContextEntry"),
     "LocalDockerContext": ("._dockercontext", "LocalDockerContext"),
     "parse_dockerfile": ("._dockerfile", "parse_dockerfile"),

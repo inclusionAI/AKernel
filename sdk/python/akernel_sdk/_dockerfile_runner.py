@@ -32,7 +32,7 @@ import tempfile
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from ._dockercontext import DockerContext, _ContextManifest
 from ._dockerfile import (
@@ -50,9 +50,7 @@ from ._dockerfile import (
     resolve_start_cmd,
 )
 from .commands import CommandHandle
-
-if TYPE_CHECKING:
-    from .sandbox import Sandbox
+from .sandbox import Sandbox
 
 
 @dataclass(frozen=True)

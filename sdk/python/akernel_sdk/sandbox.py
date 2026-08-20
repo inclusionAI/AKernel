@@ -22,19 +22,16 @@ import ssl
 import urllib.request
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
-from typing import TYPE_CHECKING
 
 from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_env
 from ._backends.base import BackendSession, SandboxSpec
 from ._backends.registry import load_backend
+from ._dockerfile_launch import DockerfileLaunch
 from ._sandbox_resources import normalize_xpu, validate_storage_mb
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
 from .pty import Pty
 from .types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config, SandboxInfo
-
-if TYPE_CHECKING:
-    from ._dockerfile import DockerfileLaunch
 
 _traefik_internal_ip_cache: str | None = None
 logger = logging.getLogger(__name__)
@@ -169,11 +166,13 @@ class Sandbox:
                 are validated against the selected runtime by the backend.
             network_policy: Optional creation-time network policy. Omitting it
                 leaves sandbox networking unrestricted.
-            dockerfile: Supported Dockerfile direct-launch configuration. This
-                API will not be deprecated; future releases may expand the
-                documented strict subset through backward-compatible additions,
-                and unsupported inputs fail closed. ``FROM`` supplies only the
-                root filesystem; its OCI ENV, USER, WORKDIR, CMD and ENTRYPOINT
+            dockerfile: Supported Dockerfile direct-launch configuration.
+                Dockerfile direct launch remains available as a supported
+                capability. Its documented strict subset evolves incrementally
+                with production experience; unsupported inputs fail closed. The
+                specific API surface may evolve, with documentation and migration
+                guidance for material changes. ``FROM`` supplies only the root
+                filesystem; its OCI ENV, USER, WORKDIR, CMD and ENTRYPOINT
                 configuration is not inherited. The sandbox applies only state
                 explicitly declared in this Dockerfile, then executes build-time
                 instructions in-sandbox. Mutually exclusive with ``image`` and
@@ -190,8 +189,6 @@ class Sandbox:
         if rootfs is not None and not isinstance(rootfs, S3Config):
             raise TypeError("rootfs must be an S3Config")
         if dockerfile is not None:
-            from ._dockerfile import DockerfileLaunch
-
             if not isinstance(dockerfile, DockerfileLaunch):
                 raise TypeError("dockerfile must be a DockerfileLaunch")
         if sum(value is not None for value in (image, rootfs, dockerfile)) > 1:

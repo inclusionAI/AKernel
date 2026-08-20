@@ -414,10 +414,11 @@ mount = Mount(target="/opt/tools", image_url="ubuntu:24.04")
 
 ## Launch from a Dockerfile
 
-Dockerfile direct launch is a supported AKernel SDK capability. This API will
-not be deprecated. Future releases may expand the documented strict subset
-through backward-compatible additions; unsupported inputs continue to fail
-closed. It is not a general-purpose Docker build.
+Dockerfile direct launch is a supported AKernel SDK capability and will remain
+available. Its documented strict subset evolves incrementally with production
+experience; unsupported inputs continue to fail closed. The specific API surface
+may evolve, with documentation and migration guidance for material changes. It
+is not a general-purpose Docker build.
 
 `FROM` supplies only the root filesystem; inherited OCI configuration is not
 applied. Precheck the context, then pass its launch configuration to `Sandbox`:
