@@ -184,6 +184,11 @@ fsync enabled and uses persistent storage by default. Production environments
 that require etcd high availability should point AKernel at an externally
 managed multi-member etcd cluster instead of increasing `etcd.replicas`.
 
+The chart runs `gcr.io/etcd-development/etcd:v3.6.8` directly as UID 1001. The
+official image intentionally has no shell, so a separate BusyBox init container
+prepares ownership and permissions on the mounted `/etcd` volume before the
+etcd process starts.
+
 The core chart defaults master, frontend, and node to the same all-in-one image:
 
 ```yaml
@@ -301,10 +306,25 @@ through its own LoadBalancer when `install_monitor=true`. Set
 `install_dragonfly=true` to install the pinned official Dragonfly chart and
 inject its seed-client proxy into the node runtime configuration.
 
-Only the AKernel all-in-one image is pushed to the registry selected by
-`make config`. etcd, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox use
-their pinned official public images by default. Set the per-component image
-overrides when a private cluster requires mirrored third-party images.
+`make push` pushes the all-in-one image and mirrors the official etcd and
+BusyBox images to the image namespace selected by `make config`. For example,
+`registry.example.com/akernel/all-in-one:<tag>` produces sibling repositories
+`registry.example.com/akernel/etcd:v3.6.8` and
+`registry.example.com/akernel/busybox:1.37.0-musl`. Monitoring and Dragonfly
+images remain separate; set their registry overrides when private mirrors are
+required.
+
+> **Release note.** When `IMAGE_REPOSITORY` points at the public
+> `akerneldev/all-in-one` namespace (the default for users who consume AKernel's
+> published images instead of mirroring), `make config` writes
+> `akerneldev/etcd:v3.6.8` and `akerneldev/busybox:1.37.0-musl` into the profile.
+> These are mirrors of the pinned upstream images. A release that uses this
+> profile must run `make push` so the sibling repositories exist, otherwise
+> etcd, its permissions init container, or `/internal-stats` will fail with
+> `ImagePullBackOff`. `make push` pushes the already-built all-in-one first,
+> then prepares and pushes the dependency images, so a build-host failure to
+> reach `gcr.io`/Docker Hub for the upstream etcd/busybox sources no longer
+> blocks the primary image.
 
 ## Directory Layout
 

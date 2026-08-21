@@ -100,6 +100,7 @@ locals {
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
     etcd_image_repository          = var.etcd_image_repository
     etcd_image_tag                 = var.etcd_image_tag
+    etcd_volume_permissions_image  = var.etcd_volume_permissions_image
     master_image_repository        = var.master_image_repository
     master_image_tag               = var.master_image_tag
     node_image_repository          = var.node_image_repository

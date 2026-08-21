@@ -218,6 +218,14 @@ case "${vendor}" in
     ;;
 esac
 set_or_prompt image_tag "All-in-one image tag" "${default_tag}" "${image_tag_override}"
+if [[ "${image_repository}" != */* ]]; then
+  die "all-in-one image repository must include a namespace: ${image_repository}"
+fi
+image_namespace="${image_repository%/*}"
+etcd_image_repository="${image_namespace}/etcd"
+etcd_image_tag="v3.6.8"
+traefik_internal_stats_image="${image_namespace}/busybox:1.37.0-musl"
+etcd_volume_permissions_image="${traefik_internal_stats_image}"
 set_or_prompt install_monitor "Install monitor chart (true/false)" "true" "${install_monitor_override}"
 set_or_prompt install_dragonfly "Install Dragonfly and dedicated node pools (true/false)" "false" "${install_dragonfly_override}"
 set_or_prompt enable_runc "Enable the optional runc runtime (true/false)" "false" "${enable_runc_override}"
@@ -320,6 +328,9 @@ master_image_repository = "${image_repository}"
 master_image_tag        = "${image_tag}"
 node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
+etcd_image_repository   = "${etcd_image_repository}"
+etcd_image_tag          = "${etcd_image_tag}"
+etcd_volume_permissions_image = "${etcd_volume_permissions_image}"
 iam_litebus_data_key    = "${iam_seed}"
 
 frontend_enabled  = true
@@ -336,6 +347,7 @@ traefik_web_port              = 80
 traefik_tls_enabled           = false
 traefik_tls_create_secret     = false
 traefik_internal_stats_enabled = true
+traefik_internal_stats_image   = "${traefik_internal_stats_image}"
 
 install_prereqs = false
 
@@ -375,6 +387,9 @@ master_image_repository = "${image_repository}"
 master_image_tag        = "${image_tag}"
 node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
+etcd_image_repository   = "${etcd_image_repository}"
+etcd_image_tag          = "${etcd_image_tag}"
+etcd_volume_permissions_image = "${etcd_volume_permissions_image}"
 iam_litebus_data_key    = "${iam_seed}"
 
 frontend_enabled  = true
@@ -390,6 +405,7 @@ traefik_web_port                 = 80
 traefik_tls_enabled              = false
 traefik_tls_create_secret        = false
 traefik_internal_stats_enabled   = true
+traefik_internal_stats_image     = "${traefik_internal_stats_image}"
 
 install_prereqs = false
 
@@ -418,6 +434,9 @@ GRAFANA_PASSWORD_FILE=${grafana_password_file}
 KUBECONFIG_PATH=${kubeconfig_file}
 IMAGE_REPOSITORY=${image_repository}
 IMAGE_TAG=${image_tag}
+ETCD_IMAGE_REPOSITORY=${etcd_image_repository}
+ETCD_IMAGE_TAG=${etcd_image_tag}
+TRAEFIK_INTERNAL_STATS_IMAGE=${traefik_internal_stats_image}
 CORE_NAMESPACE=akernel
 MONITOR_NAMESPACE=akernel-monitor
 INSTALL_DRAGONFLY=${install_dragonfly}

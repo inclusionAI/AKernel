@@ -354,14 +354,20 @@ variable "iam_litebus_data_key" {
 
 variable "etcd_image_repository" {
   type        = string
-  description = "Image repository for etcd."
+  description = "Image repository for etcd. Empty uses the official etcd primary registry."
   default     = ""
 }
 
 variable "etcd_image_tag" {
   type        = string
   description = "Image tag for etcd."
-  default     = "3.6.8"
+  default     = "v3.6.8"
+}
+
+variable "etcd_volume_permissions_image" {
+  type        = string
+  description = "BusyBox image used to prepare the etcd data volume."
+  default     = "busybox:1.37.0-musl"
 }
 
 variable "master_image_repository" {
@@ -579,7 +585,7 @@ variable "traefik_internal_stats_enabled" {
 
 variable "traefik_internal_stats_image" {
   type        = string
-  description = "Optional BusyBox image for the Traefik /internal-stats sidecar. Empty uses the deployment ACR VPC endpoint."
+  description = "Optional BusyBox image for the Traefik /internal-stats sidecar. Empty uses the official public image."
   default     = ""
 }
 
