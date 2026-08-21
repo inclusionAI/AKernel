@@ -89,6 +89,21 @@ spec:
           env:
             - name: AKERNEL_ROLE
               value: "frontend"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
             - name: LITEBUS_DATA_KEY
               valueFrom:
                 secretKeyRef:

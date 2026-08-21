@@ -321,6 +321,7 @@ start_node_container() {
         --privileged \
         --net bridge \
         --restart always \
+        -e AKERNEL_ROLE="standalone" \
         -e AKS_LOCAL_MODE="true" \
         -e TRAEFIK_MODE="http" \
         -e TRAEFIK_HTTP_ENTRYPOINT="web" \

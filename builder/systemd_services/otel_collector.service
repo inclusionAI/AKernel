@@ -9,7 +9,7 @@ Type=simple
 # memory-limiter threshold so GC can react before telemetry is refused.
 Environment=GOMAXPROCS=8
 Environment=GOMEMLIMIT=1400MiB
-PassEnvironment=AKERNEL_ENV YR_LOG_PATH PROMETHEUS_ENDPOINT LOKI_ENDPOINT TEMPO_ENDPOINT
+PassEnvironment=AKERNEL_ENV AKERNEL_ROLE NODE_NAME POD_NAME POD_NAMESPACE YR_LOG_PATH PROMETHEUS_ENDPOINT LOKI_ENDPOINT TEMPO_ENDPOINT
 ExecStartPre=/bin/bash -c 'for i in 1 2 3 4 5; do [ -f /etc/otel-collector/otel_config.yaml ] && break; sleep 1; done; [ -f /etc/otel-collector/otel_config.yaml ] && ln -sf /etc/otel-collector/otel_config.yaml /home/yuanrong/otel_config.yaml || true'
 ExecStart=/usr/local/bin/otelcol-contrib --config=/home/yuanrong/otel_config.yaml
 ExecReload=/bin/kill -HUP $MAINPID

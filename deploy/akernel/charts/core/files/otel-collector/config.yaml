@@ -27,6 +27,55 @@ receivers:
         endpoint: 0.0.0.0:4318
 
   # ─────────────────────────────────────────────────────────────────────
+  # hostmetrics/process: system metrics for long-lived AKernel/YuanRong processes
+  # Linux exposes process names through /proc/<pid>/status and truncates them
+  # to 15 characters, hence the optional suffixes below. Per-sandbox runsc
+  # processes are deliberately excluded to keep metric cardinality bounded.
+  # ───────────────────────────────────────────────────────────────────
+  hostmetrics/process:
+    collection_interval: 15s
+    scrapers:
+      process:
+        include:
+          names:
+            - '^(function_(master|proxy)|datasystem_work(er)?|goruntime|meta_service|iam_server|sandboxd|distill_fs|etcd|otelcol-contrib)$'
+          match_type: regexp
+        scrape_process_delay: 10s
+        mute_process_all_errors: true
+        resource_attributes:
+          process.parent_pid:
+            enabled: false
+          process.executable.path:
+            enabled: false
+          process.command:
+            enabled: false
+          process.command_line:
+            # Used transiently by transform/process_component to distinguish
+            # frontend and scheduler goruntime processes, then removed before export.
+            enabled: true
+          process.owner:
+            enabled: false
+        metrics:
+          process.cpu.time:
+            enabled: true
+          process.cpu.utilization:
+            enabled: true
+          process.memory.usage:
+            enabled: true
+          process.memory.virtual:
+            enabled: true
+          process.memory.utilization:
+            enabled: true
+          process.disk.io:
+            enabled: false
+          process.open_file_descriptors:
+            enabled: true
+          process.threads:
+            enabled: true
+          process.uptime:
+            enabled: true
+
+  # ─────────────────────────────────────────────────────────────────────
   # filelog/spdlog: C++ glog-style logs
   # ─────────────────────────────────────────────────────────────────────
   filelog/spdlog:
@@ -369,6 +418,36 @@ processors:
         value: ${env:AKERNEL_ENV:-default}
         action: upsert
 
+  resource/process_context:
+    attributes:
+      - key: service.name
+        value: akernel-process
+        action: upsert
+      - key: service.instance.id
+        value: ${env:POD_NAME:-unknown}
+        action: upsert
+      - key: akernel_role
+        value: ${env:AKERNEL_ROLE:-unknown}
+        action: upsert
+      - key: k8s.pod.name
+        value: ${env:POD_NAME:-unknown}
+        action: upsert
+      - key: k8s.namespace.name
+        value: ${env:POD_NAMESPACE:-default}
+        action: upsert
+      - key: k8s.node.name
+        value: ${env:NODE_NAME:-unknown}
+        action: upsert
+
+  transform/process_component:
+    error_mode: ignore
+    metric_statements:
+      - 'set(resource.attributes["component.name"], resource.attributes["process.executable.name"])'
+      - 'set(resource.attributes["component.name"], "ds_worker") where IsMatch(resource.attributes["process.executable.name"], "^datasystem_work(er)?$")'
+      - 'set(resource.attributes["component.name"], "frontend") where resource.attributes["process.executable.name"] == "goruntime" and IsMatch(resource.attributes["process.command_line"], "(^|\\s)-runtimeId=frontend_libruntime(\\s|$)")'
+      - 'set(resource.attributes["component.name"], "scheduler") where resource.attributes["process.executable.name"] == "goruntime" and IsMatch(resource.attributes["process.command_line"], "(^|\\s)-runtimeId=scheduler_libruntime(\\s|$)")'
+      - 'delete_key(resource.attributes, "process.command_line")'
+
 exporters:
   otlphttp/loki:
     endpoint: http://${env:LOKI_ENDPOINT:-loki:3100}/otlp
@@ -412,4 +491,8 @@ service:
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite]
+    metrics/process:
+      receivers: [hostmetrics/process]
+      processors: [memory_limiter, resource, resource/process_context, transform/process_component, batch]
       exporters: [prometheusremotewrite]
