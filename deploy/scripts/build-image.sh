@@ -15,8 +15,15 @@ tag=""
 env_name=""
 runtime_image=""
 runtime_profile="${RUNTIME_PROFILE:-rrt}"
-gvisor_release=""
-gvisor_release_base_url=""
+runtime_versions_file="${ROOT}/src/sandboxd/third_party/runtime-versions.env"
+if [[ ! -f "${runtime_versions_file}" ]]; then
+  die "missing runtime version manifest: ${runtime_versions_file}"
+fi
+# shellcheck source=/dev/null
+source "${runtime_versions_file}"
+gvisor_release="${GVISOR_RELEASE:-}"
+gvisor_amd64_sha512="${GVISOR_AMD64_SHA512:-}"
+gvisor_amd64_url="${GVISOR_AMD64_URL:-}"
 open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
 open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
 print_component_versions=0
@@ -83,14 +90,6 @@ while [[ $# -gt 0 ]]; do
       runtime_profile="$2"
       shift 2
       ;;
-    --gvisor-release)
-      gvisor_release="$2"
-      shift 2
-      ;;
-    --gvisor-release-base-url)
-      gvisor_release_base_url="$2"
-      shift 2
-      ;;
     --open-yr-core-wheel-url)
       open_yr_core_wheel_url="$2"
       shift 2
@@ -117,6 +116,11 @@ esac
 case "${AKERNEL_ENABLE_KATA:-true}" in
   true|false) ;;
   *) die "AKERNEL_ENABLE_KATA must be true or false" ;;
+esac
+
+case "${AKERNEL_ENABLE_FIRECRACKER:-true}" in
+  true|false) ;;
+  *) die "AKERNEL_ENABLE_FIRECRACKER must be true or false" ;;
 esac
 
 require_cmd docker
@@ -179,15 +183,20 @@ node_build_args=(
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
   --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA:-true}"
   --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC:-false}"
+  --build-arg "AKERNEL_ENABLE_FIRECRACKER=${AKERNEL_ENABLE_FIRECRACKER:-true}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"
 )
-if [[ -n "${gvisor_release}" ]]; then
-  node_build_args+=(--build-arg "GVISOR_RELEASE=${gvisor_release}")
+if [[ -z "${gvisor_release}" ||
+      -z "${gvisor_amd64_sha512}" ||
+      -z "${gvisor_amd64_url}" ]]; then
+  die "GVISOR_RELEASE, GVISOR_AMD64_URL, and GVISOR_AMD64_SHA512 must be set together"
 fi
-if [[ -n "${gvisor_release_base_url}" ]]; then
-  node_build_args+=(--build-arg "GVISOR_RELEASE_BASE_URL=${gvisor_release_base_url}")
-fi
+node_build_args+=(
+  --build-arg "GVISOR_RELEASE=${gvisor_release}"
+  --build-arg "GVISOR_AMD64_URL=${gvisor_amd64_url}"
+  --build-arg "GVISOR_AMD64_SHA512=${gvisor_amd64_sha512}"
+)
 if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; then
   if [[ -z "${open_yr_core_wheel_url}" || -z "${open_yr_core_wheel_sha256}" ]]; then
     die "OPEN_YR_CORE_WHEEL_URL and OPEN_YR_CORE_WHEEL_SHA256 must be set together"

@@ -49,12 +49,14 @@ The open-source AKernel repository contains the SDK, deployment configuration,
 build tooling, and examples. Node runtime components such as `sandboxd` and
 `distill-fs` are maintained in their own upstream repositories. The all-in-one
 Docker build copies and compiles their pinned Git submodules in dedicated
-builder stages. It also downloads `runsc` from the official gVisor release
-bucket and verifies its published SHA-512 checksum. When
-`AKERNEL_ENABLE_RUNC=true`, it also installs a pinned runc release after
-verifying its SHA-256 digest. The node image includes
-the pinned `nvidia-container-cli` userspace tooling for experimental gVisor
-GPU sandboxes; NVIDIA kernel drivers remain host-provided.
+builder stages. It downloads the gVisor `runsc` binary selected by
+`src/sandboxd/third_party/runtime-versions.env` and verifies its SHA-512
+digest. Keep the release tag, binary URL, and checksum synchronized in that
+shared manifest.
+When `AKERNEL_ENABLE_RUNC=true`, the build installs a pinned runc release
+after verifying its SHA-256 digest. The node image includes the pinned
+`nvidia-container-cli` userspace tooling for experimental gVisor GPU
+sandboxes; NVIDIA kernel drivers remain host-provided.
 It installs the checksum-pinned openYuanRong core wheel as the control plane
 and packages the checksum-pinned Kata Containers 4.0 runtime-rs shim,
 Dragonball configuration, guest kernel, guest images, license, and sandbox
@@ -134,11 +136,17 @@ runtime image and its matching service configuration.
 Initialize submodules with `git submodule update --init --recursive` before
 building. The all-in-one image builds `sandboxd`, `sbox`, and `runc-shim` from
 `src/sandboxd`, builds `sandbox-logger`, builds `distill_fs` from
-`src/distill-fs`, downloads the official gVisor `runsc` release pinned by
-`GVISOR_RELEASE`, and extracts the required amd64 artifacts from the
-checksum-pinned Kata release. `AKERNEL_ENABLE_RUNC=true` additionally downloads
-the checksum-pinned official runc release and copies both runc binaries into
-the final image.
+`src/distill-fs`, installs the checksum-pinned gVisor `runsc`, and extracts
+the required amd64 artifacts from the checksum-pinned Kata release.
+`AKERNEL_ENABLE_RUNC=true` additionally downloads the checksum-pinned official
+runc release and copies both runc binaries into the final image.
+
+The sandboxd submodule's runtime manifest is the source of truth for the
+gVisor release used by both sandboxd E2E and AKernel packaging. Test an
+unreleased runtime by checking out the sandboxd commit that pins it rather
+than overriding manifest fields from the AKernel build. Keep sandboxd's
+pooled-TAP contract and the matching gVisor compatibility patches validated
+together when upgrading.
 
 The submodule gitlinks are the single source of truth for the sandboxd and
 distill-fs revisions included in a clean release. `make build` always compiles
