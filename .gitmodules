@@ -1,6 +1,6 @@
 [submodule "src/sandboxd"]
 	path = src/sandboxd
-	url = https://github.com/inclusionAI/sandboxd.git
+	url = https://github.com/Chamberlain1998/sandboxd.git
 [submodule "src/distill-fs"]
 	path = src/distill-fs
 	url = https://github.com/inclusionAI/distill-fs.git

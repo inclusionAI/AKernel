@@ -10,8 +10,10 @@ IMAGE_TAG ?=
 IMAGE_REPOSITORY ?=
 GVISOR_RELEASE ?=
 GVISOR_RELEASE_BASE_URL ?=
-OPEN_YR_CORE_WHEEL_URL ?=
-OPEN_YR_CORE_WHEEL_SHA256 ?=
+OPEN_YR_CORE_WHEEL_URL ?= https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily/20260822051203/linux/amd64/openyuanrong_core-0.7.0%2B87cba622b491-py3-none-manylinux_2_31_x86_64.whl
+OPEN_YR_CORE_WHEEL_SHA256 ?= 9eb44e1ea59153ab9a65a81fc32450c09376e835732290046d028cec2db3b200
+OPEN_YR_RRT_WHEEL_URL ?= https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/daily/20260822042459/linux/amd64/openyuanrong_rrt-0.7.0%2B87cba622b491-py3-none-manylinux_2_31_x86_64.whl
+OPEN_YR_RRT_WHEEL_SHA256 ?= 3aff1b4a676ca28992a2478adab900bc7bd1e76928cc12016ae50fea412a68c4
 TOKEN_TTL ?= $(if $(TTL),$(TTL),24h)
 TENANT ?= default
 ROLE ?= developer
@@ -106,6 +108,8 @@ build:
 	if [[ -n "$(GVISOR_RELEASE_BASE_URL)" ]]; then args+=(--gvisor-release-base-url "$(GVISOR_RELEASE_BASE_URL)"); fi; \
 	if [[ -n "$(OPEN_YR_CORE_WHEEL_URL)" ]]; then args+=(--open-yr-core-wheel-url "$(OPEN_YR_CORE_WHEEL_URL)"); fi; \
 	if [[ -n "$(OPEN_YR_CORE_WHEEL_SHA256)" ]]; then args+=(--open-yr-core-wheel-sha256 "$(OPEN_YR_CORE_WHEEL_SHA256)"); fi; \
+	if [[ -n "$(OPEN_YR_RRT_WHEEL_URL)" ]]; then args+=(--open-yr-rrt-wheel-url "$(OPEN_YR_RRT_WHEEL_URL)"); fi; \
+	if [[ -n "$(OPEN_YR_RRT_WHEEL_SHA256)" ]]; then args+=(--open-yr-rrt-wheel-sha256 "$(OPEN_YR_RRT_WHEEL_SHA256)"); fi; \
 	./deploy/scripts/build-image.sh "$${args[@]}"
 
 .PHONY: versions

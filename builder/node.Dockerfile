@@ -232,35 +232,17 @@ ENV YR_INSTALLATION_DIR=/home/yuanrong
 # Install the complete, language-runtime-free openYuanRong control plane from
 # its checksum-pinned core wheel. A URL and checksum pair may override the
 # release asset when validating an unreleased daily build.
+COPY ./builder/downloaders/download-openyuanrong-core.sh /usr/local/bin/
 RUN set -eux; \
-    case "${TARGETARCH:-}" in \
-      amd64) wheel_arch=x86_64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
-      arm64) wheel_arch=aarch64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
-      "") \
-        case "$(uname -m)" in \
-          x86_64) wheel_arch=x86_64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
-          aarch64) wheel_arch=aarch64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
-          *) echo "unsupported openYuanRong target architecture: $(uname -m)" >&2; exit 1 ;; \
-        esac ;; \
-      *) echo "unsupported openYuanRong target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    wheel_name="openyuanrong_core-${OPEN_YR_VERSION}-py3-none-manylinux_2_31_${wheel_arch}.whl"; \
-    wheel_url="${OPEN_YR_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/${wheel_name}"; \
-    wheel_sha="${release_sha}"; \
-    if [ -n "${OPEN_YR_CORE_WHEEL_URL}" ]; then \
-      test -n "${OPEN_YR_CORE_WHEEL_SHA256}"; \
-      wheel_name="$(python3 -c 'import os, sys, urllib.parse; print(os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path)))' "${OPEN_YR_CORE_WHEEL_URL}")"; \
-      case "${wheel_name}" in *.whl) ;; *) echo "OPEN_YR_CORE_WHEEL_URL must reference a .whl file" >&2; exit 1 ;; esac; \
-      wheel_url="${OPEN_YR_CORE_WHEEL_URL}"; \
-      wheel_sha="${OPEN_YR_CORE_WHEEL_SHA256}"; \
-    else \
-      test -z "${OPEN_YR_CORE_WHEEL_SHA256}"; \
-    fi; \
-    wheel="/tmp/${wheel_name}"; \
+    download_dir=/tmp/openyuanrong-core-download; \
+    mkdir -p "${download_dir}"; \
+    chmod 0755 /usr/local/bin/download-openyuanrong-core.sh; \
+    /usr/local/bin/download-openyuanrong-core.sh "${download_dir}"; \
+    set -- "${download_dir}"/*.whl; \
+    test "$#" -eq 1; \
+    wheel="$1"; \
+    test -f "${wheel}"; \
     target=/tmp/openyuanrong-core; \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-      "${wheel_url}" -o "${wheel}"; \
-    echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
     python3 -m pip install \
       --break-system-packages \
       --no-cache-dir \
@@ -270,7 +252,8 @@ RUN set -eux; \
     test -x "${target}/yr/functionsystem/bin/yr"; \
     mkdir -p "${YR_INSTALLATION_DIR}"; \
     cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
-    rm -rf "${target}" "${wheel}"; \
+    rm -rf "${target}" "${download_dir}"; \
+    rm -f /usr/local/bin/download-openyuanrong-core.sh; \
     ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
 
 COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img

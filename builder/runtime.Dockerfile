@@ -10,22 +10,29 @@ ARG PYTHON_312_VERSION=3.12.11
 ARG PYTHON_313_VERSION=3.13.5
 ARG PYTHON_314_VERSION=3.14.6
 ARG OPEN_YR_VERSION=0.9.9
+ARG OPEN_YR_RRT_WHEEL_URL=
+ARG OPEN_YR_RRT_WHEEL_SHA256=
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-download
 
 ARG OPEN_YR_VERSION
 ARG RRT_RUNTIME_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/rrt-runtime-amd64
 ARG RRT_RUNTIME_SHA256=d2e5a43cd1d384e0c58174821fc787e7946fb330b23021769a823625a2401274
+ARG OPEN_YR_RRT_WHEEL_URL
+ARG OPEN_YR_RRT_WHEEL_SHA256
+ARG TARGETARCH
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
+    apt-get install -y --no-install-recommends ca-certificates curl file unzip && \
     rm -rf /var/lib/apt/lists/*
 
+COPY ./builder/downloaders/download-openyuanrong-rrt.sh /usr/local/bin/
 RUN set -eux; \
-    curl -fSL --retry 5 --retry-delay 2 --retry-all-errors \
-        -o /rrt-runtime "${RRT_RUNTIME_URL}"; \
-    echo "${RRT_RUNTIME_SHA256}  /rrt-runtime" | sha256sum -c -; \
-    chmod 0755 /rrt-runtime
+    case "${TARGETARCH:-amd64}" in amd64) ;; *) echo "RRT runtime only supports amd64" >&2; exit 1 ;; esac; \
+    chmod 0755 /usr/local/bin/download-openyuanrong-rrt.sh; \
+    /usr/local/bin/download-openyuanrong-rrt.sh /rrt-runtime; \
+    chmod 0755 /rrt-runtime; \
+    file /rrt-runtime | grep -Eq 'ELF 64-bit LSB.*x86-64'
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-runtime-rootfs
 
