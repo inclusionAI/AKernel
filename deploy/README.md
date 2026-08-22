@@ -25,7 +25,17 @@ make print-env
 make e2e
 ```
 
-Kata Containers is enabled in the default AKernel runtime configuration and adds one host requirement: `/dev/kvm` must be available to the node container. Nodes without a usable KVM device remain ready and advertise only runsc. If no node advertises Kata, `Sandbox(runtime="kata")` fails scheduling with a no-resource error.
+Kata Containers and Firecracker are enabled in the default AKernel image and
+runtime configuration. Both require `/dev/kvm` to be available to the node
+container. Nodes without a usable KVM device remain ready for runsc workloads
+and do not advertise either VM runtime. If no eligible node advertises a
+requested runtime, `Sandbox(runtime="kata")` or
+`Sandbox(runtime="firecracker")` fails scheduling with a no-resource error.
+
+The bundled Firecracker payload is selected by sandboxd's shared runtime
+manifest. Set `AKERNEL_ENABLE_FIRECRACKER=false` while building to exclude it.
+For supported operations and filesystem constraints, see the
+[sandbox runtime comparison](https://github.com/inclusionAI/sandboxd/blob/1918fadb03b59bc6f540196e14b90a91bdf31b7d/doc/runtime.md).
 
 The native Linux runc backend is opt-in because it uses the host kernel. For a
 guided cloud profile, `make config ENABLE_RUNC=true` records both sides of the
@@ -44,9 +54,11 @@ the sandbox bridge when their `FORWARD` policy is `DROP`.
 ### Network ACLs
 
 The bundled standalone, Helm, and Terraform sandboxd configurations enable
-per-sandbox network ACLs. A sandbox created without a policy remains on the
-unrestricted fast path. The default `iptables` backend requires `ip_tables`,
-`br_netfilter`, conntrack, connmark/CONNMARK support, and
+per-sandbox network ACLs. Runsc, Kata, and Firecracker require the host `tun`
+module and a usable `/dev/net/tun` for their pooled TAP endpoints. A sandbox
+created without a policy remains on the unrestricted fast path. The default
+`iptables` backend additionally requires `ip_tables`, `br_netfilter`,
+conntrack, connmark/CONNMARK support, and
 `net.bridge.bridge-nf-call-iptables=1`. The optional `bpfnat` backend instead
 requires Linux eBPF `SCHED_CLS`, TC `clsact`, supported hash and array maps, a
 writable bpffs at `/sys/fs/bpf` (or permission to mount one), and permission

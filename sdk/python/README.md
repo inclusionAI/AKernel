@@ -204,18 +204,14 @@ AKernel uses the gVisor `runsc` runtime when `runtime` is omitted. Runtime
 identifiers and optional `extra_config` are forwarded to the selected backend
 instead of being restricted or interpreted by an SDK-owned registry. Values in
 `extra_config` must be JSON-compatible. The bundled deployment advertises
-`runsc` and Kata Containers by default:
+`runsc`, Kata Containers, and Firecracker by default when their host
+prerequisites are available.
 
-```python
-default_sandbox = Sandbox()
-runsc_sandbox = Sandbox(runtime="runsc")
-kata_sandbox = Sandbox(runtime="kata")
-```
-
-Kata requires at least one cluster node whose sandboxd instance successfully
-initialized the Kata runtime with a usable `/dev/kvm` device. Nodes without
-KVM remain available for runsc workloads and do not advertise Kata. A runtime
-that is unavailable in the cluster fails scheduling or backend validation.
+Kata and Firecracker require at least one cluster node whose sandboxd instance
+successfully initialized the requested runtime with a usable `/dev/kvm`
+device. Nodes without KVM remain available for runsc workloads and do not
+advertise either VM runtime. Firecracker accepts EROFS image roots and mounts
+and rejects OCI/Nydus directories, directory mounts, GPUs, and nested KVM.
 
 The all-in-one image can optionally package a native Linux `runc` backend.
 Operators build it with `AKERNEL_ENABLE_RUNC=true` and enable it explicitly
@@ -239,7 +235,8 @@ with Sandbox(
 `enableKVM` is owned by the runc backend and requires a usable `/dev/kvm` on
 the selected node. Runc supports OCI/EROFS root filesystems, read-only mounts,
 networking, command execution, and the default writable overlay. Experimental
-GPU requests and explicit `storage_mb` quotas remain runsc-only. See the
+GPU requests remain runsc-only; explicit `storage_mb` quotas are supported by
+runsc and Firecracker. See the
 [sandbox runtime comparison](../../src/sandboxd/doc/runtime.md) for the
 runtime capability boundaries.
 
@@ -424,6 +421,10 @@ runtime inside an S3 object. When neither source is supplied, AKernel sends
 only the selected isolation runtime and openYuanRong overlays it onto the
 rootfs configured by the deployed service.
 
+For Firecracker, the deployed default or an explicit `rootfs` object must be a
+raw EROFS image. `image="ubuntu:24.04"` produces an OCI/Nydus directory and is
+therefore supported by runsc, runc, and Kata but rejected by Firecracker.
+
 The same `S3Config` type can be used as a read-only mount source:
 
 ```python
@@ -439,6 +440,9 @@ OCI images can also be mounted read-only:
 ```python
 mount = Mount(target="/opt/tools", image_url="ubuntu:24.04")
 ```
+
+Firecracker mounts must instead use `type="erofs"` with an S3 object containing
+a raw EROFS image; it rejects `image_url` and directory-backed mounts.
 
 ## Launch from a Dockerfile
 

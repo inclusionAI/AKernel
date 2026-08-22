@@ -44,6 +44,11 @@ enable_local_dnat="$(network_value enable_local_dnat)"
 enable_network_acl="$(network_value enable_network_acl)"
 nat_backend="${nat_backend:-iptables}"
 
+if [[ ! -c /dev/net/tun ]]; then
+    echo "/dev/net/tun is unavailable; load the host tun module before starting the AKernel node" >&2
+    exit 1
+fi
+
 # Both NAT backends route packets between sandbox0 and the selected external
 # interface. AKernel owns this network-namespace prerequisite.
 "${SYSCTL_BIN}" -w net.ipv4.ip_forward=1

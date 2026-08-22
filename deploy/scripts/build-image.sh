@@ -24,6 +24,9 @@ source "${runtime_versions_file}"
 gvisor_release="${GVISOR_RELEASE:-}"
 gvisor_amd64_sha512="${GVISOR_AMD64_SHA512:-}"
 gvisor_amd64_url="${GVISOR_AMD64_URL:-}"
+firecracker_release="${FIRECRACKER_RELEASE:-}"
+firecracker_amd64_sha256="${FIRECRACKER_AMD64_SHA256:-}"
+firecracker_amd64_url="${FIRECRACKER_AMD64_URL:-}"
 open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
 open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
 print_component_versions=0
@@ -196,6 +199,16 @@ node_build_args+=(
   --build-arg "GVISOR_RELEASE=${gvisor_release}"
   --build-arg "GVISOR_AMD64_URL=${gvisor_amd64_url}"
   --build-arg "GVISOR_AMD64_SHA512=${gvisor_amd64_sha512}"
+)
+if [[ -z "${firecracker_release}" ||
+      -z "${firecracker_amd64_sha256}" ||
+      -z "${firecracker_amd64_url}" ]]; then
+  die "FIRECRACKER_RELEASE, FIRECRACKER_AMD64_URL, and FIRECRACKER_AMD64_SHA256 must be set together"
+fi
+node_build_args+=(
+  --build-arg "FIRECRACKER_RELEASE=${firecracker_release}"
+  --build-arg "FIRECRACKER_AMD64_URL=${firecracker_amd64_url}"
+  --build-arg "FIRECRACKER_AMD64_SHA256=${firecracker_amd64_sha256}"
 )
 if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; then
   if [[ -z "${open_yr_core_wheel_url}" || -z "${open_yr_core_wheel_sha256}" ]]; then

@@ -12,7 +12,15 @@ Keeping the gateway in a separate network namespace allows sandboxd's normal
 traffic from the node network namespace, so the standalone sandboxd config
 also enables its local-output DNAT support.
 
-The default runtime is gVisor `runsc`. `Sandbox(runtime="kata")` additionally requires `/dev/kvm` and hardware or nested virtualization on the Docker host. Nodes without KVM remain usable with runsc and do not advertise Kata to the scheduler.
+The default runtime is gVisor `runsc`. The bundled image also contains Kata
+Containers and Firecracker. Both `Sandbox(runtime="kata")` and
+`Sandbox(runtime="firecracker")` require `/dev/kvm` plus hardware or nested
+virtualization on the Docker host. Nodes without KVM remain usable with runsc
+and do not advertise either VM runtime to the scheduler.
+
+See the maintained
+[runtime selection example](../../sdk/python/examples/sandbox_runtime.py) for
+client usage.
 
 Default image builds exclude the optional native Linux `runc` runtime, and
 standalone does not advertise it by default. Build an image containing the
@@ -41,11 +49,16 @@ The all-in-one image contains `nvidia-container-cli`, but not the host driver.
 Use `AKERNEL_GPU_DEVICES` to override Docker's `--gpus` value when only a
 device subset should be assigned.
 
-Explicit sandbox storage quotas use the bounded ext4 filestore mounted at
-`/home/akernel/filestore`. The standalone data directory is bind-mounted from
-the host, and sandboxd creates a loop-backed filesystem image there when
-needed; quota-backed writable layers therefore use local disk rather than
-tmpfs.
+Explicit sandbox storage quotas for runsc and Firecracker use the bounded ext4
+filestore mounted at `/home/akernel/filestore`. The standalone data directory
+is bind-mounted from the host, and sandboxd creates a loop-backed filesystem
+image there when needed; quota-backed writable layers therefore use local disk
+rather than tmpfs. Without `storage_mb`, runsc retains its configured
+memory-backed overlay while Firecracker uses its configured sparse ext4
+default.
+
+`start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
+starting the pooled-TAP runtimes. Runc retains its separate veth network path.
 
 ### Network backend
 

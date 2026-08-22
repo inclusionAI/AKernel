@@ -80,9 +80,9 @@ check_prerequisites() {
     log_info "${DOCKER_CMD} is available"
 
     if [[ ! -c /dev/kvm ]]; then
-        log_warn "/dev/kvm is unavailable; standalone will support runsc but will not advertise the Kata runtime"
+        log_warn "/dev/kvm is unavailable; standalone will support runsc but will not advertise Kata or Firecracker"
     elif [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
-        log_warn "/dev/kvm is not accessible to the current user; verify that the privileged node container can access it before using Kata"
+        log_warn "/dev/kvm is not accessible to the current user; verify that the privileged node container can access it before using Kata or Firecracker"
     fi
 
     if ! command -v curl &> /dev/null; then
@@ -282,15 +282,29 @@ configure_network() {
 }
 
 prepare_host_network_modules() {
-    if [[ "${AKERNEL_NAT_BACKEND}" != "iptables" ]]; then
-        return 0
-    fi
-
     local modprobe_bin
     modprobe_bin="$(command -v modprobe || true)"
     if [[ -z "${modprobe_bin}" ]]; then
-        log_error "modprobe is required to load br_netfilter for the iptables ACL backend"
+        log_error "modprobe is required to load AKernel host network modules"
         exit 1
+    fi
+
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "${modprobe_bin}" tun
+    elif sudo -n "${modprobe_bin}" tun; then
+        :
+    else
+        log_error "Unable to load tun; run this script as root or allow passwordless sudo for modprobe"
+        exit 1
+    fi
+    if [[ ! -c /dev/net/tun ]]; then
+        log_error "tun loaded but /dev/net/tun is unavailable"
+        exit 1
+    fi
+    log_info "Loaded host tun module for pooled TAP networking"
+
+    if [[ "${AKERNEL_NAT_BACKEND}" != "iptables" ]]; then
+        return 0
     fi
 
     if [[ "$(id -u)" -eq 0 ]]; then

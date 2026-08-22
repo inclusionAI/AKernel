@@ -11,15 +11,15 @@ developer workflows. The current public user-facing surface is the Python
 `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI.
 The default sandbox runtime is gVisor runsc. Runtime identifiers and generic
 JSON-compatible runtime configuration are forwarded to the selected backend,
-which owns availability and compatibility checks; the bundled deployment also
-advertises Kata Containers on KVM-capable nodes. The native Linux runc payload
-is build-time optional and must be explicitly included and enabled by an
-operator.
+which owns availability and compatibility checks. The bundled deployment also
+advertises Kata Containers and Firecracker on KVM-capable nodes. The native
+Linux runc payload is build-time optional and must be explicitly included and
+enabled by an operator.
 Creation-time network policies support unrestricted networking, blocking new
 flows except the YuanRong control and published sandbox-port routes, or denying
 exact and leading-wildcard DNS names.
-Experimental whole-device NVIDIA GPU and configurable writable-storage
-requests currently require runsc.
+Experimental whole-device NVIDIA GPU requests require runsc. Configurable
+writable-storage requests are supported by runsc and Firecracker.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -47,20 +47,9 @@ tunnels. The project overview and deployment quick start are in
 
 The open-source AKernel repository contains the SDK, deployment configuration,
 build tooling, and examples. Node runtime components such as `sandboxd` and
-`distill-fs` are maintained in their own upstream repositories. The all-in-one
-Docker build copies and compiles their pinned Git submodules in dedicated
-builder stages. It downloads the gVisor `runsc` binary selected by
-`src/sandboxd/third_party/runtime-versions.env` and verifies its SHA-512
-digest. Keep the release tag, binary URL, and checksum synchronized in that
-shared manifest.
-When `AKERNEL_ENABLE_RUNC=true`, the build installs a pinned runc release
-after verifying its SHA-256 digest. The node image includes the pinned
-`nvidia-container-cli` userspace tooling for experimental gVisor GPU
-sandboxes; NVIDIA kernel drivers remain host-provided.
-It installs the checksum-pinned openYuanRong core wheel as the control plane
-and packages the checksum-pinned Kata Containers 4.0 runtime-rs shim,
-Dragonball configuration, guest kernel, guest images, license, and sandbox
-logger.
+`distill-fs` are maintained in their own upstream repositories and pinned as
+Git submodules. The all-in-one build compiles those revisions and packages the
+runtime payloads described in the Build section below.
 
 ## Common Commands
 
@@ -117,6 +106,7 @@ deployment entrypoint and environment.
 make build
 make build RUNTIME_PROFILE=python
 make build AKERNEL_ENABLE_RUNC=true
+make build AKERNEL_ENABLE_FIRECRACKER=false
 ```
 
 For a build that will be pushed and deployed, set `IMAGE_REPOSITORY` and
@@ -134,19 +124,18 @@ node components and produces the AKernel all-in-one image using the selected
 runtime image and its matching service configuration.
 
 Initialize submodules with `git submodule update --init --recursive` before
-building. The all-in-one image builds `sandboxd`, `sbox`, and `runc-shim` from
-`src/sandboxd`, builds `sandbox-logger`, builds `distill_fs` from
-`src/distill-fs`, installs the checksum-pinned gVisor `runsc`, and extracts
-the required amd64 artifacts from the checksum-pinned Kata release.
-`AKERNEL_ENABLE_RUNC=true` additionally downloads the checksum-pinned official
-runc release and copies both runc binaries into the final image.
+building. The all-in-one image builds the sandboxd binaries, including
+`firecracker-agent`, and `distill_fs`; installs checksum-pinned gVisor and Kata
+artifacts; installs the Firecracker VMM and guest kernel; and constructs the
+matching guest-agent initrd. Runc remains build-time optional, and
+`AKERNEL_ENABLE_FIRECRACKER=false` excludes the Firecracker payload.
 
 The sandboxd submodule's runtime manifest is the source of truth for the
-gVisor release used by both sandboxd E2E and AKernel packaging. Test an
-unreleased runtime by checking out the sandboxd commit that pins it rather
-than overriding manifest fields from the AKernel build. Keep sandboxd's
-pooled-TAP contract and the matching gVisor compatibility patches validated
-together when upgrading.
+gVisor and Firecracker releases used by both sandboxd E2E and AKernel
+packaging. Test an unreleased runtime by checking out the sandboxd commit that
+pins it rather than overriding manifest fields from the AKernel build. Keep
+sandboxd's pooled-TAP contract and the matching gVisor compatibility patches
+validated together when upgrading.
 
 The submodule gitlinks are the single source of truth for the sandboxd and
 distill-fs revisions included in a clean release. `make build` always compiles
@@ -188,12 +177,25 @@ make deploy
 make print-env
 ```
 
-Kata is present in the default AKernel runtime configuration but is an
-optional node capability. It additionally requires `/dev/kvm` to be usable
-from the node container. A node without KVM remains ready and advertises only
-runsc; a Kata request fails scheduling with a no-resource error when no
-eligible node exists. Do not treat a configured runtime as an advertised
-runtime.
+Kata and Firecracker are present in the default AKernel runtime configuration
+but are optional node capabilities. Both require `/dev/kvm` to be usable from
+the node container. Firecracker additionally validates its VMM, guest kernel,
+initrd, and `mkfs.ext4`. A node without KVM remains ready for runsc workloads
+and advertises neither VM runtime; a Kata or Firecracker request fails
+scheduling with a no-resource error when no eligible node exists. Do not treat
+a configured runtime as an advertised runtime.
+
+Firecracker supports commands, files, PTYs, network policies, published ports,
+reverse tunnels, read-only EROFS image roots and mounts, explicit `storage_mb`
+quotas, and recovery across sandboxd restarts. Its root and filesystem image
+mounts must be local or image-provider-backed regular EROFS files. It rejects
+OCI/Nydus directory roots, directory mounts, writable live host binds, NVIDIA
+GPUs, and nested KVM rather than weakening their semantics.
+
+Do not add Firecracker-specific directory conversion, image caching, or
+artifact reference counting to sandboxd or its image manager. Build EROFS
+before sandbox creation and distribute it through the existing local or S3
+imagefile paths. The bundled default runtime root already follows this model.
 
 Runc is excluded from default image builds and from the default advertised
 runtime set. Guided cloud profiles use `make config ENABLE_RUNC=true`; this
@@ -206,8 +208,9 @@ boundary from runsc. It does not support experimental GPU or explicit
 `storage_mb` requests. Its optional `enableKVM` extra configuration requires a
 usable `/dev/kvm` device.
 
-The bundled sandboxd configuration enables per-sandbox network ACLs. The
-default iptables backend requires `br_netfilter`, conntrack,
+The bundled sandboxd configuration enables per-sandbox network ACLs. Pooled TAP
+networking requires the host `tun` module and a usable `/dev/net/tun`. The
+default iptables backend additionally requires `br_netfilter`, conntrack,
 connmark/CONNMARK, and bridge netfilter. The optional bpfnat backend instead
 requires eBPF `SCHED_CLS`, TC `clsact`, writable bpffs, and permission to load
 BPF programs and manage TC filters. Both require free TCP/UDP port 53 on the
@@ -309,10 +312,10 @@ with Sandbox(
     print(sb.commands.run("test -c /dev/kvm").exit_code)
 ```
 
-Request experimental gVisor GPU and disk-backed writable storage resources:
+Request an experimental gVisor GPU:
 
 ```python
-with Sandbox(xpu="gpu:l20:1", storage_mb=20 * 1024) as sb:
+with Sandbox(xpu="gpu:l20:1") as sb:
     print(sb.commands.run("nvidia-smi -L").stdout)
 ```
 
@@ -360,9 +363,10 @@ default-route interface address in standalone mode; `AKERNEL_NODE_IP` is the
 explicit override for multi-homed environments.
 
 The standalone sandboxd filestore is a loop-mounted ext4 image under the
-bind-mounted `deploy/standalone/data/` directory. Explicit `storage_mb` quotas
-use this local-disk filestore; omitting `storage_mb` retains the configured
-memory-backed writable overlay.
+bind-mounted `deploy/standalone/data/` directory. Explicit `storage_mb`
+quotas for runsc and Firecracker use this local-disk filestore. Without an
+explicit quota, runsc retains its configured memory-backed overlay while
+Firecracker creates its configured sparse ext4 default.
 
 Keep detailed SDK reference material with the SDK. The root README should
 contain only the project-level entry points and representative examples:
@@ -443,17 +447,23 @@ Run the basic e2e example against a deployed cluster with:
 make e2e
 ```
 
-The SDK integration and pressure tests are runtime-selectable. Kata tests
-require a KVM-capable standalone or cluster node:
+The SDK integration and pressure tests are runtime-selectable. Kata and
+Firecracker tests require a KVM-capable standalone or cluster node:
 
 ```bash
 AKERNEL_RUN_INTEGRATION=1 \
 AKERNEL_TEST_RUNTIME=kata \
-python -m pytest sdk/python/tests/integration/test_sandbox.py
+python sdk/python/tests/integration/test_sandbox.py -v
 
 python sdk/python/benchmarks/sandbox_pressure.py --runtime kata
 
-python sdk/python/benchmarks/sandbox_pressure.py --storage-mb 256
+AKERNEL_RUN_INTEGRATION=1 \
+AKERNEL_TEST_RUNTIME=firecracker \
+python sdk/python/tests/integration/test_sandbox.py -v
+
+python sdk/python/benchmarks/sandbox_pressure.py --runtime firecracker
+python sdk/python/benchmarks/sandbox_pressure.py \
+  --runtime firecracker --storage-mb 256
 python sdk/python/benchmarks/sandbox_pressure.py \
   --xpu gpu:a10:1 --storage-mb 256 --processes 1 --threads 1
 ```

@@ -5,6 +5,27 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
+# Pooled TAP endpoints require the host TUN driver and device before kubelet
+# starts the privileged AKernel node container.
+cat >/etc/systemd/system/akernel-tun-module.service <<'EOF'
+[Unit]
+Description=Load TUN module for AKernel pooled TAP networking
+After=systemd-modules-load.service
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'modprobe tun && test -c /dev/net/tun'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable akernel-tun-module.service
+systemctl start akernel-tun-module.service
+
 %{ if sandboxd_nat_backend == "iptables" ~}
 # ip_tables provides NAT and br_netfilter provides bridged ACL enforcement.
 cat >/etc/systemd/system/akernel-network-modules.service <<'EOF'

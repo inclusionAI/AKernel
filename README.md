@@ -33,7 +33,10 @@ One all-in-one image, multiple deployment targets — deploy in under 10 minutes
 ### Secure Isolation with Extreme Performance
 
 - **40 ms cold start\***: Fork-based launch with lazy loading for near-zero startup latency
-- **Sandbox isolation**: [gVisor](https://github.com/google/gvisor) by default, with [Kata Containers](https://github.com/kata-containers/kata-containers) available on KVM-capable nodes
+- **Sandbox isolation**: [gVisor](https://github.com/google/gvisor) by
+  default, with [Kata Containers](https://github.com/kata-containers/kata-containers)
+  and [Firecracker](https://github.com/firecracker-microvm/firecracker)
+  available on KVM-capable nodes
 - **Checkpoint/Restore\***: Save and restore sandbox state for fast recovery
 
 \* Planned for an open-source release and not available in AKernel v0.1.0.
@@ -157,17 +160,16 @@ with Sandbox(cpu=1000, memory=2048) as sandbox:
     print(sandbox.files.read("/tmp/hello.txt"))
 ```
 
-Experimental gVisor sandboxes can request an exact NVIDIA GPU model and a
-disk-backed writable root filesystem quota:
+Experimental gVisor sandboxes can request an exact NVIDIA GPU model:
 
 ```python
-with Sandbox(xpu="gpu:l20:1", storage_mb=20 * 1024) as sandbox:
+with Sandbox(xpu="gpu:l20:1") as sandbox:
     print(sandbox.commands.run("nvidia-smi -L").stdout)
 ```
 
-GPU sandboxes require a compatible NVIDIA node and currently support only the
-gVisor `runsc` runtime. `storage_mb` is measured in MiB and also currently
-requires `runsc`.
+GPU sandboxes require a compatible NVIDIA node and the gVisor `runsc`
+runtime. `storage_mb` is measured in MiB and is supported by `runsc` and
+Firecracker.
 
 See the complete [basic usage example](./sdk/python/examples/basic_usage.py), the [sandbox runtime example](./sdk/python/examples/sandbox_runtime.py), and the other [SDK examples](./sdk/python/examples/) for more operations.
 
@@ -178,9 +180,8 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 ### System Components
 
 **Node-Level Infrastructure**
-- **Sandbox runtimes**: gVisor by default, including experimental NVIDIA GPU
-  and writable-storage support; Kata Containers on KVM-capable nodes; and an
-  explicitly enabled native Linux runc backend
+- **Sandbox runtimes**: gVisor by default; Kata Containers and Firecracker on
+  KVM-capable nodes; and an explicitly enabled native Linux runc backend
 - **sandboxd**: Sandbox lifecycle daemon with pluggable sandbox runtime integration
 - **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication
 
@@ -202,6 +203,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 ## Roadmap
 
 - [x] Kata Containers runtime on KVM-capable nodes
+- [x] Firecracker microVM runtime on KVM-capable nodes
 - [x] Optional native Linux runc runtime
 - [x] Sandbox network ACL
 - [ ] Fork-based sandbox launch based on gVisor

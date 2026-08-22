@@ -7,6 +7,7 @@ ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG AKERNEL_RUNTIME_PROFILE=rrt
 ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
+ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.9.9
@@ -28,6 +29,10 @@ ARG KATA_BUILD_IMAGE=ubuntu:24.04
 ARG KATA_RELEASE=4.0.0
 ARG KATA_AMD64_SHA256=2c3b9dfeba355582b40aee462b12916c9740654d0230f696adf719d67b063a8c
 ARG KATA_RELEASE_BASE_URL=https://github.com/kata-containers/kata-containers/releases/download
+ARG FIRECRACKER_BUILD_IMAGE=ubuntu:24.04
+ARG FIRECRACKER_RELEASE
+ARG FIRECRACKER_AMD64_SHA256
+ARG FIRECRACKER_AMD64_URL
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
 ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_amd64.tar.gz
 ARG AKERNEL_VERSION=unknown
@@ -109,6 +114,63 @@ WORKDIR /src/sandboxd
 COPY ./src/sandboxd/ ./
 RUN make release
 
+FROM ${FIRECRACKER_BUILD_IMAGE} AS firecracker-runtime-true
+ARG FIRECRACKER_RELEASE
+ARG FIRECRACKER_AMD64_SHA256
+ARG FIRECRACKER_AMD64_URL
+ARG TARGETARCH
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates cpio curl gzip jq && \
+    rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    test "${TARGETARCH:-amd64}" = "amd64"; \
+    test -n "${FIRECRACKER_RELEASE}"; \
+    test -n "${FIRECRACKER_AMD64_SHA256}"; \
+    test -n "${FIRECRACKER_AMD64_URL}"; \
+    archive="/tmp/firecracker-${FIRECRACKER_RELEASE}-x86_64.tgz"; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "${FIRECRACKER_AMD64_URL}" \
+      -o "${archive}"; \
+    echo "${FIRECRACKER_AMD64_SHA256}  ${archive}" | sha256sum -c -; \
+    mkdir -p /tmp/firecracker-release \
+      /firecracker/usr/local/bin \
+      /firecracker/opt/firecracker/licenses \
+      /initrd; \
+    tar -xzf "${archive}" -C /tmp/firecracker-release; \
+    bundle="/tmp/firecracker-release/release-${FIRECRACKER_RELEASE}-x86_64"; \
+    jq -e --arg release "${FIRECRACKER_RELEASE}" \
+      '.component == "akernel-firecracker-runtime" and \
+       .repository == "akernel-dev/firecracker" and \
+       .release_tag == $release and \
+       .architecture == "x86_64"' \
+      "${bundle}/manifest.json" >/dev/null; \
+    (cd "${bundle}"; sha256sum -c SHA256SUMS); \
+    install -m 0755 "${bundle}/firecracker" \
+      /firecracker/usr/local/bin/firecracker; \
+    install -m 0644 \
+      "${bundle}/vmlinux" \
+      "${bundle}/kernel.config" \
+      "${bundle}/manifest.json" \
+      /firecracker/opt/firecracker/; \
+    cp -a "${bundle}/licenses/." /firecracker/opt/firecracker/licenses/
+
+COPY --from=sandboxd-builder /src/sandboxd/output/firecracker-agent /initrd/init
+RUN set -eux; \
+    chmod 0755 /initrd/init; \
+    chmod 0700 /initrd; \
+    touch -d @0 /initrd /initrd/init; \
+    cd /initrd; \
+    find . -print0 \
+      | LC_ALL=C sort -z \
+      | cpio --null --create --format=newc --owner=0:0 --reproducible \
+      | gzip -n -9 > /firecracker/opt/firecracker/initrd.img; \
+    chmod 0644 /firecracker/opt/firecracker/initrd.img
+
+FROM ${FIRECRACKER_BUILD_IMAGE} AS firecracker-runtime-false
+RUN mkdir -p /firecracker/usr/local/bin /firecracker/opt/firecracker
+
+FROM firecracker-runtime-${AKERNEL_ENABLE_FIRECRACKER} AS firecracker-runtime
+
 FROM ${RUNC_BUILD_IMAGE} AS runc-runtime-true
 ARG RUNC_VERSION
 ARG RUNC_AMD64_SHA256
@@ -154,6 +216,7 @@ RUN cargo build --locked --release --bin distill_fs
 FROM ${AKERNEL_NODE_BASE_IMAGE}
 ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_ENABLE_RUNC
+ARG AKERNEL_ENABLE_FIRECRACKER
 ARG AKERNEL_RUNTIME_PROFILE
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
@@ -165,6 +228,7 @@ ARG OPEN_YR_CORE_AMD64_SHA256
 ARG OPEN_YR_CORE_ARM64_SHA256
 ARG GVISOR_RELEASE
 ARG RUNC_VERSION
+ARG FIRECRACKER_RELEASE
 ARG LIBNVIDIA_CONTAINER_VERSION
 ARG OTELCOL_CONTRIB_URL
 ARG TARGETARCH
@@ -285,6 +349,7 @@ COPY --from=sandboxd-builder /src/sandboxd/output/sandbox-logger /usr/local/bin/
 COPY --from=distill-fs-builder /src/distill-fs/target/release/distill_fs /usr/local/bin/distill_fs
 COPY --from=kata-runtime /kata/opt/kata /opt/kata
 COPY --from=runc-runtime /runc/usr/local/bin/ /usr/local/bin/
+COPY --from=firecracker-runtime /firecracker/ /
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
       ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2; \
     fi
@@ -350,7 +415,9 @@ LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.akernel.gvisor.release="${GVISOR_RELEASE}" \
       org.akernel.runc.version="${RUNC_VERSION}" \
       org.akernel.runc.enabled="${AKERNEL_ENABLE_RUNC}" \
-      org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}"
+      org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}" \
+      org.akernel.firecracker.release="${FIRECRACKER_RELEASE}" \
+      org.akernel.firecracker.enabled="${AKERNEL_ENABLE_FIRECRACKER}"
 
 ENV YR_LOG_PATH=${YR_INSTALLATION_DIR}/logs
 STOPSIGNAL SIGRTMIN+3
