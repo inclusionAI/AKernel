@@ -16,7 +16,14 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from akernel_sdk import HttpReverseTunnel, Mount, NetworkPolicy, S3Config
+from akernel_sdk import (
+    HttpReverseTunnel,
+    Mount,
+    NetworkPolicy,
+    NetworkRule,
+    PortRange,
+    S3Config,
+)
 from akernel_sdk._backends import openyuanrong_sdk_impl as _impl
 
 
@@ -108,8 +115,9 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mem_limit"):
             self.build_options(memory=4096, mem_limit=2048)
         for value in (0, -1):
-            with self.subTest(schedule_timeout=value), self.assertRaisesRegex(
-                ValueError, "schedule_timeout"
+            with (
+                self.subTest(schedule_timeout=value),
+                self.assertRaisesRegex(ValueError, "schedule_timeout"),
             ):
                 self.build_options(schedule_timeout=value)
 
@@ -137,6 +145,24 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
         self.assertEqual(
             json.loads(options.custom_extensions["network_policy"]),
             {"dnsBlacklist": ["github.com", "*.github.com"]},
+        )
+
+    def test_acl_v2_uses_custom_extension_wire_format(self):
+        policy = NetworkPolicy.allowlist(
+            [
+                NetworkRule(
+                    domain="api.github.com",
+                    protocol="tcp",
+                    port_range=PortRange(80, 443),
+                )
+            ]
+        )
+
+        options = self.build_options(network_policy=policy)
+
+        self.assertEqual(
+            json.loads(options.custom_extensions["network_policy"]),
+            policy.to_dict(),
         )
 
     def test_extra_config_uses_custom_extension_wire_format(self):

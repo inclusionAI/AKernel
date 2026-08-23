@@ -26,8 +26,14 @@ import yr_sandbox
 from ..types import (
     CommandInfo,
     CommandResult,
+    DNSPolicy,
+    DNSRule,
     EntryInfo,
+    NetworkPolicy,
+    NetworkRule,
+    PortRange,
     SandboxInfo,
+    TrafficPolicy,
 )
 from .base import (
     Backend,
@@ -40,6 +46,59 @@ from .errors import BackendOperationError, UnsupportedBackendFeatureError
 
 _NAMESPACE = "default"
 _DEFAULT_LISTEN_PORT = 8766
+
+
+def _native_port_range(value: PortRange | int | None) -> Any:
+    if value is None:
+        return None
+    assert isinstance(value, PortRange)
+    return yr_sandbox.PortRange(first=value.first, last=value.last)
+
+
+def _native_network_rule(rule: NetworkRule) -> Any:
+    return yr_sandbox.NetworkRule(
+        action=rule.action,
+        direction=rule.direction,
+        protocol=rule.protocol,
+        cidr=rule.cidr,
+        domain=rule.domain,
+        port_range=_native_port_range(rule.port_range),
+        sandbox_port_range=_native_port_range(rule.sandbox_port_range),
+        priority=rule.priority,
+    )
+
+
+def _native_traffic_policy(policy: TrafficPolicy | None) -> Any:
+    if policy is None:
+        return None
+    return yr_sandbox.TrafficPolicy(
+        ingress_default_action=policy.ingress_default_action,
+        egress_default_action=policy.egress_default_action,
+        rules=tuple(_native_network_rule(rule) for rule in policy.rules),
+        mode=policy.mode,
+    )
+
+
+def _native_dns_rule(rule: DNSRule) -> Any:
+    return yr_sandbox.DNSRule(pattern=rule.pattern, action=rule.action)
+
+
+def _native_dns_policy(policy: DNSPolicy | None) -> Any:
+    if policy is None:
+        return None
+    return yr_sandbox.DNSPolicy(
+        default_action=policy.default_action,
+        rules=tuple(_native_dns_rule(rule) for rule in policy.rules),
+    )
+
+
+def _native_network_policy(policy: NetworkPolicy) -> Any:
+    return yr_sandbox.NetworkPolicy(
+        block_network=policy.block_network,
+        dns_blacklist=policy.dns_blacklist,
+        traffic=_native_traffic_policy(policy.traffic),
+        dns=_native_dns_policy(policy.dns),
+    )
 
 
 def _convert_error(operation: str, error: Exception) -> BackendOperationError:
@@ -324,9 +383,7 @@ class OpenYuanRongSandboxBackend:
         os.environ["YR_SERVER_ADDRESS"] = config.api_endpoint.authority()
         os.environ["YR_TLS"] = "1" if config.api_endpoint.use_tls else "0"
         os.environ["YR_GATEWAY_ADDRESS"] = config.gateway_endpoint.authority()
-        os.environ["YR_GATEWAY_TLS"] = (
-            "1" if config.gateway_endpoint.use_tls else "0"
-        )
+        os.environ["YR_GATEWAY_TLS"] = "1" if config.gateway_endpoint.use_tls else "0"
         os.environ["YR_TOKEN"] = config.token
 
     def _validate(self, spec: SandboxSpec) -> None:
@@ -357,10 +414,7 @@ class OpenYuanRongSandboxBackend:
             )
         network = None
         if spec.network_policy is not None:
-            network = yr_sandbox.NetworkPolicy(
-                block_network=spec.network_policy.block_network,
-                dns_blacklist=spec.network_policy.dns_blacklist,
-            )
+            network = _native_network_policy(spec.network_policy)
         mounts = [
             yr_sandbox.Mount(
                 target=mount.target,

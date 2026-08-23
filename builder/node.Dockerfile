@@ -243,6 +243,7 @@ RUN apt-get update && \
         fuse3 \
         gnupg \
         iproute2 \
+        ipset \
         iptables \
         jq \
         kmod \

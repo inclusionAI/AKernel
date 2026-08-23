@@ -365,7 +365,7 @@ variable "extra_node_pools" {
 
 variable "sandboxd_nat_backend" {
   type        = string
-  description = "Sandboxd NAT backend. When set to 'iptables', ip_tables kernel module will be loaded at boot."
+  description = "Sandboxd NAT backend. The iptables mode loads IPv4/IPv6 bridge-netfilter modules at boot."
   default     = "iptables"
 }
 

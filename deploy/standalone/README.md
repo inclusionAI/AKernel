@@ -92,9 +92,10 @@ later creation of `sandbox0` cannot change the advertised node address. Set
 override.
 
 The standalone configuration enables per-sandbox network ACLs. With the
-default iptables backend, `start.sh` loads `br_netfilter` on the host before
-the node starts; the node then enables bridge netfilter in its own network
-namespace. The host also requires conntrack plus connmark/CONNMARK support.
+default iptables backend, `start.sh` loads IPv6 filter-table, `br_netfilter`,
+`xt_physdev`, conntrack/connmark, and timeout-capable ipset modules on the host
+before the node starts; the node then enables IPv4 and IPv6 bridge netfilter in
+its own network namespace.
 The optional bpfnat backend instead
 requires TC eBPF support and a writable bpffs. TCP and UDP port 53 on the
 sandbox bridge must remain free for sandboxd's managed DNS proxy. Before

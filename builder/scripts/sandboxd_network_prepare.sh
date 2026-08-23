@@ -57,11 +57,13 @@ fi
 # netfilter hooks. Host provisioning must load br_netfilter; this hook only
 # configures the node container's network namespace.
 if [[ "${enable_network_acl,,}" == "true" && "${nat_backend}" == "iptables" ]]; then
-    if [[ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ]]; then
+    if [[ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ||
+          ! -e /proc/sys/net/bridge/bridge-nf-call-ip6tables ]]; then
         echo "br_netfilter is unavailable; load it on the host before starting the AKernel node" >&2
         exit 1
     fi
     "${SYSCTL_BIN}" -w net.bridge.bridge-nf-call-iptables=1
+    "${SYSCTL_BIN}" -w net.bridge.bridge-nf-call-ip6tables=1
 fi
 
 # bpfnat validates this setting when its local-DNAT path is enabled. Apply it

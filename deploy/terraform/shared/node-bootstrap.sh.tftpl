@@ -27,7 +27,8 @@ systemctl enable akernel-tun-module.service
 systemctl start akernel-tun-module.service
 
 %{ if sandboxd_nat_backend == "iptables" ~}
-# ip_tables provides NAT and br_netfilter provides bridged ACL enforcement.
+# ip_tables provides NAT. IPv6 bridge filtering prevents traffic from bypassing
+# the IPv4-only ACL policy surface.
 cat >/etc/systemd/system/akernel-network-modules.service <<'EOF'
 [Unit]
 Description=Load AKernel iptables networking modules on boot
@@ -35,7 +36,7 @@ After=network-pre.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'modprobe ip_tables && modprobe br_netfilter'
+ExecStart=/bin/sh -c 'modprobe ip_tables && modprobe iptable_filter && modprobe ip6_tables && modprobe ip6table_filter && modprobe br_netfilter && modprobe xt_physdev && modprobe nf_conntrack && modprobe nf_conntrack_netlink && modprobe xt_conntrack && modprobe xt_connmark && modprobe ip_set && modprobe ip_set_hash_ip && modprobe xt_set'
 RemainAfterExit=yes
 
 [Install]

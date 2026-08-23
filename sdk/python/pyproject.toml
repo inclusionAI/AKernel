@@ -28,6 +28,7 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
+    "idna>=3,<4",
     "openyuanrong-sandbox==0.10.1rc3",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
@@ -35,15 +36,15 @@ dependencies = [
 
 [project.optional-dependencies]
 openyuanrong-sdk = [
-    "openyuanrong-sdk==0.9.9",
+    "openyuanrong-sdk==0.10.0",
 ]
 all = [
-    "openyuanrong-sdk==0.9.9",
+    "openyuanrong-sdk==0.10.0",
 ]
 dev = [
     "build>=1.2,<2",
     "mypy>=1.10,<2",
-    "openyuanrong-sdk==0.9.9",
+    "openyuanrong-sdk==0.10.0",
     "ruff>=0.11,<1",
 ]
 
@@ -81,7 +82,7 @@ warn_unused_ignores = true
 exclude = ["akernel_sdk/_instance.py"]
 
 [[tool.mypy.overrides]]
-module = ["yr", "yr.*"]
+module = ["yr", "yr.*", "yr_sandbox", "yr_sandbox.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

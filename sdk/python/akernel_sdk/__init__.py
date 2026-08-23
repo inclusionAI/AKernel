@@ -26,13 +26,18 @@ from ._backends.registry import selected_backend
 from .types import (
     CommandInfo,
     CommandResult,
+    DNSPolicy,
+    DNSRule,
     EntryInfo,
     HttpReverseTunnel,
     Mount,
     NetworkPolicy,
+    NetworkRule,
     NodeInfo,
+    PortRange,
     S3Config,
     SandboxInfo,
+    TrafficPolicy,
 )
 
 __all__ = [
@@ -40,6 +45,11 @@ __all__ = [
     "S3Config",
     "Mount",
     "NetworkPolicy",
+    "NetworkRule",
+    "PortRange",
+    "TrafficPolicy",
+    "DNSPolicy",
+    "DNSRule",
     "HttpReverseTunnel",
     "CommandResult",
     "CommandInfo",

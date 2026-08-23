@@ -37,6 +37,8 @@ from akernel_sdk.types import (
     HttpReverseTunnel,
     Mount,
     NetworkPolicy,
+    NetworkRule,
+    PortRange,
     S3Config,
 )
 
@@ -362,6 +364,40 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(network.dns_blacklist, ("github.com", "*.github.com"))
         session.close()
 
+    def test_create_converts_acl_v2_to_native_sdk_types(self):
+        native = MagicMock()
+        native.id = "default-worker"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        policy = NetworkPolicy.allowlist(
+            [
+                NetworkRule(
+                    domain="api.github.com",
+                    protocol="tcp",
+                    port_range=PortRange(80, 443),
+                    priority=110,
+                )
+            ]
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(_spec(network_policy=policy))
+
+        network = sandbox_type.call_args.kwargs["network"]
+        self.assertEqual(network.to_dict(), policy.to_dict())
+        self.assertIsInstance(
+            network.traffic.rules[0],
+            openyuanrong_sandbox.yr_sandbox.NetworkRule,
+        )
+        self.assertIsInstance(
+            network.traffic.rules[0].port_range,
+            openyuanrong_sandbox.yr_sandbox.PortRange,
+        )
+        session.close()
+
     def test_terminate_forces_deletion_of_detached_native_sandbox(self):
         native = MagicMock()
         native.id = "default-worker"
@@ -415,9 +451,7 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
                 None,
             ]
             session = self.backend.create(_spec(detached=True))
-            with self.assertRaisesRegex(
-                BackendOperationError, "remote delete failed"
-            ):
+            with self.assertRaisesRegex(BackendOperationError, "remote delete failed"):
                 try:
                     session.terminate()
                 finally:

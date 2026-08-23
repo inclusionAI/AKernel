@@ -153,7 +153,7 @@ with Sandbox() as unrestricted:
 ```
 
 Block new sandbox flows except the YuanRong control proxy and published
-sandbox-port routes:
+sandbox-port routes with the compatibility helper:
 
 ```python
 with Sandbox(network_policy=NetworkPolicy.block()) as sandbox:
@@ -181,24 +181,81 @@ with Sandbox(network_policy=policy) as sandbox:
 An exact pattern matches only that name. For example, `github.com` does not
 match `api.github.com`, while `*.github.com` matches descendants but not
 the apex. Supply both when both should be denied. Patterns are normalized to
-lower case without a trailing dot; international names must use ASCII
-punycode. Each pattern may be an exact ASCII name or begin with one leading
+lower-case ASCII without a trailing dot; international names are converted to
+punycode. Each pattern may be an exact name or begin with one leading
 `*.`. The remaining name is at most 253 characters; each dot-separated label
 is 1-63 letters, digits, underscores, or hyphens, and a hyphen cannot start or
 end a label. Other wildcard placements and `?` are rejected.
 
-Network policies are fixed when a sandbox is created. `block_network` and
-`dns_blacklist` cannot be combined in the current SDK. DNS blacklists cover
-ordinary UDP and TCP DNS and return a refused response for blocked queries;
-DNS-over-HTTPS and connections to a known IP are outside their scope. The
-block-network packet ACL is currently stateful IPv4. DNS-only policies do not
-install a general packet allowlist.
+Create an egress allowlist with the high-level helper. Rules may select an
+IPv4 address or CIDR, an exact or leading-wildcard DNS name, TCP or UDP peer
+ports, and a priority:
 
-See [`examples/network_policy.py`](./examples/network_policy.py) for all
-three modes. Deployment nodes must have network ACL support enabled; the
-bundled standalone, Helm, and Terraform configurations enable it. Drain
-existing sandboxes before upgrading a node to an ACL-enabled sandboxd
-configuration, as described in the
+```python
+from akernel_sdk import NetworkRule, PortRange
+
+policy = NetworkPolicy.allowlist(
+    [
+        NetworkRule(
+            domain="*.example.com",
+            protocol="tcp",
+            port_range=PortRange(443),
+            priority=200,
+        ),
+        NetworkRule(
+            cidr="192.0.2.10",
+            protocol="tcp",
+            port_range=PortRange(8000, 8010),
+        ),
+    ]
+)
+with Sandbox(network_policy=policy) as sandbox:
+    print(sandbox.commands.run("curl https://api.example.com").stdout)
+```
+
+For independent ingress and egress defaults, deny rules, sandbox-side port
+ranges, DNS allowlists, or stateless matching, construct the schema v2 model
+directly with `TrafficPolicy`, `NetworkRule`, `DNSPolicy`, and `DNSRule`.
+Traffic rules are evaluated by highest priority first; an equal-priority deny
+wins. Stateful mode is the default and permits reply traffic. Priority
+`4294967295` is reserved for control-plane and published-port rules, so user
+priorities are limited to `1..4294967294`.
+In stateless mode, a protected published-port rule covers ingress only; add an
+explicit egress rule for the matching sandbox source port when the application
+must send a reply. This avoids turning a published port into an unrestricted
+egress escape hatch.
+
+Domain traffic rules authorize IPv4 addresses learned from an allowed
+original DNS query, following its complete CNAME chain. The authorization
+uses the answer TTL, clamped to 1..3600 seconds, and is replaced when the name
+is resolved again with an IPv4 A or ANY query. Existing connections that
+depended on an expired or replaced authorization are removed. Parallel AAAA
+queries do not revoke IPv4 grants. DNS names not covered by a domain traffic
+rule can still resolve when the DNS policy allows the query, but their answers
+do not grant packet access. While a DNS policy or domain traffic rule is
+active, ordinary TCP and UDP DNS is accepted only through sandboxd's managed
+resolver; a traffic rule for another port-53 resolver does not bypass it.
+The resulting enforcement is at IPv4 and transport layers. Another virtual
+host sharing an authorized address and port is not distinguishable; use an
+application proxy when hostname-level isolation is required.
+
+Network policies are fixed when a sandbox is created. The legacy
+`block_network` and `dns_blacklist` fields cannot be combined with schema v2
+sections. DNS policies cover ordinary UDP and TCP DNS and return a refused
+response for denied queries; DNS-over-HTTPS and connections to a known IP are
+outside DNS filtering. Packet rules are IPv4. sandboxd accepts 256 combined
+traffic rules; the backend reserves entries from that limit for the Function
+Proxy and each distinct published sandbox port. IPv6 traffic is dropped
+whenever a traffic or DNS policy is active, preventing an alternate resolver
+from bypassing the IPv4 policy. Arbitrary non-IP Ethernet protocols are
+outside the portable ACL contract. Domain and DNS patterns are normalized
+through IDNA.
+
+See [`examples/network_policy.py`](./examples/network_policy.py) for the
+compatibility modes and generic allowlist. Deployment nodes must have network
+ACL support enabled; the bundled standalone, Helm, and Terraform
+configurations enable it. Drain existing sandboxes before upgrading a node to
+an ACL-enabled sandboxd configuration, as described in the
 [deployment guide](../../deploy/README.md#network-acls).
 
 ## Sandbox runtimes
@@ -595,7 +652,12 @@ not part of the default test suite.
 | `S3Config` | `endpoint`, `bucket`, `object`, optional credentials |
 | `Mount` | `target`, one source, and `type` |
 | `HttpReverseTunnel` | `target`, `reverse_port`, `listen_port`, `connect_timeout` |
-| `NetworkPolicy` | `block_network`, `dns_blacklist` |
+| `PortRange` | `first`, `last` |
+| `NetworkRule` | action, direction, protocol, peer and sandbox port selectors, priority |
+| `TrafficPolicy` | independent ingress/egress defaults, rules, mode |
+| `DNSRule` | `pattern`, `action` |
+| `DNSPolicy` | `default_action`, `rules` |
+| `NetworkPolicy` | legacy fields or schema v2 `traffic` and `dns` sections |
 | `DockerfileLaunch` | `context`, `auto_start_cmd`, `run_timeout` |
 | `DockerContext` | Abstract Dockerfile and build-context source |
 | `DockerContextEntry` | `path`, `kind`, `mode` |

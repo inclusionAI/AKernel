@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exercise unrestricted, fully blocked, and DNS-denylisted networking."""
+"""Exercise unrestricted, blocked, DNS-filtered, and allowlisted networking."""
 
 import shlex
 
-from akernel_sdk import NetworkPolicy, Sandbox
+from akernel_sdk import NetworkPolicy, NetworkRule, PortRange, Sandbox
 
 
 def tcp_connection(host: str, port: int) -> str:
@@ -60,6 +60,31 @@ def main() -> None:
         )
         assert allowed.exit_code == 0, allowed.stderr
         print("Allowed DNS and connection succeeded.")
+
+    allowlist = NetworkPolicy.allowlist(
+        [
+            NetworkRule(
+                domain="*.github.com",
+                protocol="tcp",
+                port_range=PortRange(443),
+                priority=200,
+            ),
+            NetworkRule(
+                cidr="192.0.2.10",
+                protocol="tcp",
+                port_range=PortRange(8443),
+            ),
+        ]
+    )
+    with Sandbox(network_policy=allowlist) as restricted:
+        allowed = restricted.commands.run(
+            tcp_connection("api.github.com", 443), timeout=30
+        )
+        assert allowed.exit_code == 0, allowed.stderr
+
+        denied = restricted.commands.run(tcp_connection("example.com", 443), timeout=10)
+        assert denied.exit_code != 0
+        print("Generic egress allowlist enforced domain and port rules.")
 
 
 if __name__ == "__main__":

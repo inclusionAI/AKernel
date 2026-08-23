@@ -18,11 +18,16 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from akernel_sdk import (
+    DNSPolicy,
+    DNSRule,
     DockerfileLaunch,
     HttpReverseTunnel,
     NetworkPolicy,
+    NetworkRule,
+    PortRange,
     S3Config,
     Sandbox,
+    TrafficPolicy,
 )
 from akernel_sdk import sandbox as sandbox_module
 from akernel_sdk._dockercontext import LocalDockerContext
@@ -224,13 +229,17 @@ class SandboxTest(unittest.TestCase):
 
     def test_runtime_identifier_validation(self):
         for value in (None, 1):
-            with self.subTest(value=value), self.assertRaisesRegex(
-                TypeError, "runtime must be a string"
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(TypeError, "runtime must be a string"),
             ):
                 Sandbox(runtime=value)
         for value in ("", "   "):
-            with self.subTest(value=value), self.assertRaisesRegex(
-                ValueError, "runtime must be a non-empty string"
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    ValueError, "runtime must be a non-empty string"
+                ),
             ):
                 Sandbox(runtime=value)
         self.backend.create.assert_not_called()
@@ -294,6 +303,106 @@ class SandboxTest(unittest.TestCase):
         )
         sandbox.kill()
 
+    def test_acl_v2_allowlist_is_normalized_and_passed_to_backend(self):
+        policy = NetworkPolicy.allowlist(
+            [
+                NetworkRule(
+                    cidr="10.20.30.40",
+                    protocol="tcp",
+                    port_range=22773,
+                    priority=110,
+                ),
+                NetworkRule(
+                    domain="BÜCHER.example.",
+                    protocol="tcp",
+                    port_range=PortRange(80, 443),
+                ),
+                NetworkRule(protocol="udp", port_range=53),
+            ]
+        )
+
+        sandbox = Sandbox(network_policy=policy)
+
+        spec = self.backend.create.call_args.args[0]
+        self.assertIs(spec.network_policy, policy)
+        self.assertEqual(
+            policy.to_dict(),
+            {
+                "schemaVersion": 2,
+                "traffic": {
+                    "ingressDefaultAction": "allow",
+                    "egressDefaultAction": "deny",
+                    "mode": "stateful",
+                    "rules": [
+                        {
+                            "action": "allow",
+                            "direction": "egress",
+                            "protocol": "tcp",
+                            "priority": 110,
+                            "peer": {
+                                "cidr": "10.20.30.40/32",
+                                "portRange": {"first": 22773, "last": 22773},
+                            },
+                        },
+                        {
+                            "action": "allow",
+                            "direction": "egress",
+                            "protocol": "tcp",
+                            "priority": 100,
+                            "peer": {
+                                "domain": "xn--bcher-kva.example",
+                                "portRange": {"first": 80, "last": 443},
+                            },
+                        },
+                        {
+                            "action": "allow",
+                            "direction": "egress",
+                            "protocol": "udp",
+                            "priority": 100,
+                            "peer": {"portRange": {"first": 53, "last": 53}},
+                        },
+                    ],
+                },
+            },
+        )
+        sandbox.kill()
+
+    def test_acl_v2_supports_low_level_traffic_and_dns_policies(self):
+        policy = NetworkPolicy(
+            traffic=TrafficPolicy(
+                ingress_default_action="deny",
+                egress_default_action="allow",
+                mode="stateless",
+                rules=(
+                    NetworkRule(
+                        action="deny",
+                        direction="ingress",
+                        protocol="tcp",
+                        cidr="192.0.2.129/24",
+                        sandbox_port_range=PortRange(8000, 8010),
+                        priority=200,
+                    ),
+                ),
+            ),
+            dns=DNSPolicy(
+                default_action="deny",
+                rules=(DNSRule("*.example.com", action="allow"),),
+            ),
+        )
+
+        self.assertEqual(policy.to_dict()["schemaVersion"], 2)
+        self.assertEqual(
+            policy.to_dict()["traffic"]["rules"][0]["peer"]["cidr"],
+            "192.0.2.0/24",
+        )
+        self.assertEqual(
+            policy.to_dict()["dns"],
+            {
+                "defaultAction": "deny",
+                "rules": [{"action": "allow", "pattern": "*.example.com"}],
+            },
+        )
+
     def test_empty_network_policy_is_treated_as_unrestricted(self):
         sandbox = Sandbox(network_policy=NetworkPolicy())
 
@@ -307,7 +416,21 @@ class SandboxTest(unittest.TestCase):
             lambda: NetworkPolicy(dns_blacklist="github.com"),
             lambda: NetworkPolicy.deny_dns(),
             lambda: NetworkPolicy.deny_dns("github.*"),
+            lambda: NetworkPolicy.deny_dns("github.com.."),
             lambda: NetworkPolicy(block_network=True, dns_blacklist=("github.com",)),
+            lambda: PortRange(0),
+            lambda: PortRange(100, 99),
+            lambda: NetworkRule(cidr="2001:db8::/32"),
+            lambda: NetworkRule(cidr="10.0.0.0/8", domain="example.com"),
+            lambda: NetworkRule(domain="*.example.com", direction="both"),
+            lambda: NetworkRule(protocol="any", port_range=443),
+            lambda: NetworkRule(priority=(1 << 32) - 1),
+            lambda: TrafficPolicy(rules=(NetworkRule(),) * 257),
+            lambda: NetworkPolicy(
+                block_network=True,
+                traffic=TrafficPolicy(),
+            ),
+            lambda: NetworkPolicy.allowlist(()),
         )
         for factory in invalid_factories:
             with (
@@ -327,8 +450,9 @@ class SandboxTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cpu_limit"):
             Sandbox(cpu=2000, cpu_limit=1000)
         for value in (0, -1, -2):
-            with self.subTest(schedule_timeout=value), self.assertRaisesRegex(
-                ValueError, "schedule_timeout"
+            with (
+                self.subTest(schedule_timeout=value),
+                self.assertRaisesRegex(ValueError, "schedule_timeout"),
             ):
                 Sandbox(schedule_timeout=value)
         self.backend.create.assert_not_called()

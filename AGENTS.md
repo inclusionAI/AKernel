@@ -219,14 +219,19 @@ usable `/dev/kvm` device.
 
 The bundled sandboxd configuration enables per-sandbox network ACLs. Pooled TAP
 networking requires the host `tun` module and a usable `/dev/net/tun`. The
-default iptables backend additionally requires `br_netfilter`, conntrack,
-connmark/CONNMARK, and bridge netfilter. The optional bpfnat backend instead
-requires eBPF `SCHED_CLS`, TC `clsact`, writable bpffs, and permission to load
-BPF programs and manage TC filters. Both require free TCP/UDP port 53 on the
-sandbox bridge. Drain existing sandboxes before enabling ACLs or upgrading a
+default iptables backend additionally requires `iptables`, `ip6tables`,
+`ipset`, IPv4/IPv6 filter tables, `br_netfilter`, `xt_physdev`, conntrack,
+conntrack-netlink, connmark/CONNMARK, timeout-capable `hash:ip` sets, and
+IPv4/IPv6 bridge netfilter. The optional bpfnat backend
+instead requires Linux 5.17 or newer for `bpf_loop`, eBPF `SCHED_CLS`, TC
+`clsact`, writable bpffs, and permission to load BPF programs and manage TC
+filters. Both require free TCP/UDP port 53 on the sandbox bridge. Drain
+existing sandboxes before enabling ACLs or upgrading a
 node from a pre-ACL configuration; sandboxd refuses to initialize ACLs when
 old sandbox records remain. A sandbox without a network policy stays
-unrestricted. See `deploy/README.md` for deployment requirements and
+unrestricted. Schema v2 supports independent ingress and egress defaults,
+allow and deny rules over IPv4 CIDRs, domains, protocols, and ports, plus an
+independent DNS policy. See `deploy/README.md` for deployment requirements and
 `sdk/python/README.md` for API limits.
 
 Dragonfly distribution is optional and disabled by default. Enable it during
@@ -350,6 +355,18 @@ from akernel_sdk import NetworkPolicy, Sandbox
 
 with Sandbox(network_policy=NetworkPolicy.block()) as sb:
     print(sb.commands.run("echo control-plane-access").stdout)
+```
+
+Configure a generic egress allowlist:
+
+```python
+from akernel_sdk import NetworkPolicy, NetworkRule
+
+policy = NetworkPolicy.allowlist(
+    [NetworkRule(domain="*.example.com", protocol="tcp", port_range=443)]
+)
+with Sandbox(network_policy=policy) as sb:
+    print(sb.commands.run("curl https://api.example.com").stdout)
 ```
 
 Required environment:

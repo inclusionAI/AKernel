@@ -206,7 +206,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 - [x] Kata Containers runtime on KVM-capable nodes
 - [x] Firecracker microVM runtime on KVM-capable nodes
 - [x] Optional native Linux runc runtime
-- [x] Sandbox network ACL
+- [x] Stateful sandbox network ACLs for CIDRs, domains, protocols, and ports
 - [ ] Fork-based sandbox launch based on gVisor
 - [x] Same-node checkpoint recovery for runsc and Firecracker
 - [ ] Support for GKE and AWS

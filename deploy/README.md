@@ -57,17 +57,21 @@ The bundled standalone, Helm, and Terraform sandboxd configurations enable
 per-sandbox network ACLs. Runsc, Kata, and Firecracker require the host `tun`
 module and a usable `/dev/net/tun` for their pooled TAP endpoints. A sandbox
 created without a policy remains on the unrestricted fast path. The default
-`iptables` backend additionally requires `ip_tables`, `br_netfilter`,
-conntrack, connmark/CONNMARK support, and
-`net.bridge.bridge-nf-call-iptables=1`. The optional `bpfnat` backend instead
-requires Linux eBPF `SCHED_CLS`, TC `clsact`, supported hash and array maps, a
-writable bpffs at `/sys/fs/bpf` (or permission to mount one), and permission
-to load BPF programs and manage TC filters. Both backends require TCP and UDP
-port 53 on the sandbox bridge to be free and at least one usable upstream
-nameserver. AKernel's privileged node container prepares the selected
-backend's namespace-local settings. Host provisioning must load the required
-kernel modules before the node pod starts; the Terraform node bootstrap does
-this automatically.
+`iptables` backend additionally requires the `iptables`, `ip6tables`, and
+`ipset` userspace commands; IPv4/IPv6 filter-table, `br_netfilter`,
+`xt_physdev`, conntrack and conntrack-netlink, connmark/CONNMARK, and
+timeout-capable `hash:ip` ipset support; and both bridge netfilter sysctls for
+iptables and ip6tables set to `1`. Sandboxd probes the IPv6 physdev rule and
+the required ipset type when it initializes this backend. The optional `bpfnat`
+backend instead requires Linux 5.17 or newer for `bpf_loop`, eBPF
+`SCHED_CLS`, TC `clsact`,
+supported hash and array maps, a writable bpffs at `/sys/fs/bpf` (or
+permission to mount one), and permission to load BPF programs and manage TC
+filters. Both backends require TCP and UDP port 53 on the sandbox bridge to be
+free and at least one usable upstream nameserver. AKernel's privileged node
+container prepares the selected backend's namespace-local settings. Host
+provisioning must load the required kernel modules before the node pod starts;
+the Terraform node bootstrap does this automatically.
 
 Drain all sandboxes from a node before enabling ACLs or upgrading an existing
 deployment to a release that enables them. Sandboxd deliberately refuses to
@@ -78,6 +82,8 @@ sandboxd is healthy.
 Sandboxd selects the ACL implementation matching the configured `iptables` or
 `bpfnat` NAT backend. DNS policies manage each sandbox's `/etc/resolv.conf`; a
 caller mount that owns that path is rejected while ACL support is enabled.
+Schema v2 domain traffic rules also use the managed DNS proxy to install
+TTL-bound address grants, even when no separate DNS policy is supplied.
 
 `make config` is interactive by default. It writes:
 

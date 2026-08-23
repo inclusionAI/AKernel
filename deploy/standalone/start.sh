@@ -308,19 +308,44 @@ prepare_host_network_modules() {
     fi
 
     if [[ "$(id -u)" -eq 0 ]]; then
+        "${modprobe_bin}" ip_tables
+        "${modprobe_bin}" iptable_filter
+        "${modprobe_bin}" ip6_tables
+        "${modprobe_bin}" ip6table_filter
         "${modprobe_bin}" br_netfilter
-    elif sudo -n "${modprobe_bin}" br_netfilter; then
+        "${modprobe_bin}" xt_physdev
+        "${modprobe_bin}" nf_conntrack
+        "${modprobe_bin}" nf_conntrack_netlink
+        "${modprobe_bin}" xt_conntrack
+        "${modprobe_bin}" xt_connmark
+        "${modprobe_bin}" ip_set
+        "${modprobe_bin}" ip_set_hash_ip
+        "${modprobe_bin}" xt_set
+    elif sudo -n "${modprobe_bin}" ip_tables &&
+         sudo -n "${modprobe_bin}" iptable_filter &&
+         sudo -n "${modprobe_bin}" ip6_tables &&
+         sudo -n "${modprobe_bin}" ip6table_filter &&
+         sudo -n "${modprobe_bin}" br_netfilter &&
+         sudo -n "${modprobe_bin}" xt_physdev &&
+         sudo -n "${modprobe_bin}" nf_conntrack &&
+         sudo -n "${modprobe_bin}" nf_conntrack_netlink &&
+         sudo -n "${modprobe_bin}" xt_conntrack &&
+         sudo -n "${modprobe_bin}" xt_connmark &&
+         sudo -n "${modprobe_bin}" ip_set &&
+         sudo -n "${modprobe_bin}" ip_set_hash_ip &&
+         sudo -n "${modprobe_bin}" xt_set; then
         :
     else
-        log_error "Unable to load br_netfilter; run this script as root or allow passwordless sudo for modprobe"
+        log_error "Unable to load required iptables ACL modules; run this script as root or allow passwordless sudo for modprobe"
         exit 1
     fi
 
-    if [[ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ]]; then
+    if [[ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ||
+          ! -e /proc/sys/net/bridge/bridge-nf-call-ip6tables ]]; then
         log_error "br_netfilter loaded but bridge netfilter sysctls are unavailable"
         exit 1
     fi
-    log_info "Loaded host br_netfilter module for the iptables ACL backend"
+    log_info "Loaded host filter, bridge, conntrack, and ipset modules for the iptables ACL backend"
 }
 
 # Start the AKernel all-in-one container. Traefik runs separately so traffic
