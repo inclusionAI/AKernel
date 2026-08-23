@@ -207,7 +207,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 - [x] Optional native Linux runc runtime
 - [x] Sandbox network ACL
 - [ ] Fork-based sandbox launch based on gVisor
-- [ ] Sandbox checkpoint and restore
+- [x] Sandbox checkpoint and restore for runsc and Firecracker
 - [ ] Support for GKE and AWS
 - [x] Cgroup v2 node support
 

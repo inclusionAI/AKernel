@@ -368,6 +368,12 @@ quotas for runsc and Firecracker use this local-disk filestore. Without an
 explicit quota, runsc retains its configured memory-backed overlay while
 Firecracker creates its configured sparse ext4 default.
 
+The bundled node enables YuanRong's sandbox snapshot data plane with the
+DataSystem backend and uses `/home/yuanrong/checkpoints` as node-local staging.
+The public SDK does not expose snapshot TTLs: reusable checkpoints remain
+until explicitly deleted. Keep the DataSystem backend and checkpoint staging
+configuration enabled together when changing node startup arguments.
+
 Keep detailed SDK reference material with the SDK. The root README should
 contain only the project-level entry points and representative examples:
 

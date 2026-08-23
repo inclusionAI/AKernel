@@ -57,6 +57,12 @@ rather than tmpfs. Without `storage_mb`, runsc retains its configured
 memory-backed overlay while Firecracker uses its configured sparse ext4
 default.
 
+Sandbox checkpoints for runsc and Firecracker are published through the
+embedded YuanRong DataSystem. `/home/yuanrong/checkpoints` is only the node's
+local staging directory; SDK checkpoint records have no automatic TTL and are
+retained until `Sandbox.delete_checkpoint()` is called. A restored sandbox is
+a new sandbox and receives fresh network routes.
+
 `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
 starting the pooled-TAP runtimes. Runc retains its separate veth network path.
 

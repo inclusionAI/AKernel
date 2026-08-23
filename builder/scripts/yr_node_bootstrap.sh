@@ -41,6 +41,8 @@ resolve_node_ip() {
 
 YR_NODE_IP="$(resolve_node_ip)"
 echo "Using ${YR_NODE_IP} as the YuanRong node address"
+CHECKPOINT_DIR="/home/yuanrong/checkpoints"
+mkdir -p "${CHECKPOINT_DIR}"
 
 # Select the legacy etcd registry or the FunctionMaster HTTP provider.
 if [ "${TRAEFIK_MODE:-etcd}" = "etcd" ]; then
@@ -107,6 +109,9 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --iam_local_ip 127.0.0.1 \
         --frontend_lease_bypass true \
         --force_low_reliability_instance true \
+        --enable_sandbox_pause_resume true \
+        --snapshot_storage_backend datasystem \
+        --checkpoint_dir "${CHECKPOINT_DIR}" \
         --enable_sandbox_router true \
         --enable_direct_routing false
 else
@@ -145,5 +150,8 @@ else
         --function_proxy_merge_process_enable true \
         --enable_direct_routing false \
         --force_low_reliability_instance true \
+        --enable_sandbox_pause_resume true \
+        --snapshot_storage_backend datasystem \
+        --checkpoint_dir "${CHECKPOINT_DIR}" \
         --block true
 fi
