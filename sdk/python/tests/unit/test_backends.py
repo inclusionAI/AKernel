@@ -464,6 +464,118 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             self.backend.delete_named("worker")
         delete.assert_called_once_with("default-worker")
 
+    def test_checkpoint_delegates_to_reusable_snapshot_api(self):
+        native = MagicMock()
+        native.id = "default-source"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.create_snapshot.return_value = SimpleNamespace(
+            snapshot_id="checkpoint-1"
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+            self.assertEqual(session.checkpoint(timeout=240), "checkpoint-1")
+
+        native.create_snapshot.assert_called_once_with(timeout=240)
+
+    def test_checkpoint_uses_official_backend_default_timeout(self):
+        native = MagicMock()
+        native.id = "default-source"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        calls = []
+
+        def create_snapshot():
+            calls.append(True)
+            return SimpleNamespace(snapshot_id="checkpoint-1")
+
+        native.create_snapshot = create_snapshot
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+            self.assertEqual(session.checkpoint(timeout=180), "checkpoint-1")
+
+        self.assertEqual(calls, [True])
+
+    def test_checkpoint_rejects_custom_timeout_on_official_backend(self):
+        native = MagicMock()
+        native.id = "default-source"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.create_snapshot = lambda: SimpleNamespace(
+            snapshot_id="checkpoint-1"
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+            with self.assertRaisesRegex(
+                UnsupportedBackendFeatureError,
+                "default 180-second",
+            ):
+                session.checkpoint(timeout=240)
+
+    def test_restore_uses_snapshot_template_and_explicit_tunnel(self):
+        native = MagicMock()
+        native.id = "default-restored"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        tunnel = HttpReverseTunnel(
+            "https://new-target.example",
+            reverse_port=9000,
+            listen_port=9001,
+            connect_timeout=12,
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+        ) as sandbox_type:
+            sandbox_type.create.return_value = native
+            session = self.backend.restore(
+                "checkpoint-1",
+                reverse_tunnel=tunnel,
+            )
+
+        self.assertEqual(session.id, "default-restored")
+        sandbox_type.create.assert_called_once_with(
+            "checkpoint-1",
+            upstream="https://new-target.example",
+            tunnel_connect_timeout=12,
+            proxy_port=9001,
+        )
+
+    def test_checkpoint_catalog_pages_and_deletes(self):
+        first = ([SimpleNamespace(snapshot_id="checkpoint-1")], "next")
+        second = ([SimpleNamespace(snapshot_id="checkpoint-2")], "")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox.Sandbox,
+            "list_snapshots",
+            side_effect=[first, second],
+        ) as list_snapshots, patch.object(
+            openyuanrong_sandbox.yr_sandbox.Sandbox,
+            "delete_snapshot",
+        ) as delete_snapshot:
+            self.assertEqual(
+                self.backend.list_checkpoints(),
+                ["checkpoint-1", "checkpoint-2"],
+            )
+            self.backend.delete_checkpoint("checkpoint-1")
+
+        self.assertEqual(list_snapshots.call_count, 2)
+        delete_snapshot.assert_called_once_with("checkpoint-1")
+
 
 class OpenYuanRongSdkBackendTest(unittest.TestCase):
     def setUp(self):
@@ -597,6 +709,14 @@ class OpenYuanRongSdkBackendTest(unittest.TestCase):
             self.backend.close()
 
         finalize.assert_called_once_with()
+
+    def test_reusable_checkpoint_operations_are_explicitly_unsupported(self):
+        with self.assertRaises(UnsupportedBackendFeatureError):
+            self.backend.restore("checkpoint-1", reverse_tunnel=None)
+        with self.assertRaises(UnsupportedBackendFeatureError):
+            self.backend.list_checkpoints()
+        with self.assertRaises(UnsupportedBackendFeatureError):
+            self.backend.delete_checkpoint("checkpoint-1")
 
 
 if __name__ == "__main__":

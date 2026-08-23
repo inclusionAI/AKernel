@@ -99,5 +99,50 @@ class SandboxIntegrationTest(unittest.TestCase):
         self.assertIn(b"PTY_AFTER_INTERRUPT", output)
 
 
+@unittest.skipUnless(
+    _ENABLED,
+    "set AKERNEL_RUN_INTEGRATION=1 and the AKernel SDK environment",
+)
+class SandboxCheckpointIntegrationTest(unittest.TestCase):
+    def test_checkpoint_restore_and_delete(self):
+        source = Sandbox(cpu=1000, memory=2048, runtime=_RUNTIME)
+        restored = None
+        checkpoint = None
+        try:
+            source_id = source.id
+            created = source.commands.run(
+                "printf checkpoint-before > /tmp/akernel-checkpoint-state && sync"
+            )
+            self.assertEqual(created.exit_code, 0)
+
+            checkpoint = source.checkpoint(timeout=180)
+            self.assertTrue(source.is_running())
+            checkpoint_ids = {item.id for item in Sandbox.list_checkpoints()}
+            self.assertIn(checkpoint.id, checkpoint_ids)
+
+            changed = source.commands.run(
+                "printf source-after > /tmp/akernel-checkpoint-state && sync"
+            )
+            self.assertEqual(changed.exit_code, 0)
+
+            restored = Sandbox.restore(checkpoint)
+            self.assertNotEqual(restored.id, source_id)
+            restored_value = restored.commands.run(
+                "cat /tmp/akernel-checkpoint-state"
+            )
+            self.assertEqual(restored_value.exit_code, 0)
+            self.assertEqual(restored_value.stdout, "checkpoint-before")
+            self.assertEqual(
+                source.commands.run("cat /tmp/akernel-checkpoint-state").stdout,
+                "source-after",
+            )
+        finally:
+            if restored is not None:
+                restored.kill()
+            source.kill()
+            if checkpoint is not None:
+                Sandbox.delete_checkpoint(checkpoint)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,13 @@ import unittest
 from pathlib import Path
 
 import akernel_sdk
-from akernel_sdk import DockerContextEntry, HttpReverseTunnel, Mount, S3Config
+from akernel_sdk import (
+    CheckpointInfo,
+    DockerContextEntry,
+    HttpReverseTunnel,
+    Mount,
+    S3Config,
+)
 
 
 class PublicTypesTest(unittest.TestCase):
@@ -69,6 +75,7 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
             set(akernel_sdk.__all__),
             {
                 "Sandbox",
+                "CheckpointInfo",
                 "S3Config",
                 "Mount",
                 "NetworkPolicy",
@@ -119,6 +126,14 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
         self.assertEqual(entry.path, "empty")
         with self.assertRaisesRegex(AttributeError, "cannot assign"):
             entry.mode = 0o700  # type: ignore[misc]
+
+    def test_checkpoint_info_is_public_normalized_and_immutable(self):
+        checkpoint = CheckpointInfo(" checkpoint-1 ")
+        self.assertEqual(checkpoint.id, "checkpoint-1")
+        with self.assertRaisesRegex(AttributeError, "cannot assign"):
+            checkpoint.id = "changed"  # type: ignore[misc]
+        with self.assertRaises(ValueError):
+            CheckpointInfo(" ")
 
     def test_s3_config_serialization(self):
         config = S3Config(
