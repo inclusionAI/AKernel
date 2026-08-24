@@ -232,15 +232,6 @@
                 "noexec",
                 "nodev"
             ]
-        },
-        {
-            "destination": "/etc/resolv.conf",
-            "type": "bind",
-            "source": "/etc/resolv.conf",
-            "options": [
-                "bind",
-                "ro"
-            ]
         }
     ],
     "linux": {
