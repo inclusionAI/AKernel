@@ -1,3 +1,13 @@
+%{ if registry_auths_enabled ~}
+imagePullSecrets:
+  - name: registry-secret
+
+imagePullSecret:
+  create: true
+  name: "registry-secret"
+  dockerconfigjson: "${dockerconfigjson}"
+%{ endif ~}
+
 kruise:
   enabled: ${enable_kruise}
 
@@ -68,6 +78,7 @@ frontend:
 %{ endif ~}
 
 node:
+  sandboxIPRange: "172.17.0.1/16"
   image:
     repository: "${node_image_repository}"
     tag: "${node_image_tag}"
@@ -136,7 +147,7 @@ node:
         stream_server_port=""
 
         [plugin.network]
-        ip_range="172.17.0.1/16"
+        ip_range="{{ .Values.node.sandboxIPRange }}"
         nat_backend="${sandboxd_nat_backend}"
         enable_network_acl=true
 

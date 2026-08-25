@@ -94,18 +94,8 @@ spec:
                 secretKeyRef:
                   name: {{ include "core.litebusSecretName" . }}
                   key: litebus-data-key
-            - name: ENABLE_FUNCTION_MASTER
-              value: "false"
-            - name: ENABLE_FUNCTION_SCHEDULER
-              value: "false"
-            - name: ENABLE_META_SERVICE
-              value: "false"
-            - name: ENABLE_IAM_SERVER
-              value: "true"
             - name: META_SERVICE_ADDRESS
               value: {{ .Values.frontend.master.metaServiceAddress | default (printf "akernel-master.%s.svc.cluster.local:31111" .Release.Namespace) | quote }}
-            - name: IAM_SERVER_ADDRESS
-              value: {{ .Values.frontend.master.iamServerAddress | default (printf "akernel-master.%s.svc.cluster.local:31112" .Release.Namespace) | quote }}
             - name: ETCD_ADDRESS
               value: {{ get $frontendEtcd "host" | default (printf "akernel-etcd.%s.svc.cluster.local" .Release.Namespace) | quote }}
             - name: ETCD_PORT
@@ -124,10 +114,14 @@ spec:
             {{- end }}
             - name: AKERNEL_ENV
               value: {{ .Values.monitoring.akernelEnv | default "default" | quote }}
+            {{- if .Values.monitoring.prometheusEndpoint }}
             - name: ENABLE_METRICS
-              value: {{ ne (.Values.monitoring.prometheusEndpoint | default "") "" | ternary "true" "false" | quote }}
+              value: "true"
+            {{- end }}
+            {{- if .Values.monitoring.tempoEndpoint }}
             - name: ENABLE_TRACE
-              value: {{ ne (.Values.monitoring.tempoEndpoint | default "") "" | ternary "true" "false" | quote }}
+              value: "true"
+            {{- end }}
           ports:
             - name: http
               containerPort: 8888

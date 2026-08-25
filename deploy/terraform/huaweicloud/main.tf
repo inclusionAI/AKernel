@@ -39,8 +39,10 @@ locals {
   } : {}
   oss_auths = merge(local.generated_oss_auths, var.oss_auths)
   registry_auths = {
-    auths = { for host, cred in var.registry_auths : host => { username = cred.username, password = cred.password } }
+    auths = { for host, cred in var.registry_auths : host => { auth = base64encode("${cred.username}:${cred.password}") } }
   }
+  registry_auths_enabled = length(var.registry_auths) > 0
+  dockerconfigjson       = base64encode(jsonencode(local.registry_auths))
 
   # When auto-creating ELB on Huawei Cloud CCE, inject required annotations
   # so the cloud-controller-manager provisions the ELB automatically.
@@ -119,6 +121,8 @@ locals {
     node_home_csi_size             = var.node_home_csi_size
     oss_auths                      = local.oss_auths
     registry_auths                 = local.registry_auths
+    registry_auths_enabled         = local.registry_auths_enabled
+    dockerconfigjson               = local.dockerconfigjson
 
     etcd_cpu         = var.etcd_resources.cpu
     etcd_memory      = var.etcd_resources.memory
