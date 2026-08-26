@@ -56,8 +56,10 @@ Address behavior is deterministic:
 - A host or IP without a port uses HTTPS/WSS on 443 for the frontend and HTTP
   on 80 for public sandbox port URLs.
 - `host:port` uses that port as a shared HTTPS/WSS endpoint.
-- `AKERNEL_GATEWAY_ADDRESS` overrides the port-forwarding and exec gateway for
-  standalone or custom topologies. An override without a scheme uses HTTP/WS.
+- `AKERNEL_GATEWAY_ADDRESS` overrides only the port-forwarding and reverse
+  tunnel gateway for standalone or custom topologies. An override without a
+  scheme uses HTTP/WS. Exec and file transfer continue to use
+  `AKERNEL_SERVER_ADDRESS`.
 
 The legacy actor backend is optional. Install and select it before importing
 `akernel_sdk`:

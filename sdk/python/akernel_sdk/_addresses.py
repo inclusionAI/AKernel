@@ -152,15 +152,7 @@ def gateway_endpoint_from_env() -> Endpoint:
 def exec_endpoint_from_env() -> Endpoint:
     """Return the endpoint used by the exec WebSocket (/terminal/ws).
 
-    File copy and PTY traffic use an explicit AKERNEL gateway override when
-    configured; otherwise they use the API endpoint.  The default
-    cluster/public path is therefore WSS on 443 or the explicit server port.
+    File copy and PTY traffic terminate on the frontend alongside the API, so
+    they always follow AKERNEL_SERVER_ADDRESS.
     """
-    override = os.environ.get("AKERNEL_GATEWAY_ADDRESS", "").strip()
-    if override:
-        return _parse_endpoint(
-            override,
-            default_port=DEFAULT_PUBLIC_PORT,
-            default_scheme="http",
-        )
     return api_endpoint_from_env()

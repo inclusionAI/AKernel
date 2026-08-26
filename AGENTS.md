@@ -345,8 +345,10 @@ export AKERNEL_SERVER_ADDRESS=<traefik-container-ip>
 ```
 
 No separate `AKERNEL_GATEWAY_ADDRESS` is required for the default standalone
-layout. Standalone uses `akerneldev/all-in-one:latest` by default; pass `IMAGE`
-to test a locally built or differently tagged image.
+layout. When a custom topology sets it, the override applies only to public
+sandbox port URLs and reverse tunnels; exec and file transfer continue to use
+`AKERNEL_SERVER_ADDRESS`. Standalone uses `akerneldev/all-in-one:latest` by
+default; pass `IMAGE` to test a locally built or differently tagged image.
 
 Standalone GPU testing additionally requires NVIDIA Container Toolkit on the
 host and `AKERNEL_ENABLE_GPU=true`. sandboxd uses the read-only cgroup

@@ -157,9 +157,8 @@ class Filesystem:
 
     def _get_connection(self) -> tuple[str, str, str, str, bool]:
         # File copy is implemented by the frontend exec WebSocket
-        # (/terminal/ws).  By default it follows AKERNEL_SERVER_ADDRESS and
-        # uses TLS; standalone or custom topologies can override it with
-        # AKERNEL_GATEWAY_ADDRESS/YR_GATEWAY_ADDRESS.
+        # (/terminal/ws), so it follows AKERNEL_SERVER_ADDRESS and uses the
+        # same TLS setting as the frontend API.
         endpoint = exec_endpoint_from_env()
         instance_id = self._instance_id
         if not instance_id:

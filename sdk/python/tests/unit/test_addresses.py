@@ -55,7 +55,7 @@ class AddressConfigTest(unittest.TestCase):
                 endpoint_tuple(gateway_endpoint_from_env()), gateway_expected
             )
 
-    def test_gateway_override_defaults_to_plain_http(self):
+    def test_gateway_override_only_affects_public_gateway(self):
         with patch.dict(
             os.environ,
             {
@@ -64,9 +64,14 @@ class AddressConfigTest(unittest.TestCase):
             },
             clear=True,
         ):
-            expected = ("http", "127.0.0.1", 8081, False)
-            self.assertEqual(endpoint_tuple(exec_endpoint_from_env()), expected)
-            self.assertEqual(endpoint_tuple(gateway_endpoint_from_env()), expected)
+            self.assertEqual(
+                endpoint_tuple(exec_endpoint_from_env()),
+                ("https", "10.0.0.1", 8888, True),
+            )
+            self.assertEqual(
+                endpoint_tuple(gateway_endpoint_from_env()),
+                ("http", "127.0.0.1", 8081, False),
+            )
 
     def test_gateway_override_respects_scheme(self):
         with patch.dict(
@@ -78,7 +83,7 @@ class AddressConfigTest(unittest.TestCase):
             clear=True,
         ):
             self.assertEqual(
-                endpoint_tuple(exec_endpoint_from_env()),
+                endpoint_tuple(gateway_endpoint_from_env()),
                 ("https", "gw.example.com", 9443, True),
             )
 
