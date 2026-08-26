@@ -38,7 +38,7 @@ RUN apt-get update && \
         libgcc-s1 \
         tini && \
     rm -rf /var/lib/apt/lists/* && \
-    cp /usr/bin/tini /usr/bin/tini-static && \
+    test -x /usr/bin/tini-static && \
     /usr/bin/tini-static --version
 
 RUN mkdir -p /var/task/code /__yuanrong && \
