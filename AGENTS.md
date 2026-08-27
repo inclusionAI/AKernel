@@ -123,6 +123,11 @@ runtimes and `openyuanrong_sdk`. `builder/node.Dockerfile` then compiles the
 node components and produces the AKernel all-in-one image using the selected
 runtime image and its matching service configuration.
 
+The control-plane and RRT release version is independent of the optional
+actor-based `openyuanrong_sdk` installed in the Python runtime profile. Keep
+the latter on its explicitly pinned legacy version unless that backend is
+being upgraded and tested as a separate compatibility change.
+
 Initialize submodules with `git submodule update --init --recursive` before
 building. The all-in-one image builds the sandboxd binaries, including
 `firecracker-agent`, and `distill_fs`; installs checksum-pinned gVisor and Kata

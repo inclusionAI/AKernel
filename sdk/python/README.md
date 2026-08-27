@@ -603,7 +603,9 @@ PYTHONPATH=sdk/python \
 ```
 
 Load and transfer benchmarks live under [`benchmarks/`](./benchmarks) and are
-not part of the default test suite.
+not part of the default test suite. The manual
+[Harbor Deep-SWE checkpoint/restore E2E](./docs/deep-swe-checkpoint-restore-e2e.md)
+defines the application-level Firecracker restore acceptance case.
 
 ## Public value types
 
