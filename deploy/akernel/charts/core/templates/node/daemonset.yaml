@@ -72,7 +72,7 @@ spec:
               - bash
               - -c
               - |
-                cp /etc/resolv.conf /etc/resolv_akernel.conf && sed -i 's/127.0.0.1/172.17.0.1/g' /etc/resolv_akernel.conf
+                cp /etc/resolv.conf /etc/resolv_akernel.conf && sed -i 's/127.0.0.1/10.88.0.1/g' /etc/resolv_akernel.conf
         resources:
           {{- toYaml .Values.node.resources | nindent 10 }}
         env:
