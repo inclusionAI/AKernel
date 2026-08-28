@@ -23,6 +23,7 @@ TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
+YR_RRT_CONTROL_SOCKET_PATH="${YR_RRT_CONTROL_SOCKET_PATH-/run/openyuanrong}"
 LITEBUS_DATA_KEY=""
 
 # Container runtime command (docker or pouch)
@@ -330,12 +331,31 @@ start_node_container() {
     # FunctionMaster's HTTP provider publishes the per-sandbox routes required
     # by reverse tunnels; the legacy etcd mode cannot publish those routes.
 
+    local snapshot_backend="${AKERNEL_SNAPSHOT_STORAGE_BACKEND:-datasystem}"
+    local snapshot_docker_env=(
+        -e AKERNEL_SNAPSHOT_STORAGE_BACKEND="${snapshot_backend}"
+    )
+    if [ "${snapshot_backend}" = "s3" ]; then
+        snapshot_docker_env+=(
+            -e AKERNEL_SNAPSHOT_S3_PROVIDER="${AKERNEL_SNAPSHOT_S3_PROVIDER:-}"
+            -e AKERNEL_SNAPSHOT_S3_ENDPOINT="${AKERNEL_SNAPSHOT_S3_ENDPOINT:-}"
+            -e AKERNEL_SNAPSHOT_S3_REGION="${AKERNEL_SNAPSHOT_S3_REGION:-}"
+            -e AKERNEL_SNAPSHOT_S3_BUCKET="${AKERNEL_SNAPSHOT_S3_BUCKET:-}"
+            -e AKERNEL_SNAPSHOT_S3_ACCESS_KEY
+            -e AKERNEL_SNAPSHOT_S3_SECRET_KEY
+            -e AKERNEL_SNAPSHOT_S3_SECURITY_TOKEN
+            -e AKERNEL_SNAPSHOT_S3_USE_HTTPS="${AKERNEL_SNAPSHOT_S3_USE_HTTPS:-true}"
+            -e AKERNEL_SNAPSHOT_S3_PATH_STYLE="${AKERNEL_SNAPSHOT_S3_PATH_STYLE:-true}"
+        )
+    fi
+
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
         --name "${NODE_CONTAINER_NAME}" \
         --privileged \
         --net bridge \
         --restart always \
         -e AKS_LOCAL_MODE="true" \
+        "${snapshot_docker_env[@]}" \
         -e TRAEFIK_MODE="http" \
         -e TRAEFIK_HTTP_ENTRYPOINT="web" \
         -e TRAEFIK_ENABLE_TLS="false" \
@@ -347,6 +367,7 @@ start_node_container() {
         -e TZ=Asia/Shanghai \
         -e ENABLE_TRACE="${ENABLE_TRACE:-false}" \
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
+        -e YR_RRT_CONTROL_SOCKET_PATH="${YR_RRT_CONTROL_SOCKET_PATH}" \
         "${PROXY_RUN_ARGS[@]}" \
         "${GPU_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \

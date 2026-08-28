@@ -1,5 +1,19 @@
 core:
   createNamespace: false
+  snapshot:
+    storage:
+      backend: datasystem
+      s3:
+        provider: generic
+        endpoint: ""
+        region: us-east-1
+        bucket: ""
+        existingSecret: ""
+        accessKeyKey: access-key
+        secretKeyKey: secret-key
+        securityTokenKey: security-token
+        useHttps: true
+        pathStyle: true
 
 monitor:
   enabled: true

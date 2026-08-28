@@ -32,7 +32,14 @@ from ._sandbox_resources import normalize_xpu, validate_storage_mb
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
 from .pty import Pty
-from .types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config, SandboxInfo
+from .types import (
+    CheckpointInfo,
+    HttpReverseTunnel,
+    Mount,
+    NetworkPolicy,
+    S3Config,
+    SandboxInfo,
+)
 
 _traefik_internal_ip_cache: str | None = None
 logger = logging.getLogger(__name__)
@@ -135,6 +142,17 @@ def _validate_integer(
         raise ValueError(f"{name} must be greater than or equal to {minimum}")
 
 
+def _checkpoint_id(checkpoint: CheckpointInfo | str) -> str:
+    if isinstance(checkpoint, CheckpointInfo):
+        return checkpoint.id
+    if not isinstance(checkpoint, str):
+        raise TypeError("checkpoint must be a CheckpointInfo or string")
+    value = checkpoint.strip()
+    if not value:
+        raise ValueError("checkpoint must be a non-empty string")
+    return value
+
+
 def _get_traefik_internal_ip(gateway: Endpoint) -> tuple[str, int]:
     """Resolve Traefik's direct address for ``internal=True`` URLs."""
 
@@ -186,6 +204,7 @@ class Sandbox:
         detached: bool = False,
         node_id: str | None = None,
         *,
+        failover: bool = False,
         xpu: str | None = None,
         storage_mb: int | None = None,
         network_policy: NetworkPolicy | None = None,
@@ -213,6 +232,8 @@ class Sandbox:
             reverse_tunnel: SDK-side HTTP service exposed inside the sandbox.
             detached: Keep the sandbox alive when this client closes.
             node_id: Require placement on a specific AKernel node.
+            failover: Restore this sandbox on the same node from its latest
+                local anonymous checkpoint after a sandbox failure.
             xpu: Experimental whole-device accelerator request in
                 ``type:model:count`` format. Currently only exact-model NVIDIA
                 GPU requests are supported. The backend validates runtime
@@ -291,6 +312,8 @@ class Sandbox:
                 raise ValueError("cwd must be an absolute POSIX path")
         if not isinstance(detached, bool):
             raise TypeError("detached must be a boolean")
+        if not isinstance(failover, bool):
+            raise TypeError("failover must be a boolean")
         if node_id is not None:
             if not isinstance(node_id, str):
                 raise TypeError("node_id must be a string")
@@ -362,6 +385,7 @@ class Sandbox:
                 if network_policy is None or network_policy.is_empty
                 else network_policy
             ),
+            failover=failover,
             extra_config=normalized_extra_config,
         )
         self._session = load_backend().create(spec)
@@ -443,6 +467,120 @@ class Sandbox:
 
         return self._reverse_tunnel
 
+    def checkpoint(
+        self,
+        *,
+        timeout: int = 180,
+        leave_running: bool = True,
+    ) -> CheckpointInfo:
+        """Create a reusable checkpoint of this sandbox.
+
+        The checkpoint has no TTL and remains available until explicitly
+        deleted with :meth:`delete_checkpoint`. A successful checkpoint is an
+        immutable template; each restore creates a new sandbox identity with
+        fresh placement and routes.
+
+        Args:
+            timeout: Positive checkpoint timeout in seconds.
+            leave_running: Keep this source sandbox running after success.
+
+        Returns:
+            The stable checkpoint identity.
+        """
+
+        _validate_integer("timeout", timeout, minimum=1)
+        if not isinstance(leave_running, bool):
+            raise TypeError("leave_running must be a boolean")
+        if self._closed or self._session is None or not self.is_running():
+            raise RuntimeError("checkpoint requires a running sandbox")
+        checkpoint = CheckpointInfo(self._session.checkpoint(timeout=timeout))
+        if not leave_running:
+            self.kill()
+        return checkpoint
+
+    @classmethod
+    def restore(
+        cls,
+        checkpoint: CheckpointInfo | str,
+        *,
+        reverse_tunnel: HttpReverseTunnel | None = None,
+    ) -> Sandbox:
+        """Restore an independent sandbox from a reusable checkpoint.
+
+        Runtime, root filesystem, resources, mounts, environment, network
+        policy, and exposed-port shape are inherited from the checkpoint.
+        Resource overrides and in-place rollback are intentionally not part of
+        v1. A source created with a reverse tunnel requires an explicit tunnel
+        with the same ports here; its target and connect timeout may differ.
+        """
+
+        checkpoint_id = _checkpoint_id(checkpoint)
+        if reverse_tunnel is not None and not isinstance(
+            reverse_tunnel, HttpReverseTunnel
+        ):
+            raise TypeError("reverse_tunnel must be an HttpReverseTunnel")
+        session = load_backend().restore(
+            checkpoint_id,
+            reverse_tunnel=reverse_tunnel,
+        )
+        restored = cls.__new__(cls)
+        restored._session = session
+        restored._startup_command = None
+        restored._pty = None
+        restored._closed = False
+        restored._terminated = False
+        restored._reverse_tunnel = reverse_tunnel
+        restored._forwarded_ports = set()
+        restored._image = None
+        restored._cpu = 0
+        restored._memory = 0
+        restored._xpu = None
+        restored._storage_mb = None
+        restored._id = ""
+        try:
+            restored._id = session.id
+            restored._files = Filesystem(session.files)
+            restored._commands = Commands(session.commands)
+            restored._pty = Pty(restored._id)
+            info = session.get_info()
+            restored._image = info.image
+            restored._cpu = info.cpu if info.cpu is not None else 0
+            restored._memory = info.memory if info.memory is not None else 0
+            restored._xpu = info.xpu
+            restored._storage_mb = info.storage_mb
+        except Exception:
+            restored._closed = True
+            try:
+                session.terminate()
+            except Exception:
+                logger.warning(
+                    "failed to roll back a partially initialized restore",
+                    exc_info=True,
+                )
+            try:
+                session.close()
+            except Exception:
+                logger.warning(
+                    "failed to close a partially initialized restore session",
+                    exc_info=True,
+                )
+            raise
+        return restored
+
+    @classmethod
+    def list_checkpoints(cls) -> list[CheckpointInfo]:
+        """List reusable checkpoints visible to the current tenant."""
+
+        del cls
+        return [CheckpointInfo(value) for value in load_backend().list_checkpoints()]
+
+    @classmethod
+    def delete_checkpoint(cls, checkpoint: CheckpointInfo | str) -> None:
+        """Permanently delete one reusable checkpoint."""
+
+        del cls
+        load_backend().delete_checkpoint(_checkpoint_id(checkpoint))
+
     def get_port_url(self, port: int, *, internal: bool = False) -> str:
         """Return the gateway URL for a declared sandbox port.
 
@@ -480,6 +618,13 @@ class Sandbox:
         if self._closed or self._session is None:
             return False
         return self._session.is_running()
+
+    def reload(self) -> bool:
+        """Restore this sandbox from its latest local anonymous checkpoint."""
+
+        if self._closed or self._session is None:
+            return False
+        return bool(self._session.reload())
 
     def get_info(self) -> SandboxInfo:
         """Return current sandbox state and requested resources."""

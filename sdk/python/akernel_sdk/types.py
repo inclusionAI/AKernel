@@ -161,6 +161,21 @@ class SandboxInfo:
 
 
 @dataclass(frozen=True)
+class CheckpointInfo:
+    """Stable identity of a reusable sandbox checkpoint."""
+
+    id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str):
+            raise TypeError("id must be a string")
+        normalized = self.id.strip()
+        if not normalized:
+            raise ValueError("id must be a non-empty string")
+        object.__setattr__(self, "id", normalized)
+
+
+@dataclass(frozen=True)
 class NodeInfo:
     """Capacity, allocation, and labels advertised by an AKernel node."""
 

@@ -16,13 +16,20 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from collections.abc import Mapping
 from typing import Any
 
 import yr_sandbox
 
-from ..types import CommandInfo, CommandResult, EntryInfo, SandboxInfo
+from ..types import (
+    CommandInfo,
+    CommandResult,
+    EntryInfo,
+    HttpReverseTunnel,
+    SandboxInfo,
+)
 from .base import (
     Backend,
     BackendConfig,
@@ -246,6 +253,48 @@ class _Session:
             storage_mb=self._spec.storage_mb,
         )
 
+    def reload(self) -> bool:
+        if self._terminated or self._closed:
+            return False
+        try:
+            return bool(self._sandbox.reload())
+        except Exception:
+            return False
+
+    def checkpoint(self, *, timeout: int) -> str:
+        if self._terminated or self._closed:
+            raise BackendOperationError("checkpoint requires a running sandbox")
+        create_snapshot = self._sandbox.create_snapshot
+        try:
+            parameters = inspect.signature(create_snapshot).parameters.values()
+            supports_timeout = any(
+                parameter.name == "timeout"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+        except (TypeError, ValueError):
+            # Unknown callable signatures are treated as current backends. If
+            # they reject the keyword, the normal backend error includes the
+            # native failure instead of silently changing timeout semantics.
+            supports_timeout = True
+        if not supports_timeout and timeout != 180:
+            raise UnsupportedBackendFeatureError(
+                "The installed openyuanrong-sandbox backend only supports "
+                "the default 180-second checkpoint timeout. Upgrade the "
+                "backend to use a custom timeout."
+            )
+        try:
+            if supports_timeout:
+                value = create_snapshot(timeout=timeout)
+            else:
+                value = create_snapshot()
+        except Exception as error:
+            raise _convert_error("checkpoint sandbox", error) from error
+        checkpoint_id = str(value.snapshot_id).strip()
+        if not checkpoint_id:
+            raise BackendOperationError("checkpoint returned an empty identity")
+        return checkpoint_id
+
     def terminate(self) -> None:
         if self._terminated:
             return
@@ -280,6 +329,7 @@ class OpenYuanRongSandboxBackend:
         {
             Capability.S3_ROOTFS,
             Capability.NODE_PLACEMENT,
+            Capability.CHECKPOINT_RESTORE,
         }
     )
 
@@ -373,12 +423,93 @@ class OpenYuanRongSandboxBackend:
                 xpu=spec.xpu,
                 storage_mb=spec.storage_mb,
                 network=network,
+                failover=spec.failover,
                 extra_config=dict(spec.extra_config),
                 create_timeout=create_timeout,
             )
         except Exception as error:
             raise _convert_error("create sandbox", error) from error
         return _Session(sandbox, spec)
+
+    def restore(
+        self,
+        checkpoint_id: str,
+        *,
+        reverse_tunnel: HttpReverseTunnel | None,
+    ) -> BackendSession:
+        if reverse_tunnel is not None and (
+            reverse_tunnel.reverse_port != reverse_tunnel.listen_port - 1
+        ):
+            raise UnsupportedBackendFeatureError(
+                "Backend 'openyuanrong-sandbox' requires reverse_port to equal "
+                "listen_port - 1."
+            )
+        try:
+            sandbox = yr_sandbox.Sandbox.create(
+                checkpoint_id,
+                upstream=(
+                    reverse_tunnel.target if reverse_tunnel is not None else None
+                ),
+                tunnel_connect_timeout=(
+                    reverse_tunnel.connect_timeout
+                    if reverse_tunnel is not None
+                    else None
+                ),
+                proxy_port=(
+                    reverse_tunnel.listen_port
+                    if reverse_tunnel is not None
+                    else _DEFAULT_LISTEN_PORT
+                ),
+            )
+        except Exception as error:
+            raise _convert_error("restore checkpoint", error) from error
+        restored_spec = SandboxSpec(
+            image=None,
+            rootfs=None,
+            runtime="runsc",
+            cpu=1000,
+            memory=4096,
+            cpu_limit=0,
+            mem_limit=0,
+            idle_timeout=300,
+            schedule_timeout=30,
+            env={},
+            name=None,
+            command_cwd=None,
+            port_forwardings=(),
+            mounts=(),
+            reverse_tunnel=reverse_tunnel,
+            detached=False,
+            node_id=None,
+            xpu=None,
+            storage_mb=None,
+            network_policy=None,
+            failover=False,
+            extra_config={},
+        )
+        return _Session(sandbox, restored_spec)
+
+    def list_checkpoints(self) -> list[str]:
+        checkpoint_ids: list[str] = []
+        page_token: str | None = None
+        try:
+            while True:
+                items, next_page_token = yr_sandbox.Sandbox.list_snapshots(
+                    page_token=page_token,
+                    page_size=100,
+                )
+                checkpoint_ids.extend(str(item.snapshot_id) for item in items)
+                if not next_page_token:
+                    return checkpoint_ids
+                page_token = next_page_token
+        except Exception as error:
+            raise _convert_error("list checkpoints", error) from error
+
+    def delete_checkpoint(self, checkpoint_id: str) -> None:
+        try:
+            yr_sandbox.Sandbox.delete_snapshot(checkpoint_id)
+        except Exception as error:
+            raise _convert_error("delete checkpoint", error) from error
 
     def delete_named(self, name: str) -> None:
         sandbox_id = f"{self.namespace}-{name}"

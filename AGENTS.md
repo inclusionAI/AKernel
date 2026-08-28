@@ -370,6 +370,25 @@ quotas for runsc and Firecracker use this local-disk filestore. Without an
 explicit quota, runsc retains its configured memory-backed overlay while
 Firecracker creates its configured sparse ext4 default.
 
+The bundled node always enables YuanRong's sandbox snapshot data plane; there
+is no separate global pause/resume/snapshot switch. It uses the DataSystem
+backend by default and `/home/akernel/checkpoints` on the
+existing node home disk as same-node persistent staging. Remote storage uses
+only `snapshot_storage_backend=s3` with the shared SigV4 client and provider
+profiles `generic`, `obs`, or `oss`; the old snapshot OBS backend and
+`snapshot_obs_*` settings are unsupported. Provider profiles must allow legal
+private endpoints and CNAMEs, while OSS requires virtual-hosted addressing.
+Remote snapshots over 5 GiB are rejected before upload until multipart copy is
+implemented. Do not remove the independent DataSystem backend or the unrelated
+object-storage code-package downloader.
+Kubernetes node roles use the downward-API `NODE_NAME` as the stable YuanRong
+node identity, so a DaemonSet Pod replacement on the same physical node can
+rebuild its local runtime and snapshot views. Standalone falls back to the
+container hostname.
+The public SDK does not expose snapshot TTLs: reusable checkpoints remain
+until explicitly deleted. Keep the selected remote backend and checkpoint
+staging configuration together when changing node startup arguments.
+
 Keep detailed SDK reference material with the SDK. The root README should
 contain only the project-level entry points and representative examples:
 

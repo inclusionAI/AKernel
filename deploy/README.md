@@ -207,6 +207,34 @@ image:
 Each component can still override `master.image`, `frontend.image`, or
 `node.image` when a split-image deployment is required.
 
+### Snapshot object storage
+
+The core chart keeps the existing DataSystem snapshot backend by default. To
+use S3-compatible object storage, create a Secret containing encrypted
+credentials and configure the single S3 backend:
+
+```yaml
+core:
+  snapshot:
+    storage:
+      backend: s3
+      s3:
+        provider: generic # generic, obs, or oss
+        endpoint: minio.storage.svc:9000
+        region: us-east-1
+        bucket: akernel-snapshots
+        existingSecret: akernel-snapshot-s3
+        useHttps: false
+        pathStyle: true
+```
+
+The Secret keys default to `access-key`, `secret-key`, and the optional
+`security-token`. All providers share the same AWS Signature V4 client;
+profiles do not select provider SDKs or restrict valid private endpoints and
+CNAMEs. OSS requires virtual-hosted addressing. The removed `backend=obs` and
+`snapshot_obs_*` configuration are not accepted. Remote snapshots larger than
+5 GiB fail before upload because multipart CopyObject is not supported yet.
+
 ### Public Traefik entrypoints
 
 For cloud deployments, use Traefik with two public entrypoints:

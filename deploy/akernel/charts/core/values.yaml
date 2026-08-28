@@ -23,6 +23,27 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
+# Directory exposed inside RRT sandboxes for the optional control socket.
+# Empty disables the socket and the in-sandbox POST /checkpoint endpoint.
+rrtControlSocketPath: "/run/openyuanrong"
+
+# Snapshot-backed sandbox lifecycle data plane.
+snapshot:
+  storage:
+    backend: datasystem
+    s3:
+      # Supported provider profiles: generic, obs, oss.
+      provider: generic
+      endpoint: ""
+      region: us-east-1
+      bucket: ""
+      existingSecret: ""
+      accessKeyKey: access-key
+      secretKeyKey: secret-key
+      securityTokenKey: security-token
+      useHttps: true
+      pathStyle: true
+
 auth:
   # Existing Secret that contains the JWT signing seed. For
   # `helm template | kubectl apply`, prefer pre-creating this Secret with
@@ -379,15 +400,6 @@ node:
                       "noexec",
                       "nodev"
                   ]
-              },
-              {
-                "destination": "/etc/resolv.conf",
-                "type": "bind",
-                "source": "/etc/resolv_akernel.conf",
-                "options": [
-                  "bind",
-                  "ro"
-                ]
               }
           ],
           "linux": {

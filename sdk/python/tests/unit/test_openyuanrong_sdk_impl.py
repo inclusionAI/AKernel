@@ -42,6 +42,7 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
             "xpu": None,
             "storage_mb": None,
             "network_policy": None,
+            "failover": False,
             "extra_config": {},
         }
         values.update(overrides)
@@ -149,6 +150,11 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
             json.loads(options.custom_extensions["extra_config"]),
             {"featureFlag": True, "labels": ["one", "two"]},
         )
+
+    def test_failover_uses_typed_native_option(self):
+        options = self.build_options(failover=True)
+
+        self.assertIs(options.failover, True)
 
     def test_node_info_conversion(self):
         node = _impl._to_node_info(

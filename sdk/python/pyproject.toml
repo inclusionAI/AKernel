@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
-    "openyuanrong-sandbox==0.9.9",
+    "openyuanrong-sandbox==0.9.10",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
 ]

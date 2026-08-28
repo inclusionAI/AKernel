@@ -22,6 +22,7 @@ It supports two backends:
   - [Filesystem](#filesystem)
   - [Interactive PTYs](#interactive-ptys)
   - [Port forwarding](#port-forwarding)
+  - [Checkpoint and restore](#checkpoint-and-restore)
   - [Reverse tunnels](#reverse-tunnels)
   - [Rootfs and mounts](#rootfs-and-mounts)
   - [Launch from a Dockerfile](#launch-from-a-dockerfile)
@@ -101,6 +102,7 @@ Sandbox(
     detached: bool = False,
     node_id: str | None = None,
     *,
+    failover: bool = False,
     xpu: str | None = None,
     storage_mb: int | None = None,
     network_policy: NetworkPolicy | None = None,
@@ -108,6 +110,23 @@ Sandbox(
     extra_config: Mapping[str, object] | None = None,
 )
 ```
+
+Set `failover=True` to opt into same-node recovery. If the sandbox has a valid
+local checkpoint, recovery restores it. If the node explicitly reports that no
+anonymous checkpoint exists, AKernel cold-starts the same logical sandbox on
+the same physical node with its original creation parameters. Snapshot lookup,
+metadata, validation, and restore errors do not silently fall back to a cold
+start. The default is `False`; enabling the policy does not create a checkpoint
+by itself.
+
+`sandbox.reload()` follows the same selection rule: it restores the latest
+valid local checkpoint, or cold-starts on the original node when no checkpoint
+exists, and returns only `True` or `False`. Existing `commands`, `files`, and
+PTY factories remain owned by the original `Sandbox` object; no replacement
+handle is returned. Completed `CommandResult` values remain readable. A cold
+start does not preserve sandbox memory, writable-file changes, or the RRT
+process table, so an incomplete command handle from the old runtime fails
+instead of being associated with a PID in the new runtime.
 
 ### Experimental GPU and writable storage
 
@@ -354,6 +373,67 @@ with Sandbox(port_forwardings=[8080]) as sandbox:
 deployment operator explicitly wants the direct Traefik address instead of the
 public gateway.
 
+## Checkpoint and restore
+
+Create an immutable checkpoint of a running sandbox and restore it as a new,
+independent sandbox:
+
+```python
+from akernel_sdk import Sandbox
+
+checkpoint = None
+try:
+    with Sandbox(runtime="runsc") as source:
+        source.commands.run("printf before > /tmp/state && sync")
+        checkpoint = source.checkpoint(timeout=180)
+        source.commands.run("printf after > /tmp/state")
+
+    with Sandbox.restore(checkpoint) as restored:
+        assert restored.id != source.id
+        assert restored.commands.run("cat /tmp/state").stdout == "before"
+finally:
+    if checkpoint is not None:
+        Sandbox.delete_checkpoint(checkpoint)
+```
+
+`checkpoint()` keeps the source running by default. Set
+`leave_running=False` to terminate it after the checkpoint commits. Checkpoints
+do not expire and must be removed explicitly with `delete_checkpoint()`;
+`list_checkpoints()` returns all checkpoint identities visible to the current
+tenant.
+
+Each restore gets a new sandbox ID, placement, network attachment, and routes.
+The runtime, root filesystem, resources, mounts, environment, network policy,
+and filesystem/process state come from the checkpoint. v1 does not support
+in-place rollback or restore-time resource and configuration overrides.
+
+The bundled backend supports checkpoints for runsc and Firecracker. A restore
+must use compatible runtime binaries, architecture, kernel, and runtime
+configuration. The cluster prefers the source node when it is available and
+may fall back to another compatible node through the configured snapshot
+storage.
+
+When the deployment uses the S3-compatible snapshot backend, remote checkpoint
+objects are limited to 5 GiB. Larger checkpoints fail before upload because
+this version does not support multipart CopyObject; the independent DataSystem
+backend is unaffected. This is an operator-selected storage capability rather
+than an SDK-side size override.
+
+For a checkpoint created from a sandbox with a reverse tunnel, pass an
+explicit `reverse_tunnel` to `restore()` using the same `reverse_port` and
+`listen_port`. The target and connection timeout may change. A checkpoint made
+without a tunnel rejects adding one during restore. The source tunnel is
+briefly disconnected during checkpoint creation and then reconnected.
+
+Checkpoint/restore is available through the default `openyuanrong-sandbox`
+backend. The legacy `openyuanrong-sdk` actor backend reports it as unsupported.
+The current official backend package supports the default 180-second
+checkpoint timeout. Custom checkpoint timeouts and checkpointing a sandbox
+with an active reverse tunnel require a backend release containing the
+corresponding YuanRong changes.
+See [`examples/checkpoint_restore.py`](./examples/checkpoint_restore.py) for a
+runnable example.
+
 ## Reverse tunnels
 
 A reverse tunnel lets sandbox code call an HTTP or HTTPS service reachable
@@ -521,6 +601,7 @@ Maintained examples are under [`examples/`](./examples):
 
 - `basic_usage.py`
 - `command_stdin.py`
+- `checkpoint_restore.py`
 - `custom_image.py`
 - `dockerfile_launch.py`
 - `gpu_sandbox.py`
@@ -558,6 +639,7 @@ not part of the default test suite.
 | `CommandInfo` | `pid`, `command`, `running` |
 | `EntryInfo` | `name`, `path`, `type`, `size`, `permissions`, `modified_time` |
 | `SandboxInfo` | `id`, `state`, `cpu`, `memory`, `image`, `xpu`, `storage_mb` |
+| `CheckpointInfo` | `id` |
 | `NodeInfo` | `id`, `status`, `capacity`, `allocatable`, `labels` |
 | `S3Config` | `endpoint`, `bucket`, `object`, optional credentials |
 | `Mount` | `target`, one source, and `type` |

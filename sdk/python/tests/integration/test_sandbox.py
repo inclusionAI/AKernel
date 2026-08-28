@@ -17,6 +17,7 @@ import time
 import unittest
 
 from akernel_sdk import Sandbox
+from akernel_sdk._backends.errors import BackendOperationError
 
 _ENABLED = (
     os.environ.get("AKERNEL_RUN_INTEGRATION") == "1"
@@ -24,6 +25,9 @@ _ENABLED = (
     and bool(os.environ.get("AKERNEL_TOKEN"))
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
+_RECOVERY_ENABLED = (
+    _ENABLED and os.environ.get("AKERNEL_RUN_RECOVERY_INTEGRATION") == "1"
+)
 
 
 @unittest.skipUnless(
@@ -97,6 +101,91 @@ class SandboxIntegrationTest(unittest.TestCase):
             self.assertEqual(session.wait(timeout=30), 0)
 
         self.assertIn(b"PTY_AFTER_INTERRUPT", output)
+
+
+@unittest.skipUnless(
+    _ENABLED,
+    "set AKERNEL_RUN_INTEGRATION=1 and the AKernel SDK environment",
+)
+class SandboxCheckpointIntegrationTest(unittest.TestCase):
+    def test_checkpoint_restore_and_delete(self):
+        source = Sandbox(cpu=1000, memory=2048, runtime=_RUNTIME)
+        restored = None
+        checkpoint = None
+        try:
+            source_id = source.id
+            created = source.commands.run(
+                "printf checkpoint-before > /tmp/akernel-checkpoint-state && sync"
+            )
+            self.assertEqual(created.exit_code, 0)
+
+            checkpoint = source.checkpoint(timeout=180)
+            self.assertTrue(source.is_running())
+            checkpoint_ids = {item.id for item in Sandbox.list_checkpoints()}
+            self.assertIn(checkpoint.id, checkpoint_ids)
+
+            changed = source.commands.run(
+                "printf source-after > /tmp/akernel-checkpoint-state && sync"
+            )
+            self.assertEqual(changed.exit_code, 0)
+
+            restored = Sandbox.restore(checkpoint)
+            self.assertNotEqual(restored.id, source_id)
+            restored_value = restored.commands.run("cat /tmp/akernel-checkpoint-state")
+            self.assertEqual(restored_value.exit_code, 0)
+            self.assertEqual(restored_value.stdout, "checkpoint-before")
+            self.assertEqual(
+                source.commands.run("cat /tmp/akernel-checkpoint-state").stdout,
+                "source-after",
+            )
+        finally:
+            if restored is not None:
+                restored.kill()
+            source.kill()
+            if checkpoint is not None:
+                Sandbox.delete_checkpoint(checkpoint)
+
+
+@unittest.skipUnless(
+    _RECOVERY_ENABLED,
+    "set AKERNEL_RUN_RECOVERY_INTEGRATION=1 with the SDK environment",
+)
+class SandboxColdRecoveryIntegrationTest(unittest.TestCase):
+    def test_reload_without_snapshot_cold_starts_same_logical_sandbox(self):
+        sandbox = Sandbox(
+            cpu=1000,
+            memory=2048,
+            runtime=_RUNTIME,
+            failover=True,
+        )
+        try:
+            logical_id = sandbox.id
+            facades = (sandbox.commands, sandbox.files, sandbox.pty)
+            completed = sandbox.commands.run("printf completed-before-cold-start")
+            sandbox.files.write("/tmp/cold-start-only", "old-runtime")
+            pending = sandbox.commands.run("sleep 60", background=True)
+
+            self.assertIs(sandbox.reload(), True)
+
+            self.assertEqual(sandbox.id, logical_id)
+            self.assertEqual((sandbox.commands, sandbox.files, sandbox.pty), facades)
+            self.assertEqual(completed.stdout, "completed-before-cold-start")
+            self.assertEqual(
+                sandbox.commands.run("test ! -e /tmp/cold-start-only").exit_code,
+                0,
+            )
+            self.assertEqual(
+                sandbox.commands.run("printf command-after-cold-start").stdout,
+                "command-after-cold-start",
+            )
+            try:
+                old_result = pending.wait(timeout=10)
+            except BackendOperationError:
+                pass
+            else:
+                self.assertNotEqual(old_result.exit_code, 0)
+        finally:
+            sandbox.kill()
 
 
 if __name__ == "__main__":

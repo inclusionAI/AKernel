@@ -41,6 +41,7 @@ class Capability(Enum):
     NODE_PLACEMENT = auto()
     CUSTOM_REVERSE_TUNNEL_PORTS = auto()
     REVERSE_WEBSOCKET = auto()
+    CHECKPOINT_RESTORE = auto()
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,7 @@ class SandboxSpec:
     xpu: str | None
     storage_mb: int | None
     network_policy: NetworkPolicy | None
+    failover: bool
     extra_config: Mapping[str, object]
 
 
@@ -149,6 +151,10 @@ class BackendSession(Protocol):
 
     def get_info(self) -> SandboxInfo: ...
 
+    def reload(self) -> bool: ...
+
+    def checkpoint(self, *, timeout: int) -> str: ...
+
     def terminate(self) -> None: ...
 
     def close(self) -> None: ...
@@ -162,6 +168,17 @@ class Backend(Protocol):
     capabilities: frozenset[Capability]
 
     def create(self, spec: SandboxSpec) -> BackendSession: ...
+
+    def restore(
+        self,
+        checkpoint_id: str,
+        *,
+        reverse_tunnel: HttpReverseTunnel | None,
+    ) -> BackendSession: ...
+
+    def list_checkpoints(self) -> list[str]: ...
+
+    def delete_checkpoint(self, checkpoint_id: str) -> None: ...
 
     def delete_named(self, name: str) -> None: ...
 

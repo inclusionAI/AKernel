@@ -121,7 +121,11 @@ jobs:
           sudo modprobe loop
           sudo modprobe erofs
           sudo modprobe br_netfilter
+          sudo modprobe kvm
+          sudo modprobe kvm_intel || sudo modprobe kvm_amd || true
           test -c /dev/net/tun
+          test -c /dev/kvm
+          sudo chmod 0666 /dev/kvm
           sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
 
       - name: Build all-in-one image
@@ -164,6 +168,25 @@ jobs:
           for example in "${examples[@]}"; do
             echo "=== Running ${example} ==="
             timeout 120s python "sdk/python/examples/${example}"
+          done
+
+      - name: Run runsc and Firecracker checkpoint restore E2E
+        run: |
+          gateway_ip="$(docker inspect \
+            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+            akernel-traefik)"
+          test -n "${gateway_ip}"
+          token="$(cat deploy/standalone/data/token)"
+          export AKERNEL_TOKEN="${token}"
+          export AKERNEL_SERVER_ADDRESS="${gateway_ip}"
+          export AKERNEL_RUN_INTEGRATION=1
+          export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
+
+          for runtime in runsc firecracker; do
+            echo "=== Checkpoint/restore runtime=${runtime} ==="
+            AKERNEL_TEST_RUNTIME="${runtime}" timeout 300s python \
+              sdk/python/tests/integration/test_sandbox.py \
+              SandboxCheckpointIntegrationTest -v
           done
 
       - name: Show standalone diagnostics

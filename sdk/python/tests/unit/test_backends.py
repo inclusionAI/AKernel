@@ -63,6 +63,7 @@ def _spec(**overrides):
         "xpu": None,
         "storage_mb": None,
         "network_policy": None,
+        "failover": False,
         "extra_config": MappingProxyType({}),
     }
     values.update(overrides)
@@ -196,6 +197,59 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             sandbox_type.call_args.kwargs["extra_config"],
             {"featureFlag": True},
         )
+
+    def test_failover_is_forwarded_to_native_sandbox_sdk(self):
+        native = MagicMock()
+        native.id = "default-failover"
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            self.backend.create(_spec(failover=True))
+
+        self.assertIs(sandbox_type.call_args.kwargs["failover"], True)
+
+    def test_reload_cold_start_success_keeps_native_session_and_facades(self):
+        native = MagicMock()
+        native.id = "default-reload"
+        native.reload.return_value = True
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        self.assertIs(session.reload(), True)
+        native.reload.assert_called_once_with()
+
+    def test_incomplete_old_command_handle_fails_after_cold_start(self):
+        native = MagicMock()
+        native.id = "default-cold-start-handle"
+        native.reload.return_value = True
+        old_handle = MagicMock()
+        old_handle.pid = 321
+        old_handle.wait.side_effect = RuntimeError(
+            "process handle is unavailable after cold start"
+        )
+        native.commands.run.return_value = old_handle
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        pid = session.commands.start(
+            "sleep 60", envs=None, cwd=None, stdin=False
+        )
+        self.assertIs(session.reload(), True)
+
+        with self.assertRaisesRegex(
+            BackendOperationError, "unavailable after cold start"
+        ):
+            session.commands.wait(pid, 30)
 
     def test_explicit_kata_image_is_forwarded_to_native_sdk(self):
         native = MagicMock()
@@ -464,6 +518,118 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             self.backend.delete_named("worker")
         delete.assert_called_once_with("default-worker")
 
+    def test_checkpoint_delegates_to_reusable_snapshot_api(self):
+        native = MagicMock()
+        native.id = "default-source"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.create_snapshot.return_value = SimpleNamespace(
+            snapshot_id="checkpoint-1"
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+            self.assertEqual(session.checkpoint(timeout=240), "checkpoint-1")
+
+        native.create_snapshot.assert_called_once_with(timeout=240)
+
+    def test_checkpoint_uses_official_backend_default_timeout(self):
+        native = MagicMock()
+        native.id = "default-source"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        calls = []
+
+        def create_snapshot():
+            calls.append(True)
+            return SimpleNamespace(snapshot_id="checkpoint-1")
+
+        native.create_snapshot = create_snapshot
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+            self.assertEqual(session.checkpoint(timeout=180), "checkpoint-1")
+
+        self.assertEqual(calls, [True])
+
+    def test_checkpoint_rejects_custom_timeout_on_official_backend(self):
+        native = MagicMock()
+        native.id = "default-source"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.create_snapshot = lambda: SimpleNamespace(
+            snapshot_id="checkpoint-1"
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+            with self.assertRaisesRegex(
+                UnsupportedBackendFeatureError,
+                "default 180-second",
+            ):
+                session.checkpoint(timeout=240)
+
+    def test_restore_uses_snapshot_template_and_explicit_tunnel(self):
+        native = MagicMock()
+        native.id = "default-restored"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        tunnel = HttpReverseTunnel(
+            "https://new-target.example",
+            reverse_port=9000,
+            listen_port=9001,
+            connect_timeout=12,
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+        ) as sandbox_type:
+            sandbox_type.create.return_value = native
+            session = self.backend.restore(
+                "checkpoint-1",
+                reverse_tunnel=tunnel,
+            )
+
+        self.assertEqual(session.id, "default-restored")
+        sandbox_type.create.assert_called_once_with(
+            "checkpoint-1",
+            upstream="https://new-target.example",
+            tunnel_connect_timeout=12,
+            proxy_port=9001,
+        )
+
+    def test_checkpoint_catalog_pages_and_deletes(self):
+        first = ([SimpleNamespace(snapshot_id="checkpoint-1")], "next")
+        second = ([SimpleNamespace(snapshot_id="checkpoint-2")], "")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox.Sandbox,
+            "list_snapshots",
+            side_effect=[first, second],
+        ) as list_snapshots, patch.object(
+            openyuanrong_sandbox.yr_sandbox.Sandbox,
+            "delete_snapshot",
+        ) as delete_snapshot:
+            self.assertEqual(
+                self.backend.list_checkpoints(),
+                ["checkpoint-1", "checkpoint-2"],
+            )
+            self.backend.delete_checkpoint("checkpoint-1")
+
+        self.assertEqual(list_snapshots.call_count, 2)
+        delete_snapshot.assert_called_once_with("checkpoint-1")
+
 
 class OpenYuanRongSdkBackendTest(unittest.TestCase):
     def setUp(self):
@@ -476,6 +642,59 @@ class OpenYuanRongSdkBackendTest(unittest.TestCase):
         initialized.start()
         self.addCleanup(initialized.stop)
         self.backend = openyuanrong_sdk.OpenYuanRongSdkBackend(self.config)
+
+    def test_failover_is_forwarded_to_native_invoke_options(self):
+        instance = MagicMock()
+        with (
+            patch.object(
+                openyuanrong_sdk._impl,
+                "build_options",
+                return_value=MagicMock(),
+            ) as build_options,
+            patch.object(
+                openyuanrong_sdk._impl,
+                "create_instance",
+                return_value=instance,
+            ),
+            patch.object(
+                openyuanrong_sdk._impl,
+                "real_instance_id",
+                return_value="physical-id",
+            ),
+        ):
+            self.backend.create(_spec(failover=True))
+
+        self.assertIs(build_options.call_args.kwargs["failover"], True)
+
+    def test_reload_forwards_to_actor_runtime(self):
+        instance = MagicMock()
+        with (
+            patch.object(
+                openyuanrong_sdk._impl,
+                "build_options",
+                return_value=MagicMock(),
+            ),
+            patch.object(
+                openyuanrong_sdk._impl,
+                "create_instance",
+                return_value=instance,
+            ),
+            patch.object(
+                openyuanrong_sdk._impl,
+                "real_instance_id",
+                return_value="physical-id",
+            ),
+            patch.object(
+                openyuanrong_sdk._impl,
+                "reload_instance",
+                return_value=True,
+            ) as reload_instance,
+        ):
+            session = self.backend.create(_spec())
+            result = session.reload()
+
+        self.assertIs(result, True)
+        reload_instance.assert_called_once_with(instance)
 
     def test_physical_id_failure_rolls_back_created_actor(self):
         instance = MagicMock()
@@ -597,6 +816,14 @@ class OpenYuanRongSdkBackendTest(unittest.TestCase):
             self.backend.close()
 
         finalize.assert_called_once_with()
+
+    def test_reusable_checkpoint_operations_are_explicitly_unsupported(self):
+        with self.assertRaises(UnsupportedBackendFeatureError):
+            self.backend.restore("checkpoint-1", reverse_tunnel=None)
+        with self.assertRaises(UnsupportedBackendFeatureError):
+            self.backend.list_checkpoints()
+        with self.assertRaises(UnsupportedBackendFeatureError):
+            self.backend.delete_checkpoint("checkpoint-1")
 
 
 if __name__ == "__main__":

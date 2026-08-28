@@ -57,8 +57,45 @@ rather than tmpfs. Without `storage_mb`, runsc retains its configured
 memory-backed overlay while Firecracker uses its configured sparse ext4
 default.
 
+Sandbox checkpoints for runsc and Firecracker use the embedded YuanRong
+DataSystem by default. Select the unified S3-compatible backend when snapshots
+must live in object storage:
+
+```bash
+AKERNEL_SNAPSHOT_STORAGE_BACKEND=s3 \
+AKERNEL_SNAPSHOT_S3_PROVIDER=generic \
+AKERNEL_SNAPSHOT_S3_ENDPOINT=minio.example.internal:9000 \
+AKERNEL_SNAPSHOT_S3_REGION=us-east-1 \
+AKERNEL_SNAPSHOT_S3_BUCKET=akernel-snapshots \
+AKERNEL_SNAPSHOT_S3_ACCESS_KEY='<encrypted-access-key>' \
+AKERNEL_SNAPSHOT_S3_SECRET_KEY='<encrypted-secret-key>' \
+AKERNEL_SNAPSHOT_S3_USE_HTTPS=false \
+AKERNEL_SNAPSHOT_S3_PATH_STYLE=true \
+./start.sh
+```
+
+The provider is `generic`, `obs`, or `oss`; it selects validation and
+addressing defaults while every provider uses the same AWS Signature V4 S3
+protocol client. Private endpoints and CNAMEs are allowed. OSS requires
+virtual-hosted addressing (`PATH_STYLE=false`). The optional
+`AKERNEL_SNAPSHOT_S3_SECURITY_TOKEN` carries an encrypted temporary token.
+The removed OBS-native backend and `AKERNEL_SNAPSHOT_OBS_*` variables are not
+accepted.
+
+Remote snapshots larger than 5 GiB are rejected before upload because this
+version does not implement multipart CopyObject. `/home/akernel/checkpoints`
+is the node's local staging directory; SDK checkpoint records have no automatic
+TTL and remain until `Sandbox.delete_checkpoint()` is called. A restored
+sandbox is a new sandbox and receives fresh network routes.
+
 `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
 starting the pooled-TAP runtimes. Runc retains its separate veth network path.
+
+The in-sandbox checkpoint endpoint uses
+`YR_RRT_CONTROL_SOCKET_PATH=/run/openyuanrong` by default. Set
+`YR_RRT_CONTROL_SOCKET_PATH=` explicitly when starting standalone to disable
+the RRT control socket; an empty value is preserved rather than replaced by
+the default.
 
 ### Network backend
 

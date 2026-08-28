@@ -156,6 +156,7 @@ def build_options(
     xpu: str | None,
     storage_mb: int | None,
     network_policy: NetworkPolicy | None,
+    failover: bool,
     extra_config: Mapping[str, object],
 ) -> Any:
     """Translate the stable SDK configuration to openYuanrong options."""
@@ -174,6 +175,7 @@ def build_options(
     validate_storage_mb(storage_mb)
 
     options = yr.InvokeOptions()
+    options.failover = failover
     # A Sandbox is driven by one sequential SDK client. Disabling ordered RPC
     # execution prevents a missing sequence number from stalling later calls.
     options.need_order = False
@@ -262,6 +264,13 @@ def real_instance_id(handle: Any) -> str:
 
 def terminate_instance(handle: Any) -> None:
     handle.terminate()
+
+
+def reload_instance(handle: Any) -> bool:
+    instance_id = global_runtime.get_runtime().get_real_instance_id(handle.instance_id)
+    if not global_runtime.get_runtime().reload_instance(instance_id):
+        return False
+    return ping_instance(handle)
 
 
 def delete_named_instance(name: str) -> None:
