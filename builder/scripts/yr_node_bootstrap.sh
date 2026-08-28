@@ -3,7 +3,13 @@
 # Copyright (c) 2026 Ant Group Corporation.
 #
 # SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+
 ulimit -n 32768
+
+YR_CLI=/opt/openyuanrong/bin/yr
+YR_CONFIG_TEMPLATE=/etc/yuanrong/config.toml.jinja
+YR_CONFIG_PATH="${YR_RENDERED_CONFIG_PATH:-/run/yuanrong/config.toml}"
 export YR_RUNTIME_BACKEND=sandboxd
 
 resolve_node_ip() {
@@ -39,111 +45,109 @@ resolve_node_ip() {
     printf '%s\n' "${node_ip}"
 }
 
+resolve_sandbox_ip() {
+    local address
+
+    address="$(
+        ip -4 -o address show dev sandbox0 scope global 2>/dev/null |
+            awk 'NR == 1 { split($4, value, "/"); print value[1] }'
+    )"
+    if [ -z "${address}" ]; then
+        echo "sandbox0 has no global IPv4 address after sandboxd startup" >&2
+        return 1
+    fi
+    printf '%s\n' "${address}"
+}
+
 YR_NODE_IP="$(resolve_node_ip)"
+export YR_NODE_IP
 echo "Using ${YR_NODE_IP} as the YuanRong node address"
 
-# Select the legacy etcd registry or the FunctionMaster HTTP provider.
-if [ "${TRAEFIK_MODE:-etcd}" = "etcd" ]; then
-    ENABLE_TRAEFIK_REGISTRY=${ENABLE_TRAEFIK_REGISTRY:-true}
-    ENABLE_TRAEFIK_PROVIDER=false
-else
-    ENABLE_TRAEFIK_REGISTRY=false
-    ENABLE_TRAEFIK_PROVIDER=true
+YR_LOCAL_IP="$(resolve_sandbox_ip)"
+export YR_LOCAL_IP
+echo "Using ${YR_LOCAL_IP} as the YuanRong sandbox-local service address"
+
+role="${AKERNEL_ROLE:-}"
+if [ -z "${role}" ]; then
+    if [ "${AKS_LOCAL_MODE:-false}" = "true" ]; then
+        role=standalone
+    else
+        role=node
+    fi
+    export AKERNEL_ROLE="${role}"
 fi
 
-if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
-    if [ -z "${LITEBUS_DATA_KEY:-}" ] && [ -r /home/akernel/iam-seed ]; then
-        LITEBUS_DATA_KEY="$(tr -d '[:space:]' < /home/akernel/iam-seed)"
-        export LITEBUS_DATA_KEY
-    fi
-    if [ -z "${LITEBUS_DATA_KEY:-}" ]; then
-        echo "LITEBUS_DATA_KEY is required in standalone mode" >&2
+case "${role}" in
+    node)
+        ;;
+    standalone)
+        if [ -z "${LITEBUS_DATA_KEY:-}" ] && [ -r /home/akernel/iam-seed ]; then
+            LITEBUS_DATA_KEY="$(tr -d '[:space:]' < /home/akernel/iam-seed)"
+            export LITEBUS_DATA_KEY
+        fi
+        if [ -z "${LITEBUS_DATA_KEY:-}" ]; then
+            echo "LITEBUS_DATA_KEY is required in standalone mode" >&2
+            exit 1
+        fi
+        ;;
+    *)
+        echo "AKERNEL_ROLE must be node or standalone" >&2
+        exit 1
+        ;;
+esac
+
+export DEPLOY_PATH="${DEPLOY_PATH:-/home/yuanrong}"
+export YR_LOG_PATH="${YR_LOG_PATH:-${DEPLOY_PATH}/logs}"
+
+if [ ! -f "${YR_CONFIG_TEMPLATE}" ]; then
+    echo "YuanRong CLI config template not found: ${YR_CONFIG_TEMPLATE}" >&2
+    exit 1
+fi
+if [ ! -x "${YR_CLI}" ]; then
+    echo "YuanRong CLI not executable: ${YR_CLI}" >&2
+    exit 1
+fi
+
+if [ "${ENABLE_TRACE:-false}" = "true" ]; then
+    trace_config_file="${TRACE_CONFIG_FILE:-/home/yuanrong/trace/trace_config.json}"
+    if [ ! -r "${trace_config_file}" ]; then
+        echo "trace config file is not readable: ${trace_config_file}" >&2
         exit 1
     fi
-    /usr/bin/yr start --master \
-        --ip_address "${YR_NODE_IP}" \
-        --port_policy FIX \
-        --enable_function_scheduler=false \
-        --enable_faas_frontend=true \
-        --enable_meta_service=true \
-        --enable_iam_server=true \
-        --iam_token_expired_time_span 604800 \
-        --ssl_base_path=/home/yuanrong/.cert/ \
-        --frontend_ssl_enable=true \
-        --frontend_client_auth_type NoClientCert \
-        --enable_function_token_auth true \
-        --ds_node_timeout_s 30 \
-        --ds_client_dead_timeout_s 60 \
-        --ds_heartbeat_interval_ms 1000 \
-        --ds_node_dead_timeout_s 120 \
-        --system_timeout 60000 \
-        --block true \
-        --etcd_port ${ETCD_PORT:-2379} \
-        --etcd_peer_port ${ETCD_PEER_PORT:-2378} \
-        --enable_inherit_env false \
-        --npu_collection_mode off \
-        --enable_distributed_master false \
-        --metrics_collector_type external \
-        --enable_traefik_registry=${ENABLE_TRAEFIK_REGISTRY} \
-        --enable_traefik_provider=${ENABLE_TRAEFIK_PROVIDER} \
-        --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \
-        --traefik_etcd_prefix=traefik \
-        --traefik_lease_ttl=300000 \
-        --traefik_http_entrypoint=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
-        --traefik_http_entry_point=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
-        --enable_metrics ${ENABLE_METRICS} \
-        --metrics_config_file "/home/yuanrong/metrics/metrics_config.json" \
-        --enable_trace ${ENABLE_TRACE} \
-        --trace_config "$(cat /home/yuanrong/trace/trace_config.json)" \
-        --log_root "${YR_LOG_PATH}" \
-        --function_proxy_merge_process_enable true \
-        --fc_agent_mgr_retry_times 30 \
-        --fc_agent_mgr_retry_cycle 60000 \
-        --iam_ssl_enable true \
-        --ssl_root_file ca.crt \
-        --ssl_cert_file module.crt \
-        --ssl_key_file module.key \
-        --iam_local_listen_port 31113 \
-        --iam_local_ip 127.0.0.1 \
-        --frontend_lease_bypass true \
-        --force_low_reliability_instance true \
-        --enable_sandbox_router true \
-        --enable_direct_routing false
+    YR_TRACE_CONFIG_CONTENT="$(cat "${trace_config_file}")"
+    export YR_TRACE_CONFIG_CONTENT
 else
-    /usr/bin/yr start \
-        --ip_address "${YR_NODE_IP}" \
-        --port_policy FIX \
-        --ds_node_timeout_s 30 \
-        --ds_client_dead_timeout_s 60 \
-        --ds_heartbeat_interval_ms 1000 \
-        --ds_node_dead_timeout_s 120 \
-        --etcd_addr_list ${ETCD_ADDRESS} \
-        --etcd_mode outter \
-        --etcd_port ${ETCD_PORT} \
-        --etcd_peer_port ${ETCD_PEER_PORT:-2378} \
-        --system_timeout 60000 \
-        --enable_inherit_env false \
-        --npu_collection_mode off \
-        --enable_distributed_master false \
-        --metrics_collector_type external \
-        --enable_metrics ${ENABLE_METRICS} \
-        --metrics_config_file "/home/yuanrong/metrics/metrics_config.json" \
-        --enable_trace ${ENABLE_TRACE} \
-        --trace_config "$(cat /home/yuanrong/trace/trace_config.json)" \
-        -n ${HOSTNAME} \
-        --enable_traefik_registry=${ENABLE_TRAEFIK_REGISTRY} \
-        --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \
-        --traefik_etcd_prefix=traefik \
-        --traefik_lease_ttl=300000 \
-        --traefik_http_entrypoint=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
-        --log_root "${YR_LOG_PATH}" \
-        --fc_agent_mgr_retry_times 30 \
-        --fc_agent_mgr_retry_cycle 60000 \
-        --log_expiration_time_threshold 10 \
-        --log_expiration_cleanup_interval 10 \
-        --log_expiration_max_file_count 50 \
-        --function_proxy_merge_process_enable true \
-        --enable_direct_routing false \
-        --force_low_reliability_instance true \
-        --block true
+    unset YR_TRACE_CONFIG_CONTENT
 fi
+
+mkdir -p "$(dirname "${YR_CONFIG_PATH}")"
+"${YR_CLI}" config render \
+    -t "${YR_CONFIG_TEMPLATE}" \
+    -o "${YR_CONFIG_PATH}"
+
+YR_CLI_ARGS=(
+    "${YR_CLI}"
+    --config "${YR_CONFIG_PATH}"
+    start
+)
+if [ "${role}" = "standalone" ]; then
+    YR_CLI_ARGS+=(--master)
+fi
+YR_CLI_ARGS+=(
+    --block true
+    --port-policy FIX
+    --function-proxy-merge-process-enable
+)
+
+if [ "${YR_CLI_DRY_RUN:-false}" = "true" ]; then
+    if [ -z "${YR_CLI_CAPTURE_FILE:-}" ]; then
+        echo "YR_CLI_CAPTURE_FILE is required when YR_CLI_DRY_RUN=true" >&2
+        exit 1
+    fi
+    mkdir -p "$(dirname "${YR_CLI_CAPTURE_FILE}")"
+    printf '%s\0' "${YR_CLI_ARGS[@]}" > "${YR_CLI_CAPTURE_FILE}"
+    exit 0
+fi
+
+mkdir -p "${YR_LOG_PATH:-/home/yuanrong/logs}"
+exec "${YR_CLI_ARGS[@]}"

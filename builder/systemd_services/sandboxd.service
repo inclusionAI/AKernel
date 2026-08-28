@@ -17,6 +17,7 @@ ExecStart=/bin/bash -ce "exec /usr/local/bin/sandboxd \
   -log-level debug \
   -log-file /home/akernel/logs/sandboxd/sandboxd.log \
   -config /home/akernel/sandboxd/config.toml"
+ExecStartPost=/usr/local/bin/sandboxd-network-ready
 
 KillMode=process
 Restart=always

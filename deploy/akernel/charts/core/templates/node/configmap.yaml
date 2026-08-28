@@ -13,7 +13,7 @@ data:
     CPUQuota={{ .Values.node.config.resourceControl.cpuQuota | default "800%" }}
 
   sandboxd_config.toml: |
-{{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
+{{- $sandboxdConfig := tpl .Values.node.config.sandboxd.config . }}
 {{- $runcMarker := "# AKERNEL_RUNTIME_RUNC" }}
 {{- if .Values.node.config.sandboxd.enableRunc }}
 {{- if not (contains $runcMarker $sandboxdConfig) }}
