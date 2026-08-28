@@ -221,11 +221,11 @@ class SandboxTest(unittest.TestCase):
         tunnel = HttpReverseTunnel("http://127.0.0.1:9000")
 
         restored = Sandbox.restore(
-            CheckpointInfo("checkpoint-1"), reverse_tunnel=tunnel
+            CheckpointInfo("checkpoint-1"), reverse_tunnel=tunnel, timeout=900
         )
 
         self.backend.restore.assert_called_once_with(
-            "checkpoint-1", reverse_tunnel=tunnel
+            "checkpoint-1", reverse_tunnel=tunnel, timeout=900
         )
         self.assertEqual(restored.id, "restored-physical-id")
         self.assertIs(restored.reverse_tunnel, tunnel)
@@ -252,6 +252,12 @@ class SandboxTest(unittest.TestCase):
             Sandbox.delete_checkpoint(" ")
         with self.assertRaises(TypeError):
             Sandbox.restore(object())  # type: ignore[arg-type]
+        for timeout in (True, 0, -1, 1.5):
+            with (
+                self.subTest(timeout=timeout),
+                self.assertRaises((TypeError, ValueError)),
+            ):
+                Sandbox.restore("checkpoint-1", timeout=timeout)
 
     def test_rootfs_requires_s3_config(self):
         with self.assertRaisesRegex(TypeError, "S3Config"):

@@ -368,7 +368,7 @@ try:
         checkpoint = source.checkpoint(timeout=180)
         source.commands.run("printf after > /tmp/state")
 
-    with Sandbox.restore(checkpoint) as restored:
+    with Sandbox.restore(checkpoint, timeout=300) as restored:
         assert restored.id != source.id
         assert restored.commands.run("cat /tmp/state").stdout == "before"
 finally:
@@ -386,6 +386,8 @@ Each restore gets a new sandbox ID, placement, network attachment, and routes.
 The runtime, root filesystem, resources, mounts, environment, network policy,
 and filesystem/process state come from the checkpoint. v1 does not support
 in-place rollback or restore-time resource and configuration overrides.
+The default restore timeout is 300 seconds; increase it for large Firecracker
+checkpoints whose writable layer must be transferred and verified.
 
 The bundled backend supports checkpoints for runsc and Firecracker. A restore
 must use compatible runtime binaries, architecture, kernel, and runtime
@@ -401,10 +403,7 @@ briefly disconnected during checkpoint creation and then reconnected.
 
 Checkpoint/restore is available through the default `openyuanrong-sandbox`
 backend. The legacy `openyuanrong-sdk` actor backend reports it as unsupported.
-The current official backend package supports the default 180-second
-checkpoint timeout. Custom checkpoint timeouts and checkpointing a sandbox
-with an active reverse tunnel require a backend release containing the
-corresponding YuanRong changes.
+Checkpoint and restore timeouts are propagated through YuanRong to sandboxd.
 See [`examples/checkpoint_restore.py`](./examples/checkpoint_restore.py) for a
 runnable example.
 
@@ -603,9 +602,7 @@ PYTHONPATH=sdk/python \
 ```
 
 Load and transfer benchmarks live under [`benchmarks/`](./benchmarks) and are
-not part of the default test suite. The manual
-[Harbor Deep-SWE checkpoint/restore E2E](./docs/deep-swe-checkpoint-restore-e2e.md)
-defines the application-level Firecracker restore acceptance case.
+not part of the default test suite.
 
 ## Public value types
 

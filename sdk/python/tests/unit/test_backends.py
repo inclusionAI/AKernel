@@ -546,6 +546,7 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             session = self.backend.restore(
                 "checkpoint-1",
                 reverse_tunnel=tunnel,
+                timeout=900,
             )
 
         self.assertEqual(session.id, "default-restored")
@@ -554,6 +555,7 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             upstream="https://new-target.example",
             tunnel_connect_timeout=12,
             proxy_port=9001,
+            create_timeout=900,
         )
 
     def test_checkpoint_catalog_pages_and_deletes(self):
@@ -712,7 +714,7 @@ class OpenYuanRongSdkBackendTest(unittest.TestCase):
 
     def test_reusable_checkpoint_operations_are_explicitly_unsupported(self):
         with self.assertRaises(UnsupportedBackendFeatureError):
-            self.backend.restore("checkpoint-1", reverse_tunnel=None)
+            self.backend.restore("checkpoint-1", reverse_tunnel=None, timeout=300)
         with self.assertRaises(UnsupportedBackendFeatureError):
             self.backend.list_checkpoints()
         with self.assertRaises(UnsupportedBackendFeatureError):

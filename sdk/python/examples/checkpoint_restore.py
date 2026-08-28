@@ -26,7 +26,7 @@ def main() -> None:
             source.commands.run("printf after > /tmp/checkpoint-state")
             print("source:", source.id, "checkpoint:", checkpoint.id)
 
-        with Sandbox.restore(checkpoint) as restored:
+        with Sandbox.restore(checkpoint, timeout=300) as restored:
             value = restored.commands.run("cat /tmp/checkpoint-state")
             print("restored:", restored.id, "state:", value.stdout)
             assert value.stdout == "before"

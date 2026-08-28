@@ -171,6 +171,7 @@ class Backend(Protocol):
         checkpoint_id: str,
         *,
         reverse_tunnel: HttpReverseTunnel | None,
+        timeout: int,
     ) -> BackendSession: ...
 
     def list_checkpoints(self) -> list[str]: ...

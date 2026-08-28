@@ -498,6 +498,7 @@ class Sandbox:
         checkpoint: CheckpointInfo | str,
         *,
         reverse_tunnel: HttpReverseTunnel | None = None,
+        timeout: int = 300,
     ) -> Sandbox:
         """Restore an independent sandbox from a reusable checkpoint.
 
@@ -506,9 +507,15 @@ class Sandbox:
         Resource overrides and in-place rollback are intentionally not part of
         v1. A source created with a reverse tunnel requires an explicit tunnel
         with the same ports here; its target and connect timeout may differ.
+
+        Args:
+            checkpoint: Stable checkpoint identity returned by :meth:`checkpoint`.
+            reverse_tunnel: Optional replacement for an inherited reverse tunnel.
+            timeout: Positive restore timeout in seconds.
         """
 
         checkpoint_id = _checkpoint_id(checkpoint)
+        _validate_integer("timeout", timeout, minimum=1)
         if reverse_tunnel is not None and not isinstance(
             reverse_tunnel, HttpReverseTunnel
         ):
@@ -516,6 +523,7 @@ class Sandbox:
         session = load_backend().restore(
             checkpoint_id,
             reverse_tunnel=reverse_tunnel,
+            timeout=timeout,
         )
         restored = cls.__new__(cls)
         restored._session = session

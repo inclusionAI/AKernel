@@ -427,6 +427,7 @@ class OpenYuanRongSandboxBackend:
         checkpoint_id: str,
         *,
         reverse_tunnel: HttpReverseTunnel | None,
+        timeout: int,
     ) -> BackendSession:
         if reverse_tunnel is not None and (
             reverse_tunnel.reverse_port != reverse_tunnel.listen_port - 1
@@ -451,6 +452,7 @@ class OpenYuanRongSandboxBackend:
                     if reverse_tunnel is not None
                     else _DEFAULT_LISTEN_PORT
                 ),
+                create_timeout=timeout,
             )
         except Exception as error:
             raise _convert_error("restore checkpoint", error) from error

@@ -355,8 +355,9 @@ class OpenYuanRongSdkBackend:
         checkpoint_id: str,
         *,
         reverse_tunnel: HttpReverseTunnel | None,
+        timeout: int,
     ) -> BackendSession:
-        del checkpoint_id, reverse_tunnel
+        del checkpoint_id, reverse_tunnel, timeout
         raise UnsupportedBackendFeatureError(
             "Backend 'openyuanrong-sdk' does not support reusable checkpoints. "
             "Use the default 'openyuanrong-sandbox' backend."
