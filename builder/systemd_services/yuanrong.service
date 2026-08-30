@@ -8,6 +8,7 @@ PassEnvironment=ETCD_PORT ETCD_PEER_PORT ETCD_ADDRESS HOSTNAME AKS_LOCAL_MODE AK
 Environment="CONTAINER_EP=unix:///run/sandboxd/sandboxd.sock"
 Environment="RUNTIME_HOME_DIR=/home/yuanrong/runtime"
 Environment="YR_NOSET_CUDA_VISIBLE_DEVICES=1"
+Environment="YR_RRT_CONTROL_SOCKET_PATH=/run/openyuanrong"
 ExecStartPre=-/bin/mkdir -p /home/yuanrong/runtime
 ExecStart=/usr/bin/bash /home/yuanrong/yr_node_bootstrap.sh
 

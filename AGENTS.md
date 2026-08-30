@@ -156,6 +156,10 @@ provide both `OPEN_YR_CORE_WHEEL_URL` and `OPEN_YR_CORE_WHEEL_SHA256` to
 `make build`. The complete wheel is verified before it replaces the pinned
 release control plane.
 
+To test an unreleased RRT binary, provide both `RRT_RUNTIME_URL` and
+`RRT_RUNTIME_SHA256` to `make build`. The runtime build verifies the binary
+before packaging it into the selected runtime root filesystem.
+
 Inspect the selected local versions without building an image:
 
 ```bash
@@ -373,11 +377,14 @@ quotas for runsc and Firecracker use this local-disk filestore. Without an
 explicit quota, runsc retains its configured memory-backed overlay while
 Firecracker creates its configured sparse ext4 default.
 
-The bundled node enables YuanRong's sandbox snapshot data plane with the
-DataSystem backend and uses `/home/yuanrong/checkpoints` as node-local staging.
-The public SDK does not expose snapshot TTLs: reusable checkpoints remain
-until explicitly deleted. Keep the DataSystem backend and checkpoint staging
-configuration enabled together when changing node startup arguments.
+The bundled node enables YuanRong's local-only sandbox snapshot data plane and
+stores checkpoint state under the persistent `/home/akernel/checkpoints`
+mount. RRT receives
+`YR_RRT_CONTROL_SOCKET_PATH=/run/openyuanrong` so sandbox workloads can trigger
+their local checkpoint handoff. The public SDK does not expose snapshot TTLs:
+reusable checkpoints remain until explicitly deleted. Keep local-only snapshot
+mode and the persistent checkpoint directory configured together when changing
+node startup arguments.
 
 Keep detailed SDK reference material with the SDK. The root README should
 contain only the project-level entry points and representative examples:

@@ -29,6 +29,8 @@ firecracker_amd64_sha256="${FIRECRACKER_AMD64_SHA256:-}"
 firecracker_amd64_url="${FIRECRACKER_AMD64_URL:-}"
 open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
 open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
+rrt_runtime_url="${RRT_RUNTIME_URL:-}"
+rrt_runtime_sha256="${RRT_RUNTIME_SHA256:-}"
 print_component_versions=0
 
 component_revision() {
@@ -99,6 +101,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --open-yr-core-wheel-sha256)
       open_yr_core_wheel_sha256="$2"
+      shift 2
+      ;;
+    --rrt-runtime-url)
+      rrt_runtime_url="$2"
+      shift 2
+      ;;
+    --rrt-runtime-sha256)
+      rrt_runtime_sha256="$2"
       shift 2
       ;;
     --print-component-versions)
@@ -173,10 +183,22 @@ if [[ "${print_component_versions}" == "1" ]]; then
   exit 0
 fi
 
+runtime_build_args=()
+if [[ -n "${rrt_runtime_url}" || -n "${rrt_runtime_sha256}" ]]; then
+  if [[ -z "${rrt_runtime_url}" || -z "${rrt_runtime_sha256}" ]]; then
+    die "RRT_RUNTIME_URL and RRT_RUNTIME_SHA256 must be set together"
+  fi
+  runtime_build_args+=(
+    --build-arg "RRT_RUNTIME_URL=${rrt_runtime_url}"
+    --build-arg "RRT_RUNTIME_SHA256=${rrt_runtime_sha256}"
+  )
+fi
+
 info "building ${runtime_image} with runtime profile ${runtime_profile}"
 docker build \
   -f builder/runtime.Dockerfile \
   --target "runtime-${runtime_profile}" \
+  "${runtime_build_args[@]}" \
   -t "${runtime_image}" \
   .
 

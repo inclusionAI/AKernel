@@ -10,12 +10,12 @@ ARG AKERNEL_ENABLE_RUNC=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
-ARG OPEN_YR_VERSION=0.10.1rc1
+ARG OPEN_YR_VERSION=0.10.1rc3
 ARG OPEN_YR_CORE_WHEEL_URL=
 ARG OPEN_YR_CORE_WHEEL_SHA256=
-ARG OPEN_YR_RELEASE_BASE_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download
-ARG OPEN_YR_CORE_AMD64_SHA256=a09e80ec7e53b8352c3e2ed6093b27ba478038528bba196991024f3ab23b9f6f
-ARG OPEN_YR_CORE_ARM64_SHA256=bd3c65ada6ef6bd2ccdcac88c7853e51c301a7d76eb4b65122790f6f8f25ff77
+ARG OPEN_YR_RELEASE_BASE_URL=https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release
+ARG OPEN_YR_CORE_AMD64_SHA256=d303a25587919ce64bae8a7e193cab4b0f33ef12213968fa96a1ba563df629d7
+ARG OPEN_YR_CORE_ARM64_SHA256=c611e4e2e4c08e696b60bf8ad394261b2a2bca5b18100b8e84351c2cbc289f1c
 ARG GVISOR_DOWNLOAD_IMAGE=ubuntu:24.04
 ARG GVISOR_RELEASE
 ARG GVISOR_AMD64_URL
@@ -301,18 +301,18 @@ ENV YR_INSTALLATION_DIR=/home/yuanrong
 # release asset when validating an unreleased daily build.
 RUN set -eux; \
     case "${TARGETARCH:-}" in \
-      amd64) wheel_arch=x86_64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
-      arm64) wheel_arch=aarch64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
+      amd64) wheel_arch=x86_64; wheel_platform=amd64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
+      arm64) wheel_arch=aarch64; wheel_platform=arm64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
       "") \
         case "$(uname -m)" in \
-          x86_64) wheel_arch=x86_64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
-          aarch64) wheel_arch=aarch64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
+          x86_64) wheel_arch=x86_64; wheel_platform=amd64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
+          aarch64) wheel_arch=aarch64; wheel_platform=arm64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
           *) echo "unsupported openYuanRong target architecture: $(uname -m)" >&2; exit 1 ;; \
         esac ;; \
       *) echo "unsupported openYuanRong target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     wheel_name="openyuanrong_core-${OPEN_YR_VERSION}-py3-none-manylinux_2_31_${wheel_arch}.whl"; \
-    wheel_url="${OPEN_YR_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/${wheel_name}"; \
+    wheel_url="${OPEN_YR_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/linux/${wheel_platform}/${wheel_name}"; \
     wheel_sha="${release_sha}"; \
     if [ -n "${OPEN_YR_CORE_WHEEL_URL}" ]; then \
       test -n "${OPEN_YR_CORE_WHEEL_SHA256}"; \
