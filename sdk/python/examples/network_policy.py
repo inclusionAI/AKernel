@@ -93,10 +93,16 @@ def main() -> None:
         dynamic.update_network_policy(
             NetworkPolicy.deny_dns("github.com", "*.github.com")
         )
-        allowed = dynamic.commands.run(direct_connection(), timeout=10)
+        allowed = dynamic.commands.run(
+            tcp_connection("example.com", 443), timeout=30
+        )
         assert allowed.exit_code == 0, allowed.stderr
 
         dynamic.update_network_policy(None)
+        cleared = dynamic.commands.run(
+            tcp_connection("github.com", 443), timeout=30
+        )
+        assert cleared.exit_code == 0, cleared.stderr
         print("Dynamic policy replacement and clearing succeeded.")
 
 
