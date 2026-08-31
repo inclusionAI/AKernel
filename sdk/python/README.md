@@ -357,9 +357,11 @@ public gateway.
 
 `Sandbox(failover=True)` opts into same-node recovery of the same logical
 sandbox after its physical runtime fails. `sandbox.reload()` requests the same
-rollback explicitly and returns `False` when no usable local anonymous
-checkpoint exists. A successful reload preserves `sandbox.id` and the existing
-commands, filesystem, and PTY facades.
+rollback explicitly. It returns `False` whenever the rollback is not completed,
+including when no usable local anonymous checkpoint exists, the sandbox is
+already closed, or the backend reports an operational failure. A successful
+reload preserves `sandbox.id` and the existing commands, filesystem, and PTY
+facades.
 
 Recovery points are local and follow the source sandbox lifecycle. They are
 created by sandbox workloads through RRT's internal `POST /checkpoint`

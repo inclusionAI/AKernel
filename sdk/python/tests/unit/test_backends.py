@@ -527,6 +527,22 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(session.id, "default-source")
         native.reload.assert_called_once_with()
 
+    def test_reload_returns_false_when_native_operation_fails(self):
+        native = MagicMock()
+        native.id = "default-source"
+        native.commands = MagicMock()
+        native.files = MagicMock()
+        native.reload.side_effect = RuntimeError("reload failed")
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec(failover=True))
+
+        self.assertFalse(session.reload())
+        native.reload.assert_called_once_with()
+
     def test_reload_requires_capable_native_sdk(self):
         native = SimpleNamespace(
             id="default-source",

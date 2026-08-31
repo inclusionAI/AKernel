@@ -460,8 +460,9 @@ class Sandbox:
         """Roll this sandbox back to its latest local anonymous checkpoint.
 
         The logical sandbox identity and existing command, filesystem, and PTY
-        facades remain valid. ``False`` means that no usable local checkpoint
-        was available or that the sandbox has already been closed.
+        facades remain valid. ``False`` means that the rollback was not
+        completed, including when no usable checkpoint exists, the sandbox has
+        already been closed, or the backend reports an operational failure.
         """
 
         if self._closed or self._session is None:

@@ -198,7 +198,7 @@ class SandboxTest(unittest.TestCase):
         self.assertFalse(sandbox.reload())
         self.session.reload.assert_called_once_with()
 
-    def test_reload_propagates_no_checkpoint_result(self):
+    def test_reload_returns_false_when_backend_does_not_complete(self):
         self.session.reload.return_value = False
         sandbox = Sandbox(failover=True)
 

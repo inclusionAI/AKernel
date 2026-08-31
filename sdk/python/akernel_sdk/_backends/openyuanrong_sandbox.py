@@ -280,8 +280,8 @@ class _Session:
             )
         try:
             return bool(reload_sandbox())
-        except Exception as error:
-            raise _convert_error("reload sandbox", error) from error
+        except Exception:
+            return False
 
     def terminate(self) -> None:
         if self._terminated:
