@@ -370,11 +370,12 @@ SDK interface. The SDK deliberately does not expose checkpoint identifiers,
 restore, list, or delete operations.
 
 The bundled runsc and Firecracker runtimes support this recovery flow. The
-Python runtime profile is required by the current example:
+maintained example validates it with runsc and installs curl in the sandbox
+before calling the internal Unix-socket endpoint, so the default RRT runtime
+profile is sufficient:
 
 ```bash
 AKERNEL_TEST_RUNTIME=runsc python examples/failover_reload.py
-AKERNEL_TEST_RUNTIME=firecracker python examples/failover_reload.py
 ```
 
 See [`examples/failover_reload.py`](./examples/failover_reload.py) for the

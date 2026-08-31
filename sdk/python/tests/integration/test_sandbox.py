@@ -14,7 +14,6 @@
 
 import http.server
 import os
-import shlex
 import socketserver
 import threading
 import time
@@ -29,43 +28,20 @@ _ENABLED = (
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
 
-_CHECKPOINT_COMMAND = r"""python3 - <<'PY'
-import socket
-
-request = (
-    b"POST /checkpoint HTTP/1.1\r\n"
-    b"Host: localhost\r\n"
-    b"Content-Length: 0\r\n"
-    b"Connection: close\r\n\r\n"
+_INSTALL_CURL_COMMAND = (
+    "apt-get update && "
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl"
 )
-with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-    client.settimeout(300)
-    client.connect("/run/akernel/rrt.sock")
-    client.sendall(request)
-    response = bytearray()
-    while True:
-        chunk = client.recv(4096)
-        if not chunk:
-            break
-        response.extend(chunk)
 
-status = bytes(response).split(b"\r\n", 1)[0]
-if b" 200 " not in status:
-    raise RuntimeError(bytes(response).decode("utf-8", "replace"))
-print(bytes(response).rsplit(b"\r\n\r\n", 1)[-1].decode())
-PY"""
+_CHECKPOINT_COMMAND = (
+    "curl --fail-with-body --silent --show-error "
+    "--unix-socket /run/akernel/rrt.sock "
+    "--request POST http://localhost/checkpoint"
+)
 
 _REVERSE_TUNNEL_PROBE = (
-    "exec 3<>/dev/tcp/127.0.0.1/8766; "
-    "printf 'GET /health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n"
-    "Connection: close\\r\\n\\r\\n' >&3; "
-    "while IFS= read -r line <&3; do "
-    'case "$line" in '
-    "*AKERNEL_REVERSE_TUNNEL_OK*) "
-    "printf 'AKERNEL_REVERSE_TUNNEL_OK\\n'; exit 0;; "
-    "esac; "
-    "done; "
-    "exit 1"
+    "curl --fail --silent --show-error --max-time 10 "
+    "http://127.0.0.1:8766/health"
 )
 
 
@@ -168,10 +144,7 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
         deadline = time.monotonic() + timeout
         last_result = None
         while time.monotonic() < deadline:
-            last_result = sandbox.commands.run(
-                "bash -c " + shlex.quote(_REVERSE_TUNNEL_PROBE),
-                timeout=20,
-            )
+            last_result = sandbox.commands.run(_REVERSE_TUNNEL_PROBE, timeout=20)
             if (
                 last_result.exit_code == 0
                 and last_result.stdout.strip() == "AKERNEL_REVERSE_TUNNEL_OK"
@@ -214,6 +187,8 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
             files = sandbox.files
             pty = sandbox.pty
             self.assertIs(sandbox.reverse_tunnel, tunnel)
+            install_curl = sandbox.commands.run(_INSTALL_CURL_COMMAND, timeout=300)
+            self.assertEqual(install_curl.exit_code, 0, install_curl.stderr)
             self._wait_for_reverse_tunnel(sandbox)
             created = sandbox.commands.run(
                 "printf checkpoint-before > /tmp/akernel-checkpoint-state"
@@ -241,9 +216,8 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
             self.assertEqual(restored_value.stdout, "checkpoint-before")
             self._wait_for_reverse_tunnel(sandbox)
             network = sandbox.commands.run(
-                "python3 -c 'import socket; "
-                's=socket.create_connection(("example.com", 443), 10); '
-                "s.close()'",
+                "curl --fail --silent --show-error --max-time 10 "
+                "--output /dev/null https://example.com/",
                 timeout=30,
             )
             self.assertEqual(network.exit_code, 0, network.stderr)

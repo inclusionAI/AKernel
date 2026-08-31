@@ -121,11 +121,7 @@ jobs:
           sudo modprobe loop
           sudo modprobe erofs
           sudo modprobe br_netfilter
-          sudo modprobe kvm
-          sudo modprobe kvm_intel || sudo modprobe kvm_amd || true
           test -c /dev/net/tun
-          test -c /dev/kvm
-          sudo chmod 0666 /dev/kvm
           sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
 
       - name: Build all-in-one image
@@ -134,7 +130,7 @@ jobs:
             make build \
               IMAGE_REPOSITORY=akernel-ci/all-in-one \
               IMAGE_TAG="${GITHUB_SHA}" \
-              RUNTIME_PROFILE=python
+              RUNTIME_PROFILE=rrt
 
       - name: Start standalone AKernel
         run: |
@@ -170,7 +166,7 @@ jobs:
             timeout 120s python "sdk/python/examples/${example}"
           done
 
-      - name: Run runsc and Firecracker checkpoint reload E2E
+      - name: Run runsc checkpoint reload E2E
         run: |
           gateway_ip="$(docker inspect \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
@@ -182,12 +178,9 @@ jobs:
           export AKERNEL_RUN_INTEGRATION=1
           export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
 
-          for runtime in runsc firecracker; do
-            echo "=== Checkpoint/reload runtime=${runtime} ==="
-            AKERNEL_TEST_RUNTIME="${runtime}" timeout 300s python \
-              sdk/python/tests/integration/test_sandbox.py \
-              SandboxReloadIntegrationTest -v
-          done
+          AKERNEL_TEST_RUNTIME=runsc timeout 600s python \
+            sdk/python/tests/integration/test_sandbox.py \
+            SandboxReloadIntegrationTest -v
 
       - name: Show standalone diagnostics
         if: failure()

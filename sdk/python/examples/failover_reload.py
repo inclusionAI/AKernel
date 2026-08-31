@@ -19,31 +19,16 @@ import os
 from akernel_sdk import Sandbox
 
 
-_CHECKPOINT_COMMAND = r"""python3 - <<'PY'
-import socket
-
-request = (
-    b"POST /checkpoint HTTP/1.1\r\n"
-    b"Host: localhost\r\n"
-    b"Content-Length: 0\r\n"
-    b"Connection: close\r\n\r\n"
+_INSTALL_CURL_COMMAND = (
+    "apt-get update && "
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl"
 )
-with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-    client.settimeout(300)
-    client.connect("/run/akernel/rrt.sock")
-    client.sendall(request)
-    response = bytearray()
-    while True:
-        chunk = client.recv(4096)
-        if not chunk:
-            break
-        response.extend(chunk)
 
-status = bytes(response).split(b"\r\n", 1)[0]
-if b" 200 " not in status:
-    raise RuntimeError(bytes(response).decode("utf-8", "replace"))
-print(bytes(response).rsplit(b"\r\n\r\n", 1)[-1].decode())
-PY"""
+_CHECKPOINT_COMMAND = (
+    "curl --fail-with-body --silent --show-error "
+    "--unix-socket /run/akernel/rrt.sock "
+    "--request POST http://localhost/checkpoint"
+)
 
 
 def main() -> None:
@@ -55,6 +40,9 @@ def main() -> None:
         storage_mb=1024,
         failover=True,
     ) as sandbox:
+        install_curl = sandbox.commands.run(_INSTALL_CURL_COMMAND, timeout=300)
+        assert install_curl.exit_code == 0, install_curl.stderr
+
         sandbox.commands.run("printf before > /tmp/reload-state")
         checkpoint = sandbox.commands.run(_CHECKPOINT_COMMAND, timeout=300)
         assert checkpoint.exit_code == 0, checkpoint.stderr
