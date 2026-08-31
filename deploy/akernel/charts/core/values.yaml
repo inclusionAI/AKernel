@@ -57,9 +57,11 @@ etcd:
     enabled: true
     runAsUser: 0
     dataUser: 1001
+    image: busybox:1.37.0-musl
+    pullPolicy: IfNotPresent
   image:
-    repository: public.ecr.aws/bitnami/etcd
-    tag: 3.6.8
+    repository: gcr.io/etcd-development/etcd
+    tag: v3.6.8
     pullPolicy: IfNotPresent
   resources:
     limits:

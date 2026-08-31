@@ -144,6 +144,18 @@ export AKERNEL_SERVER_ADDRESS=<traefik-load-balancer-ip>
 not required for the `websecure` router on port 443; Traefik serves its default
 certificate when the variable is `false`.
 
+The module uses the official `gcr.io/etcd-development/etcd:v3.6.8` image by
+default. A BusyBox init container prepares the etcd volume because the official
+image has no shell; it uses the same pinned BusyBox image as Traefik's
+`/internal-stats` sidecar. Override the component image variables when using a
+private mirror.
+
+The guided `make config` flow configures that private mirror: it derives sibling
+`etcd` and `busybox` repositories from `IMAGE_REPOSITORY`, and `make push`
+mirrors the official etcd and BusyBox images alongside the all-in-one image.
+It does not mirror the Traefik, monitoring, or Dragonfly images. Direct
+Terraform users retain the public defaults shown above.
+
 To use the legacy single-entrypoint mode, set
 `traefik_enable_web_entrypoint=false` and configure `traefik_tcp_port`. In that
 mode SDK clients must include the port explicitly:

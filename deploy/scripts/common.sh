@@ -17,6 +17,10 @@ info() {
   echo "==> $*"
 }
 
+warn() {
+  echo "WARNING: $*" >&2
+}
+
 require_cmd() {
   local missing=0
   for cmd in "$@"; do

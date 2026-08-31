@@ -14,6 +14,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  etcd-image-smoke:
+    name: Official etcd image smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Render etcd StatefulSet
+        run: |
+          helm template akernel deploy/akernel \
+            --show-only charts/core/templates/etcd/etcd.yaml \
+            > /tmp/etcd-statefulset.yaml
+          grep -F 'image: "busybox:1.37.0-musl"' /tmp/etcd-statefulset.yaml
+          grep -F 'image: "gcr.io/etcd-development/etcd:v3.6.8"' /tmp/etcd-statefulset.yaml
+          grep -F -- '- /usr/local/bin/etcd' /tmp/etcd-statefulset.yaml
+          grep -F -- '- --listen-client-urls=http://$(MY_POD_IP):2379' /tmp/etcd-statefulset.yaml
+          test "$(grep -cF -- '- /bin/sh' /tmp/etcd-statefulset.yaml)" = 1
+
+      - name: Verify official image runtime contract
+        run: |
+          volume="akernel-etcd-smoke-${GITHUB_RUN_ID}"
+          trap 'docker volume rm -f "${volume}" >/dev/null 2>&1 || true' EXIT
+          docker volume create "${volume}" >/dev/null
+          docker run --rm --user 0:0 \
+            -v "${volume}:/etcd" busybox:1.37.0-musl sh -ec '
+              mkdir -p /etcd
+              chown -R 1001:1001 /etcd
+              chmod 0700 /etcd
+            '
+          set +e
+          timeout 5 docker run --rm --user 1001:1001 \
+            -v "${volume}:/etcd" \
+            gcr.io/etcd-development/etcd:v3.6.8 \
+            /usr/local/bin/etcd \
+            --name=etcd0 \
+            --data-dir=/etcd \
+            --listen-client-urls=http://127.0.0.1:2379 \
+            --advertise-client-urls=http://127.0.0.1:2379 \
+            --listen-peer-urls=http://127.0.0.1:2378 \
+            --initial-advertise-peer-urls=http://127.0.0.1:2378 \
+            --initial-cluster=etcd0=http://127.0.0.1:2378
+          status=$?
+          set -e
+          test "${status}" = 124
+          docker run --rm -v "${volume}:/etcd" busybox:1.37.0-musl \
+            test -s /etcd/member/snap/db
+
   sdk-unit-tests:
     name: Python SDK unit tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -88,6 +137,28 @@ jobs:
       - name: Check deployment script syntax
         run: |
           make deploy-script-check
+
+      - name: Reject stale image push profiles
+        run: |
+          profile=".akernel/ci-stale-image-profile"
+          mkdir -p "${profile}"
+          printf '%s\n' \
+            'IMAGE_REPOSITORY=example.invalid/akernel/all-in-one' \
+            'IMAGE_TAG=test' \
+            > "${profile}/config.env"
+
+          set +e
+          output="$(./deploy/scripts/push-image.sh \
+            --vendor aliyun \
+            --env ci-stale-image-profile 2>&1)"
+          status=$?
+          set -e
+
+          test "${status}" -ne 0
+          case "${output}" in
+            *"missing dependency image settings"*) ;;
+            *) printf '%s\n' "${output}" >&2; exit 1 ;;
+          esac
 
   standalone-e2e:
     name: Standalone E2E
