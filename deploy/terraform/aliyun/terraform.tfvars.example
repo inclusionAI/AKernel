@@ -56,23 +56,23 @@ node_pool_system_disk_size     = 100
 node_pool_data_disk_enabled    = true
 node_pool_data_disk_category   = "cloud_essd"
 node_pool_data_disk_size       = 100
+node_pool_extra_data_disk_enabled    = true
+node_pool_extra_data_disk_category   = "cloud_essd"
+node_pool_extra_data_disk_size       = 300
+node_pool_extra_data_disk_mount_path = "/home/akernel"
+node_pool_extra_data_disk_fs_type    = "xfs"
 
 # Set one of the following for node login.
 node_pool_key_name = "<your-ecs-key-name>"
 # node_pool_login_password = "<your-strong-password>"
 
-# --- Node /home/akernel storage mode (choose one) ---
-# Default: hostPath from system disk (/home/akernel). No extra config needed.
+# --- Alternative node /home/akernel storage modes ---
+# The default above is a dedicated XFS cloud disk. Set
+# node_pool_extra_data_disk_enabled=false to use the system-disk hostPath.
 #
-# Option A: Extra data disk — dedicated cloud disk per node, mounted to /home/akernel via user_data.
-#   No PVC scheduling delay, scales with nodes.
-# node_pool_extra_data_disk_enabled    = true
-# node_pool_extra_data_disk_category   = "cloud_essd"
-# node_pool_extra_data_disk_size       = 300
-# node_pool_extra_data_disk_mount_path = "/home/akernel"
-# node_pool_extra_data_disk_fs_type    = "ext4"   # ext4 or xfs
-#
-# Option B: CSI ephemeral PVC — dynamic cloud disk per pod.
+# Alternatively, use a CSI ephemeral PVC per node pod. Disable the dedicated
+# data disk when selecting this mode.
+# node_pool_extra_data_disk_enabled = false
 # node_home_use_csi_ephemeral = true
 # node_home_csi_storage_class = "alicloud-disk-essd"
 # node_home_csi_size          = "300Gi"

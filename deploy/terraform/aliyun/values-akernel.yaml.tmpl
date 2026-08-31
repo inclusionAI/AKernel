@@ -87,29 +87,6 @@ node:
             values:
             - dragonfly-seed
             - dragonfly-server
-%{ if node_pool_extra_data_disk_enabled ~}
-  initContainers:
-  - name: wait-for-storage
-    image: "${node_storage_init_image}"
-    command:
-    - /bin/sh
-    - -c
-    - |
-      # NOTE: don't use `mountpoint -q ${node_storage_init_mount_path}` here. Inside this init
-      # container ${node_storage_init_mount_path} is a kubelet bind mount of the host hostPath,
-      # so it is *already* a mountpoint regardless of whether the host has finished mounting
-      # the data disk underneath. Poll the marker file written by the host user_data script
-      # (data-disk-mount.sh.tftpl) instead — it appears only after mkfs + mount succeed.
-      echo "[init] Waiting for storage at ${node_storage_init_mount_path}/.storage-ready ..."
-      while [ ! -f ${node_storage_init_mount_path}/.storage-ready ]; do
-        sleep 5
-      done
-      echo "[init] Storage ready."
-    volumeMounts:
-    - name: home-disk
-      mountPath: ${node_storage_init_mount_path}
-      mountPropagation: HostToContainer
-%{ endif ~}
   image:
     repository: "${node_image_repository}"
     tag: "${node_image_tag}"
@@ -118,6 +95,7 @@ node:
       ephemeral-storage: "${node_ephemeral}"
     requests:
       ephemeral-storage: "${node_ephemeral}"
+  hostDiskPath: "${node_host_disk_path}"
   homeDisk:
     useEphemeralPVC: ${node_home_use_csi_ephemeral}
     storageClassName: "${node_home_csi_storage_class}"
@@ -193,8 +171,10 @@ node:
 
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
+        # The Aliyun module mounts a dedicated filesystem at /home/akernel.
+        # Leave filestore_dir_size unset so sandboxd consumes the native XFS
+        # directory instead of creating a loop-backed bounded filesystem.
         filestore_dir="/home/akernel/filestore"
-        filestore_dir_size="200G"
         filestore_xfs_enabled=false
         loop_device_dir="/dev"
         overlay_tmpfs_size="10G"

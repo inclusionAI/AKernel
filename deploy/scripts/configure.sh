@@ -312,6 +312,11 @@ node_pool_system_disk_size     = 100
 node_pool_data_disk_enabled    = true
 node_pool_data_disk_category   = "cloud_essd"
 node_pool_data_disk_size       = 100
+node_pool_extra_data_disk_enabled    = true
+node_pool_extra_data_disk_category   = "cloud_essd"
+node_pool_extra_data_disk_size       = 300
+node_pool_extra_data_disk_mount_path = "/home/akernel"
+node_pool_extra_data_disk_fs_type    = "xfs"
 node_pool_key_name             = "${node_pool_key_name}"
 
 core_namespace = "akernel"

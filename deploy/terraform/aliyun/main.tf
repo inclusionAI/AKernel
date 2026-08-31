@@ -33,6 +33,10 @@ resource "null_resource" "input_validation" {
       error_message = "node_pool_key_name conflicts with node_pool_login_password. Set only one."
     }
     precondition {
+      condition     = !var.create_cluster || !(var.node_pool_extra_data_disk_enabled && var.node_home_use_csi_ephemeral)
+      error_message = "Dedicated node data disk and CSI ephemeral home storage are mutually exclusive. Disable one storage mode."
+    }
+    precondition {
       condition     = length(var.master_image_tag) > 0 && length(var.node_image_tag) > 0
       error_message = "master_image_tag and node_image_tag must be set to a published AKernel image tag."
     }
@@ -87,78 +91,7 @@ locals {
     sandboxd_nat_backend = var.sandboxd_nat_backend
     max_user_namespaces  = var.node_pool_max_user_namespaces
   })
-  node_pool_bootstrap_user_data = var.node_pool_extra_data_disk_enabled ? join("\n", [
-    local.node_pool_bootstrap_base,
-    <<-EOT
-      # Mount extra data disk
-      set -euo pipefail
-      MOUNT_PATH="${var.node_pool_extra_data_disk_mount_path}"
-      FS_TYPE="${var.node_pool_extra_data_disk_fs_type}"
-      MARKER_PATH="${var.node_pool_extra_data_disk_mount_path}/.storage-ready"
-
-      if mountpoint -q "$MOUNT_PATH" 2>/dev/null; then
-        echo "[data-disk] $MOUNT_PATH is already mounted, skipping."
-        exit 0
-      fi
-
-      ROOT_SOURCE=$(findmnt -n -o SOURCE /)
-      ROOT_DEV=""
-      if [ -n "$ROOT_SOURCE" ]; then
-        ROOT_DEV=$(lsblk -ndo PKNAME "$ROOT_SOURCE" 2>/dev/null || true)
-      fi
-
-      TARGET_DEV=""
-      for dev in /dev/vd[b-z] /dev/xvd[b-z] /dev/sd[b-z] /dev/nvme[0-9]n1 /dev/nvme[1-9][0-9]n1; do
-        [ -b "$dev" ] || continue
-        dev_name=$(basename "$dev")
-        if [ -n "$ROOT_DEV" ] && [ "$dev_name" = "$ROOT_DEV" ]; then
-          continue
-        fi
-        if lsblk -ln -o MOUNTPOINT "$dev" 2>/dev/null | grep -q '/'; then
-          continue
-        fi
-        if pvs "$dev" &>/dev/null 2>&1; then
-          continue
-        fi
-        if blkid "$dev" &>/dev/null; then
-          EXISTING_FS=$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)
-          if [ "$EXISTING_FS" = "$FS_TYPE" ]; then
-            TARGET_DEV="$dev"
-            break
-          fi
-          continue
-        fi
-        TARGET_DEV="$dev"
-        break
-      done
-
-      if [ -z "$TARGET_DEV" ]; then
-        echo "[data-disk] No available data disk found, skipping."
-        exit 0
-      fi
-
-      echo "[data-disk] Using device: $TARGET_DEV"
-      mkdir -p "$MOUNT_PATH"
-
-      if ! blkid "$TARGET_DEV" &>/dev/null; then
-        echo "[data-disk] Formatting $TARGET_DEV with $FS_TYPE..."
-        if [ "$FS_TYPE" = "xfs" ]; then
-          mkfs.xfs -f "$TARGET_DEV"
-        else
-          mkfs.ext4 -F "$TARGET_DEV"
-        fi
-      fi
-
-      mount -o defaults,noatime "$TARGET_DEV" "$MOUNT_PATH"
-      UUID=$(blkid -s UUID -o value "$TARGET_DEV")
-      if ! grep -q "$UUID" /etc/fstab 2>/dev/null; then
-        echo "UUID=$UUID $MOUNT_PATH $FS_TYPE defaults,noatime 0 0" >> /etc/fstab
-      fi
-      echo "[data-disk] Mounted $TARGET_DEV at $MOUNT_PATH ($FS_TYPE) successfully."
-      touch "$MARKER_PATH"
-      echo "[data-disk] Created readiness marker: $MARKER_PATH"
-    EOT
-  ]) : local.node_pool_bootstrap_base
+  node_pool_bootstrap_user_data = local.node_pool_bootstrap_base
   dragonfly_seed_user_data = var.dragonfly_seed_node_pool.mount_local_nvme ? join("\n", [
     local.node_pool_bootstrap_base,
     templatefile("${path.module}/../shared/local-nvme-mount.sh.tftpl", {
@@ -202,34 +135,32 @@ locals {
   traefik_internal_stats_image = length(var.traefik_internal_stats_image) > 0 ? var.traefik_internal_stats_image : "${local.acr_registry}/busybox:1.37.0-musl"
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
-    acr_registry                      = local.acr_registry
-    acr_secret_enabled                = local.acr_secret_enabled
-    acr_host                          = local.acr_host
-    acr_username                      = var.acr_username
-    acr_password                      = var.acr_password
-    etcd_image_repository             = local.etcd_image_repo
-    etcd_image_tag                    = var.etcd_image_tag
-    master_image_repository           = local.master_image_repo
-    master_image_tag                  = var.master_image_tag
-    node_image_repository             = local.node_image_repo
-    node_image_tag                    = var.node_image_tag
-    traefik_image_repository          = local.traefik_image_repo
-    traefik_image_tag                 = var.traefik_image_tag
-    iam_litebus_data_key              = var.iam_litebus_data_key
-    enable_kruise                     = var.install_prereqs
-    master_service_type               = (var.master_public_access_8888 && !var.traefik_enabled) ? var.master_service_type : "ClusterIP"
-    traefik_enabled                   = var.traefik_enabled
-    sandboxd_nat_backend              = var.sandboxd_nat_backend
-    enable_runc                       = var.enable_runc
-    node_secret_create                = var.node_secret_create
-    node_home_use_csi_ephemeral       = var.node_home_use_csi_ephemeral
-    node_home_csi_storage_class       = local.effective_node_home_csi_sc
-    node_home_csi_size                = var.node_home_csi_size
-    node_pool_extra_data_disk_enabled = var.node_pool_extra_data_disk_enabled
-    node_storage_init_image           = var.node_storage_init_image
-    node_storage_init_mount_path      = var.node_pool_extra_data_disk_mount_path
-    oss_auths                         = local.oss_auths
-    registry_auths                    = local.registry_auths
+    acr_registry                = local.acr_registry
+    acr_secret_enabled          = local.acr_secret_enabled
+    acr_host                    = local.acr_host
+    acr_username                = var.acr_username
+    acr_password                = var.acr_password
+    etcd_image_repository       = local.etcd_image_repo
+    etcd_image_tag              = var.etcd_image_tag
+    master_image_repository     = local.master_image_repo
+    master_image_tag            = var.master_image_tag
+    node_image_repository       = local.node_image_repo
+    node_image_tag              = var.node_image_tag
+    traefik_image_repository    = local.traefik_image_repo
+    traefik_image_tag           = var.traefik_image_tag
+    iam_litebus_data_key        = var.iam_litebus_data_key
+    enable_kruise               = var.install_prereqs
+    master_service_type         = (var.master_public_access_8888 && !var.traefik_enabled) ? var.master_service_type : "ClusterIP"
+    traefik_enabled             = var.traefik_enabled
+    sandboxd_nat_backend        = var.sandboxd_nat_backend
+    enable_runc                 = var.enable_runc
+    node_secret_create          = var.node_secret_create
+    node_home_use_csi_ephemeral = var.node_home_use_csi_ephemeral
+    node_home_csi_storage_class = local.effective_node_home_csi_sc
+    node_home_csi_size          = var.node_home_csi_size
+    node_host_disk_path         = var.create_cluster && var.node_pool_extra_data_disk_enabled ? var.node_pool_extra_data_disk_mount_path : "/home/akernel"
+    oss_auths                   = local.oss_auths
+    registry_auths              = local.registry_auths
 
     etcd_storage_class = local.effective_storage_class
     etcd_cpu           = var.etcd_resources.cpu
@@ -313,14 +244,19 @@ locals {
     tempo_pvc_size       = var.tempo_resources.pvc_size
   })
 
+  akernel_extra_node_pools = [for pool in var.extra_node_pools : merge(pool, {
+    use_akernel_data_disk = true
+  })]
+
   # Dragonfly server pool (manager + scheduler) — fixed size, goes through extra node pools
   dragonfly_server_pool = var.install_dragonfly && var.dragonfly_server_node_pool.enabled ? [{
-    name              = var.dragonfly_server_node_pool.name
-    size              = var.dragonfly_server_node_pool.size
-    instance_types    = var.dragonfly_server_node_pool.instance_types
-    system_disk_size  = var.dragonfly_server_node_pool.system_disk_size
-    data_disk_enabled = true
-    data_disk_size    = var.dragonfly_server_node_pool.data_disk_size
+    name                  = var.dragonfly_server_node_pool.name
+    size                  = var.dragonfly_server_node_pool.size
+    instance_types        = var.dragonfly_server_node_pool.instance_types
+    system_disk_size      = var.dragonfly_server_node_pool.system_disk_size
+    data_disk_enabled     = true
+    data_disk_size        = var.dragonfly_server_node_pool.data_disk_size
+    use_akernel_data_disk = false
     labels = {
       (var.dragonfly_server_node_pool.node_label_key) = var.dragonfly_server_node_pool.node_label_value
     }
@@ -332,7 +268,7 @@ locals {
   }] : []
 
   # Seed pool is created as a dedicated resource (with autoscaling), not via extra
-  all_extra_node_pools = concat(var.extra_node_pools, local.dragonfly_server_pool)
+  all_extra_node_pools = concat(local.akernel_extra_node_pools, local.dragonfly_server_pool)
 
   dragonfly_values = var.install_dragonfly ? templatefile("${path.module}/values-dragonfly.yaml.tmpl", {
     storage_class              = local.effective_storage_class
@@ -504,8 +440,11 @@ resource "alicloud_cs_kubernetes_node_pool" "default_with_key" {
   dynamic "data_disks" {
     for_each = var.node_pool_extra_data_disk_enabled ? [1] : []
     content {
-      category = var.node_pool_extra_data_disk_category
-      size     = var.node_pool_extra_data_disk_size
+      category     = var.node_pool_extra_data_disk_category
+      size         = var.node_pool_extra_data_disk_size
+      auto_format  = "true"
+      file_system  = var.node_pool_extra_data_disk_fs_type
+      mount_target = var.node_pool_extra_data_disk_mount_path
     }
   }
 
@@ -546,8 +485,11 @@ resource "alicloud_cs_kubernetes_node_pool" "default_with_password" {
   dynamic "data_disks" {
     for_each = var.node_pool_extra_data_disk_enabled ? [1] : []
     content {
-      category = var.node_pool_extra_data_disk_category
-      size     = var.node_pool_extra_data_disk_size
+      category     = var.node_pool_extra_data_disk_category
+      size         = var.node_pool_extra_data_disk_size
+      auto_format  = "true"
+      file_system  = var.node_pool_extra_data_disk_fs_type
+      mount_target = var.node_pool_extra_data_disk_mount_path
     }
   }
 
@@ -587,6 +529,16 @@ resource "alicloud_cs_kubernetes_node_pool" "extra" {
     content {
       category = var.node_pool_data_disk_category
       size     = coalesce(each.value.data_disk_size, var.node_pool_data_disk_size)
+    }
+  }
+  dynamic "data_disks" {
+    for_each = each.value.use_akernel_data_disk && var.node_pool_extra_data_disk_enabled ? [1] : []
+    content {
+      category     = var.node_pool_extra_data_disk_category
+      size         = var.node_pool_extra_data_disk_size
+      auto_format  = "true"
+      file_system  = var.node_pool_extra_data_disk_fs_type
+      mount_target = var.node_pool_extra_data_disk_mount_path
     }
   }
 

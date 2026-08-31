@@ -394,6 +394,15 @@ quotas for runsc and Firecracker use this local-disk filestore. Without an
 explicit quota, runsc retains its configured memory-backed overlay while
 Firecracker creates its configured sparse ext4 default.
 
+Terraform-managed Alibaba Cloud node pools instead attach a dedicated 300 GiB
+ESSD by default, have ACK format it as XFS, and mount it at `/home/akernel`.
+The Aliyun sandboxd configuration leaves `filestore_dir_size` unset and uses
+`/home/akernel/filestore` directly, so writable layers and
+`/home/akernel/checkpoints` share the native reflink-capable filesystem. Do
+not set a bounded filestore size for this profile because that reintroduces a
+loop-backed filesystem and disables the high-performance Firecracker C/R
+layout.
+
 The bundled node enables YuanRong's local-only sandbox snapshot data plane and
 stores checkpoint state under the persistent `/home/akernel/checkpoints`
 mount. RRT receives

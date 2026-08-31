@@ -313,6 +313,12 @@ through its own LoadBalancer when `install_monitor=true`. Set
 `install_dragonfly=true` to install the pinned official Dragonfly chart and
 inject its seed-client proxy into the node runtime configuration.
 
+Terraform-managed Alibaba Cloud nodes also receive a dedicated 300 GiB XFS
+disk mounted at `/home/akernel` by default. sandboxd consumes that native
+filesystem directly for writable layers and local checkpoints, without a
+loop-backed filestore. See the Aliyun guide for capacity, opt-out, and node
+replacement details.
+
 Only the AKernel all-in-one image is pushed to the registry selected by
 `make config`. etcd, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox use
 their pinned official public images by default. Set the per-component image

@@ -237,8 +237,8 @@ variable "node_pool_data_disk_size" {
 
 variable "node_pool_extra_data_disk_enabled" {
   type        = bool
-  description = "Whether to attach an extra data disk for akernel hostPath storage (separate from the container runtime data disk)."
-  default     = false
+  description = "Whether to attach and mount a dedicated data disk for AKernel hostPath storage, separate from the container runtime data disk."
+  default     = true
 }
 
 variable "node_pool_extra_data_disk_category" {
@@ -255,19 +255,29 @@ variable "node_pool_extra_data_disk_size" {
 
 variable "node_pool_extra_data_disk_mount_path" {
   type        = string
-  description = "Path to auto-format and mount the extra data disk. Typically /home/akernel for akernel node hostPath storage."
+  description = "Path where ACK formats and mounts the dedicated AKernel data disk."
   default     = "/home/akernel"
+
+  validation {
+    condition     = startswith(var.node_pool_extra_data_disk_mount_path, "/") && var.node_pool_extra_data_disk_mount_path != "/"
+    error_message = "node_pool_extra_data_disk_mount_path must be an absolute path other than /."
+  }
 }
 
 variable "node_pool_extra_data_disk_fs_type" {
   type        = string
-  description = "Filesystem type for the extra data disk (ext4 or xfs)."
-  default     = "ext4"
+  description = "Filesystem type for the dedicated AKernel data disk. XFS enables the high-performance reflink checkpoint path; ext4 is retained for compatibility."
+  default     = "xfs"
+
+  validation {
+    condition     = contains(["ext4", "xfs"], var.node_pool_extra_data_disk_fs_type)
+    error_message = "node_pool_extra_data_disk_fs_type must be ext4 or xfs."
+  }
 }
 
 variable "node_storage_init_image" {
   type        = string
-  description = "Image for the storage readiness init container. Only used when node_pool_extra_data_disk_enabled=true."
+  description = "Deprecated compatibility variable. ACK now formats and mounts the dedicated data disk before joining the node."
   default     = "busybox:1.36"
 }
 

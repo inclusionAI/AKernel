@@ -112,6 +112,45 @@ terraform apply \
   -var 'monitor_storage_class=alicloud-disk-essd'
 ```
 
+## AKernel node storage
+
+New Terraform-managed ACK node pools attach two data disks by default. The
+first remains available to ACK for the container runtime. The second is a
+dedicated 300 GiB ESSD that ACK formats as XFS and mounts at
+`/home/akernel` before the node joins the cluster. The same storage layout is
+applied to user-defined `extra_node_pools`; dedicated Dragonfly pools retain
+their own storage configuration.
+
+AKernel stores both `/home/akernel/filestore` and
+`/home/akernel/checkpoints` on that native XFS filesystem. The generated
+sandboxd configuration intentionally leaves `filestore_dir_size` unset, so
+sandboxd uses the directory directly instead of creating a loop-backed ext4
+or XFS filesystem. Keeping the writable layer and checkpoint artifacts on
+the same reflink-capable filesystem enables the fast Firecracker checkpoint
+and restore path.
+
+Change the dedicated disk capacity or category with
+`node_pool_extra_data_disk_size` and
+`node_pool_extra_data_disk_category`. Set
+`node_pool_extra_data_disk_enabled=false` to opt out, for example when an
+existing cluster already provisions `/home/akernel` itself. The option has no
+effect when `create_cluster=false`; existing-cluster users must mount a
+suitable host filesystem before deploying the chart. An explicit ext4
+override remains supported for compatibility, but it cannot provide the XFS
+reflink checkpoint path.
+
+Changing these settings does not migrate live sandbox data on existing
+nodes. Before replacing an existing node pool, drain its sandboxes and remove
+or relocate lifecycle-bound checkpoints. Review the Terraform plan as the
+default dedicated disk adds one cloud disk per AKernel node.
+
+After provisioning a node, verify the effective layout with:
+
+```bash
+findmnt -no SOURCE,FSTYPE,TARGET /home/akernel
+xfs_info /home/akernel | grep 'reflink=1'
+```
+
 Install Dragonfly P2P distribution:
 
 ```bash
