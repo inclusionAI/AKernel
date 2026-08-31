@@ -80,6 +80,8 @@ spec:
           value: "node"
         - name: RUNSC_AKERNEL
           value: "1"
+        - name: YR_RRT_CONTROL_SOCKET_PATH
+          value: "/run/akernel"
         - name: ETCD_ADDRESS
           value: {{ get $nodeEtcd "host" | default (printf "akernel-etcd.%s.svc.cluster.local" .Release.Namespace) | quote }}
         - name: ETCD_PORT

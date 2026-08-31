@@ -59,10 +59,11 @@ default.
 
 Sandbox checkpoints for runsc and Firecracker use YuanRong's local-only
 snapshot mode. Checkpoint state is kept under the persistent
-`/home/akernel/checkpoints` data mount. Reusable SDK checkpoint records have
-no automatic TTL and are retained until
-`Sandbox.delete_checkpoint()` is called. A restored sandbox is a new sandbox
-and receives fresh network routes.
+`/home/akernel/checkpoints` data mount. Workloads trigger an anonymous recovery
+point through `POST /checkpoint` on `/run/akernel/rrt.sock`, and the SDK can
+reload the same logical sandbox from the latest usable point. Recovery points
+follow the source sandbox lifecycle; they are not exposed as reusable SDK
+objects.
 
 `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
 starting the pooled-TAP runtimes. Runc retains its separate veth network path.

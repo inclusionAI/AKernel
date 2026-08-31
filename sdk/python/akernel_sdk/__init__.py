@@ -24,7 +24,6 @@ from ._backends.errors import (
 )
 from ._backends.registry import selected_backend
 from .types import (
-    CheckpointInfo,
     CommandInfo,
     CommandResult,
     EntryInfo,
@@ -38,7 +37,6 @@ from .types import (
 
 __all__ = [
     "Sandbox",
-    "CheckpointInfo",
     "S3Config",
     "Mount",
     "NetworkPolicy",

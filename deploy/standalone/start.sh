@@ -336,6 +336,7 @@ start_node_container() {
         --net bridge \
         --restart always \
         -e AKS_LOCAL_MODE="true" \
+        -e YR_RRT_CONTROL_SOCKET_PATH="/run/akernel" \
         -e TRAEFIK_MODE="http" \
         -e TRAEFIK_HTTP_ENTRYPOINT="web" \
         -e TRAEFIK_ENABLE_TLS="false" \

@@ -25,6 +25,32 @@ _ENABLED = (
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
 
+_CHECKPOINT_COMMAND = r"""python3 - <<'PY'
+import socket
+
+request = (
+    b"POST /checkpoint HTTP/1.1\r\n"
+    b"Host: localhost\r\n"
+    b"Content-Length: 0\r\n"
+    b"Connection: close\r\n\r\n"
+)
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.settimeout(300)
+    client.connect("/run/akernel/rrt.sock")
+    client.sendall(request)
+    response = bytearray()
+    while True:
+        chunk = client.recv(4096)
+        if not chunk:
+            break
+        response.extend(chunk)
+
+status = bytes(response).split(b"\r\n", 1)[0]
+if b" 200 " not in status:
+    raise RuntimeError(bytes(response).decode("utf-8", "replace"))
+print(bytes(response).rsplit(b"\r\n\r\n", 1)[-1].decode())
+PY"""
+
 
 @unittest.skipUnless(
     _ENABLED,
@@ -103,45 +129,53 @@ class SandboxIntegrationTest(unittest.TestCase):
     _ENABLED,
     "set AKERNEL_RUN_INTEGRATION=1 and the AKernel SDK environment",
 )
-class SandboxCheckpointIntegrationTest(unittest.TestCase):
-    def test_checkpoint_restore_and_delete(self):
-        source = Sandbox(cpu=1000, memory=2048, runtime=_RUNTIME)
-        restored = None
-        checkpoint = None
+class SandboxReloadIntegrationTest(unittest.TestCase):
+    def test_internal_checkpoint_and_reload(self):
+        sandbox = Sandbox(
+            cpu=1000,
+            memory=2048,
+            runtime=_RUNTIME,
+            failover=True,
+        )
         try:
-            source_id = source.id
-            created = source.commands.run(
-                "printf checkpoint-before > /tmp/akernel-checkpoint-state && sync"
+            sandbox_id = sandbox.id
+            commands = sandbox.commands
+            files = sandbox.files
+            pty = sandbox.pty
+            created = sandbox.commands.run(
+                "printf checkpoint-before > /tmp/akernel-checkpoint-state"
             )
             self.assertEqual(created.exit_code, 0)
 
-            checkpoint = source.checkpoint(timeout=180)
-            self.assertTrue(source.is_running())
-            checkpoint_ids = {item.id for item in Sandbox.list_checkpoints()}
-            self.assertIn(checkpoint.id, checkpoint_ids)
+            checkpoint = sandbox.commands.run(_CHECKPOINT_COMMAND, timeout=300)
+            self.assertEqual(checkpoint.exit_code, 0, checkpoint.stderr)
+            self.assertIn('"status":"completed"', checkpoint.stdout)
+            self.assertTrue(sandbox.is_running())
 
-            changed = source.commands.run(
-                "printf source-after > /tmp/akernel-checkpoint-state && sync"
+            changed = sandbox.commands.run(
+                "printf source-after > /tmp/akernel-checkpoint-state"
             )
             self.assertEqual(changed.exit_code, 0)
 
-            restored = Sandbox.restore(checkpoint)
-            self.assertNotEqual(restored.id, source_id)
-            restored_value = restored.commands.run(
+            self.assertTrue(sandbox.reload())
+            self.assertEqual(sandbox.id, sandbox_id)
+            self.assertIs(sandbox.commands, commands)
+            self.assertIs(sandbox.files, files)
+            self.assertIs(sandbox.pty, pty)
+            restored_value = sandbox.commands.run(
                 "cat /tmp/akernel-checkpoint-state"
             )
             self.assertEqual(restored_value.exit_code, 0)
             self.assertEqual(restored_value.stdout, "checkpoint-before")
-            self.assertEqual(
-                source.commands.run("cat /tmp/akernel-checkpoint-state").stdout,
-                "source-after",
+            network = sandbox.commands.run(
+                "python3 -c 'import socket; "
+                "s=socket.create_connection((\"example.com\", 443), 10); "
+                "s.close()'",
+                timeout=30,
             )
+            self.assertEqual(network.exit_code, 0, network.stderr)
         finally:
-            if restored is not None:
-                restored.kill()
-            source.kill()
-            if checkpoint is not None:
-                Sandbox.delete_checkpoint(checkpoint)
+            sandbox.kill()
 
 
 if __name__ == "__main__":

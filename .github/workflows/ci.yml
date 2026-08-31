@@ -134,7 +134,7 @@ jobs:
             make build \
               IMAGE_REPOSITORY=akernel-ci/all-in-one \
               IMAGE_TAG="${GITHUB_SHA}" \
-              RUNTIME_PROFILE=rrt
+              RUNTIME_PROFILE=python
 
       - name: Start standalone AKernel
         run: |
@@ -170,7 +170,7 @@ jobs:
             timeout 120s python "sdk/python/examples/${example}"
           done
 
-      - name: Run runsc and Firecracker checkpoint restore E2E
+      - name: Run runsc and Firecracker checkpoint reload E2E
         run: |
           gateway_ip="$(docker inspect \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
@@ -183,10 +183,10 @@ jobs:
           export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
 
           for runtime in runsc firecracker; do
-            echo "=== Checkpoint/restore runtime=${runtime} ==="
+            echo "=== Checkpoint/reload runtime=${runtime} ==="
             AKERNEL_TEST_RUNTIME="${runtime}" timeout 300s python \
               sdk/python/tests/integration/test_sandbox.py \
-              SandboxCheckpointIntegrationTest -v
+              SandboxReloadIntegrationTest -v
           done
 
       - name: Show standalone diagnostics

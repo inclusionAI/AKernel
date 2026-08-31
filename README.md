@@ -37,7 +37,8 @@ One all-in-one image, multiple deployment targets — deploy in under 10 minutes
   default, with [Kata Containers](https://github.com/kata-containers/kata-containers)
   and [Firecracker](https://github.com/firecracker-microvm/firecracker)
   available on KVM-capable nodes
-- **Checkpoint/Restore\***: Save and restore sandbox state for fast recovery
+- **Same-node recovery**: Checkpoint runsc and Firecracker workloads and reload
+  the same logical sandbox
 
 \* Planned for an open-source release and not available in AKernel v0.1.0.
 
@@ -207,7 +208,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 - [x] Optional native Linux runc runtime
 - [x] Sandbox network ACL
 - [ ] Fork-based sandbox launch based on gVisor
-- [x] Sandbox checkpoint and restore for runsc and Firecracker
+- [x] Same-node checkpoint recovery for runsc and Firecracker
 - [ ] Support for GKE and AWS
 - [x] Cgroup v2 node support
 

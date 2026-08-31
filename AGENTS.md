@@ -302,6 +302,21 @@ with Sandbox(cpu=2000, memory=4096) as sb:
     print(result.stdout)
 ```
 
+Same-node failover and explicit rollback retain the logical sandbox identity:
+
+```python
+with Sandbox(failover=True) as sb:
+    if not sb.reload():
+        print("no local checkpoint is available")
+```
+
+The current functional integration deliberately leaves anonymous local
+checkpoint creation inside the workload through RRT's internal Unix socket.
+The node sets `YR_RRT_CONTROL_SOCKET_PATH=/run/akernel`, making the socket
+available at `/run/akernel/rrt.sock`. Do not present that socket protocol as a
+stable public SDK interface or add public checkpoint catalog methods to the
+SDK.
+
 Select Kata explicitly only when the cluster has an eligible node:
 
 ```python
@@ -380,11 +395,12 @@ Firecracker creates its configured sparse ext4 default.
 The bundled node enables YuanRong's local-only sandbox snapshot data plane and
 stores checkpoint state under the persistent `/home/akernel/checkpoints`
 mount. RRT receives
-`YR_RRT_CONTROL_SOCKET_PATH=/run/openyuanrong` so sandbox workloads can trigger
-their local checkpoint handoff. The public SDK does not expose snapshot TTLs:
-reusable checkpoints remain until explicitly deleted. Keep local-only snapshot
-mode and the persistent checkpoint directory configured together when changing
-node startup arguments.
+`YR_RRT_CONTROL_SOCKET_PATH=/run/akernel` so sandbox workloads can trigger
+their local checkpoint handoff through `/run/akernel/rrt.sock`. Recovery points
+follow the source sandbox lifecycle. The public SDK exposes only failover and
+reload, not checkpoint identifiers, restore, list, delete, or snapshot TTLs.
+Keep local-only snapshot mode and the persistent checkpoint directory
+configured together when changing node startup arguments.
 
 Keep detailed SDK reference material with the SDK. The root README should
 contain only the project-level entry points and representative examples:

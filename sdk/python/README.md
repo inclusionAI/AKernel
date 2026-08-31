@@ -22,7 +22,7 @@ It supports two backends:
   - [Filesystem](#filesystem)
   - [Interactive PTYs](#interactive-ptys)
   - [Port forwarding](#port-forwarding)
-  - [Checkpoint and restore](#checkpoint-and-restore)
+  - [Local failover and reload](#local-failover-and-reload)
   - [Reverse tunnels](#reverse-tunnels)
   - [Rootfs and mounts](#rootfs-and-mounts)
   - [Launch from a Dockerfile](#launch-from-a-dockerfile)
@@ -353,59 +353,33 @@ with Sandbox(port_forwardings=[8080]) as sandbox:
 deployment operator explicitly wants the direct Traefik address instead of the
 public gateway.
 
-## Checkpoint and restore
+## Local failover and reload
 
-Create an immutable checkpoint of a running sandbox and restore it as a new,
-independent sandbox:
+`Sandbox(failover=True)` opts into same-node recovery of the same logical
+sandbox after its physical runtime fails. `sandbox.reload()` requests the same
+rollback explicitly and returns `False` when no usable local anonymous
+checkpoint exists. A successful reload preserves `sandbox.id` and the existing
+commands, filesystem, and PTY facades.
 
-```python
-from akernel_sdk import Sandbox
+Recovery points are local and follow the source sandbox lifecycle. They are
+created by sandbox workloads through RRT's internal `POST /checkpoint`
+endpoint on `/run/akernel/rrt.sock`. A successful request returns
+`{"status":"completed"}`; a concurrent checkpoint request returns HTTP 409.
+This Unix-socket protocol is experimental and is not a stable public AKernel
+SDK interface. The SDK deliberately does not expose checkpoint identifiers,
+restore, list, or delete operations.
 
-checkpoint = None
-try:
-    with Sandbox(runtime="runsc") as source:
-        source.commands.run("printf before > /tmp/state && sync")
-        checkpoint = source.checkpoint(timeout=180)
-        source.commands.run("printf after > /tmp/state")
+The bundled runsc and Firecracker runtimes support this recovery flow. The
+Python runtime profile is required by the current example:
 
-    with Sandbox.restore(checkpoint, timeout=300) as restored:
-        assert restored.id != source.id
-        assert restored.commands.run("cat /tmp/state").stdout == "before"
-finally:
-    if checkpoint is not None:
-        Sandbox.delete_checkpoint(checkpoint)
+```bash
+AKERNEL_TEST_RUNTIME=runsc python examples/failover_reload.py
+AKERNEL_TEST_RUNTIME=firecracker python examples/failover_reload.py
 ```
 
-`checkpoint()` keeps the source running by default. Set
-`leave_running=False` to terminate it after the checkpoint commits. Checkpoints
-do not expire and must be removed explicitly with `delete_checkpoint()`;
-`list_checkpoints()` returns all checkpoint identities visible to the current
-tenant.
-
-Each restore gets a new sandbox ID, placement, network attachment, and routes.
-The runtime, root filesystem, resources, mounts, environment, network policy,
-and filesystem/process state come from the checkpoint. v1 does not support
-in-place rollback or restore-time resource and configuration overrides.
-The default restore timeout is 300 seconds; increase it for large Firecracker
-checkpoints whose writable layer must be transferred and verified.
-
-The bundled backend supports checkpoints for runsc and Firecracker. A restore
-must use compatible runtime binaries, architecture, kernel, and runtime
-configuration. The cluster prefers the source node when it is available and
-may fall back to another compatible node through the configured snapshot
-storage.
-
-For a checkpoint created from a sandbox with a reverse tunnel, pass an
-explicit `reverse_tunnel` to `restore()` using the same `reverse_port` and
-`listen_port`. The target and connection timeout may change. A checkpoint made
-without a tunnel rejects adding one during restore. The source tunnel is
-briefly disconnected during checkpoint creation and then reconnected.
-
-Checkpoint/restore is available through the default `openyuanrong-sandbox`
-backend. The legacy `openyuanrong-sdk` actor backend reports it as unsupported.
-Checkpoint and restore timeouts are propagated through YuanRong to sandboxd.
-See [`examples/checkpoint_restore.py`](./examples/checkpoint_restore.py) for a
-runnable example.
+See [`examples/failover_reload.py`](./examples/failover_reload.py) for the
+internal trigger used during integration. The actor-based
+`openyuanrong-sdk` backend does not support failover or reload.
 
 ## Reverse tunnels
 
@@ -574,9 +548,9 @@ Maintained examples are under [`examples/`](./examples):
 
 - `basic_usage.py`
 - `command_stdin.py`
-- `checkpoint_restore.py`
 - `custom_image.py`
 - `dockerfile_launch.py`
+- `failover_reload.py`
 - `gpu_sandbox.py`
 - `named_sandbox.py`
 - `network_policy.py`
@@ -612,7 +586,6 @@ not part of the default test suite.
 | `CommandInfo` | `pid`, `command`, `running` |
 | `EntryInfo` | `name`, `path`, `type`, `size`, `permissions`, `modified_time` |
 | `SandboxInfo` | `id`, `state`, `cpu`, `memory`, `image`, `xpu`, `storage_mb` |
-| `CheckpointInfo` | `id` |
 | `NodeInfo` | `id`, `status`, `capacity`, `allocatable`, `labels` |
 | `S3Config` | `endpoint`, `bucket`, `object`, optional credentials |
 | `Mount` | `target`, one source, and `type` |

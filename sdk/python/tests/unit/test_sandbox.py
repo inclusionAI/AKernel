@@ -18,7 +18,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from akernel_sdk import (
-    CheckpointInfo,
     DockerfileLaunch,
     HttpReverseTunnel,
     NetworkPolicy,
@@ -73,6 +72,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(dict(spec.env), {})
         self.assertIsNone(spec.xpu)
         self.assertIsNone(spec.storage_mb)
+        self.assertFalse(spec.failover)
         self.assertIsNone(spec.network_policy)
         self.assertEqual(dict(spec.extra_config), {})
         sandbox.kill()
@@ -170,94 +170,41 @@ class SandboxTest(unittest.TestCase):
         Sandbox.delete("worker")
         self.backend.delete_named.assert_called_once_with("worker")
 
-    def test_checkpoint_returns_public_identity_and_keeps_source_running(self):
-        self.session.checkpoint.return_value = "checkpoint-1"
-        sandbox = Sandbox()
-
-        checkpoint = sandbox.checkpoint(timeout=240)
-
-        self.assertEqual(checkpoint, CheckpointInfo("checkpoint-1"))
-        self.session.checkpoint.assert_called_once_with(timeout=240)
-        self.session.terminate.assert_not_called()
+    def test_failover_is_validated_and_forwarded(self):
+        sandbox = Sandbox(failover=True)
+        spec = self.backend.create.call_args.args[0]
+        self.assertTrue(spec.failover)
         sandbox.kill()
 
-    def test_checkpoint_can_terminate_source_after_success(self):
-        self.session.checkpoint.return_value = "checkpoint-1"
-        sandbox = Sandbox()
+        with self.assertRaisesRegex(TypeError, "failover must be a boolean"):
+            Sandbox(failover=1)
 
-        checkpoint = sandbox.checkpoint(leave_running=False)
+    def test_reload_preserves_identity_and_facades(self):
+        self.session.reload.return_value = True
+        sandbox = Sandbox(failover=True)
+        identity = sandbox.id
+        commands = sandbox.commands
+        files = sandbox.files
+        pty = sandbox.pty
 
-        self.assertEqual(checkpoint.id, "checkpoint-1")
-        self.session.terminate.assert_called_once_with()
-        self.session.close.assert_called_once_with()
+        self.assertTrue(sandbox.reload())
+        self.assertEqual(sandbox.id, identity)
+        self.assertIs(sandbox.commands, commands)
+        self.assertIs(sandbox.files, files)
+        self.assertIs(sandbox.pty, pty)
+        self.session.reload.assert_called_once_with()
 
-    def test_checkpoint_validates_arguments_and_running_state(self):
-        sandbox = Sandbox()
-        for timeout in (True, 0, -1, 1.5):
-            with self.subTest(timeout=timeout), self.assertRaises(
-                (TypeError, ValueError)
-            ):
-                sandbox.checkpoint(timeout=timeout)
-        with self.assertRaisesRegex(TypeError, "leave_running"):
-            sandbox.checkpoint(leave_running=1)
-        self.session.is_running.return_value = False
-        with self.assertRaisesRegex(RuntimeError, "running sandbox"):
-            sandbox.checkpoint()
         sandbox.kill()
+        self.assertFalse(sandbox.reload())
+        self.session.reload.assert_called_once_with()
 
-    def test_restore_builds_facades_around_new_backend_session(self):
-        restored_session = MagicMock()
-        restored_session.id = "restored-physical-id"
-        restored_session.commands = MagicMock()
-        restored_session.files = MagicMock()
-        restored_session.get_info.return_value = SandboxInfo(
-            id="restored-physical-id",
-            state="running",
-            cpu=2000,
-            memory=8192,
-            image="base-image",
-        )
-        self.backend.restore.return_value = restored_session
-        tunnel = HttpReverseTunnel("http://127.0.0.1:9000")
+    def test_reload_propagates_no_checkpoint_result(self):
+        self.session.reload.return_value = False
+        sandbox = Sandbox(failover=True)
 
-        restored = Sandbox.restore(
-            CheckpointInfo("checkpoint-1"), reverse_tunnel=tunnel, timeout=900
-        )
+        self.assertFalse(sandbox.reload())
 
-        self.backend.restore.assert_called_once_with(
-            "checkpoint-1", reverse_tunnel=tunnel, timeout=900
-        )
-        self.assertEqual(restored.id, "restored-physical-id")
-        self.assertIs(restored.reverse_tunnel, tunnel)
-        self.assertEqual(restored.get_info().cpu, 2000)
-        restored.kill()
-        restored_session.terminate.assert_called_once_with()
-        restored_session.close.assert_called_once_with()
-
-    def test_list_and_delete_checkpoints_hide_backend_details(self):
-        self.backend.list_checkpoints.return_value = ["checkpoint-1", "checkpoint-2"]
-
-        self.assertEqual(
-            Sandbox.list_checkpoints(),
-            [CheckpointInfo("checkpoint-1"), CheckpointInfo("checkpoint-2")],
-        )
-        Sandbox.delete_checkpoint(CheckpointInfo("checkpoint-1"))
-        Sandbox.delete_checkpoint(" checkpoint-2 ")
-
-        self.assertEqual(
-            self.backend.delete_checkpoint.call_args_list,
-            [unittest.mock.call("checkpoint-1"), unittest.mock.call("checkpoint-2")],
-        )
-        with self.assertRaises(ValueError):
-            Sandbox.delete_checkpoint(" ")
-        with self.assertRaises(TypeError):
-            Sandbox.restore(object())  # type: ignore[arg-type]
-        for timeout in (True, 0, -1, 1.5):
-            with (
-                self.subTest(timeout=timeout),
-                self.assertRaises((TypeError, ValueError)),
-            ):
-                Sandbox.restore("checkpoint-1", timeout=timeout)
+        sandbox.kill()
 
     def test_rootfs_requires_s3_config(self):
         with self.assertRaisesRegex(TypeError, "S3Config"):

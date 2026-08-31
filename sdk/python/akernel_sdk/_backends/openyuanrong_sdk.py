@@ -24,7 +24,6 @@ from ..types import (
     CommandInfo,
     CommandResult,
     EntryInfo,
-    HttpReverseTunnel,
     SandboxInfo,
 )
 from . import openyuanrong_sdk_impl as _impl
@@ -244,10 +243,9 @@ class _Session:
             storage_mb=self._spec.storage_mb,
         )
 
-    def checkpoint(self, *, timeout: int) -> str:
-        del timeout
+    def reload(self) -> bool:
         raise UnsupportedBackendFeatureError(
-            "Backend 'openyuanrong-sdk' does not support reusable checkpoints. "
+            "Backend 'openyuanrong-sdk' does not support sandbox reload. "
             "Use the default 'openyuanrong-sandbox' backend."
         )
 
@@ -278,16 +276,17 @@ class OpenYuanRongSdkBackend:
 
     name = "openyuanrong-sdk"
     namespace = _NAMESPACE
-    capabilities: frozenset[Capability] = frozenset(
-        capability
-        for capability in Capability
-        if capability is not Capability.CHECKPOINT_RESTORE
-    )
+    capabilities: frozenset[Capability] = frozenset(Capability)
 
     def __init__(self, _config: BackendConfig) -> None:
         _impl.ensure_initialized()
 
     def create(self, spec: SandboxSpec) -> BackendSession:
+        if spec.failover:
+            raise UnsupportedBackendFeatureError(
+                "Backend 'openyuanrong-sdk' does not support automatic sandbox "
+                "failover. Use the default 'openyuanrong-sandbox' backend."
+            )
         options = _impl.build_options(
             image=spec.image,
             rootfs=spec.rootfs,
@@ -349,32 +348,6 @@ class OpenYuanRongSdkBackend:
                     )
             _rollback_instance(instance, "session initialization")
             raise _convert_error("initialize sandbox session", error) from error
-
-    def restore(
-        self,
-        checkpoint_id: str,
-        *,
-        reverse_tunnel: HttpReverseTunnel | None,
-        timeout: int,
-    ) -> BackendSession:
-        del checkpoint_id, reverse_tunnel, timeout
-        raise UnsupportedBackendFeatureError(
-            "Backend 'openyuanrong-sdk' does not support reusable checkpoints. "
-            "Use the default 'openyuanrong-sandbox' backend."
-        )
-
-    def list_checkpoints(self) -> list[str]:
-        raise UnsupportedBackendFeatureError(
-            "Backend 'openyuanrong-sdk' does not support reusable checkpoints. "
-            "Use the default 'openyuanrong-sandbox' backend."
-        )
-
-    def delete_checkpoint(self, checkpoint_id: str) -> None:
-        del checkpoint_id
-        raise UnsupportedBackendFeatureError(
-            "Backend 'openyuanrong-sdk' does not support reusable checkpoints. "
-            "Use the default 'openyuanrong-sandbox' backend."
-        )
 
     def delete_named(self, name: str) -> None:
         try:
