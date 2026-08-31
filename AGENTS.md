@@ -15,9 +15,9 @@ which owns availability and compatibility checks. The bundled deployment also
 advertises Kata Containers and Firecracker on KVM-capable nodes. The native
 Linux runc payload is build-time optional and must be explicitly included and
 enabled by an operator.
-Creation-time network policies support unrestricted networking, blocking new
-flows except the YuanRong control and published sandbox-port routes, or denying
-exact and leading-wildcard DNS names.
+Creation-time network policies and atomic runtime replacement support
+unrestricted networking, blocking new flows except the YuanRong control and
+published sandbox-port routes, or denying exact and leading-wildcard DNS names.
 Experimental whole-device NVIDIA GPU requests require runsc. Configurable
 writable-storage requests are supported by runsc and Firecracker.
 

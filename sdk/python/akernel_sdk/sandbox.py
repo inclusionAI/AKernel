@@ -272,9 +272,7 @@ class Sandbox:
             raise ValueError("runtime must be a non-empty string")
         normalized_xpu = normalize_xpu(xpu)
         validate_storage_mb(storage_mb)
-        if network_policy is not None and not isinstance(
-            network_policy, NetworkPolicy
-        ):
+        if network_policy is not None and not isinstance(network_policy, NetworkPolicy):
             raise TypeError("network_policy must be a NetworkPolicy or None")
         _validate_integer("cpu", cpu, minimum=1)
         _validate_integer("memory", memory, minimum=1)
@@ -468,6 +466,30 @@ class Sandbox:
         if self._closed or self._session is None:
             return False
         return self._session.reload()
+
+    def update_network_policy(self, policy: NetworkPolicy | None) -> None:
+        """Atomically replace the complete network policy of this sandbox.
+
+        Passing None or an empty NetworkPolicy clears the existing policy and
+        restores unrestricted networking. The desired policy is retained
+        across sandboxd restarts, explicit reloads, and same-node failover.
+
+        Args:
+            policy: The replacement policy, or None to clear it.
+
+        Raises:
+            TypeError: If policy is not a NetworkPolicy or None.
+            RuntimeError: If the sandbox is already closed.
+            UnsupportedBackendFeatureError: If the selected backend cannot
+                update policies dynamically.
+        """
+
+        if policy is not None and not isinstance(policy, NetworkPolicy):
+            raise TypeError("policy must be a NetworkPolicy or None")
+        if self._closed or self._session is None:
+            raise RuntimeError("sandbox is closed")
+        normalized = None if policy is None or policy.is_empty else policy
+        self._session.update_network_policy(normalized)
 
     def get_port_url(self, port: int, *, internal: bool = False) -> str:
         """Return the gateway URL for a declared sandbox port.

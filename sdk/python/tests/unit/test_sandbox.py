@@ -698,6 +698,28 @@ class SandboxTest(unittest.TestCase):
                 sandbox.get_port_url(9090)
             sandbox.kill()
 
+    def test_update_network_policy_normalizes_and_delegates(self):
+        sandbox = Sandbox()
+        policy = NetworkPolicy.deny_dns("github.com")
+
+        sandbox.update_network_policy(policy)
+        sandbox.update_network_policy(NetworkPolicy())
+        sandbox.update_network_policy(None)
+
+        self.assertEqual(
+            self.session.update_network_policy.call_args_list,
+            [
+                unittest.mock.call(policy),
+                unittest.mock.call(None),
+                unittest.mock.call(None),
+            ],
+        )
+        with self.assertRaises(TypeError):
+            sandbox.update_network_policy({"blockNetwork": True})
+        sandbox.kill()
+        with self.assertRaises(RuntimeError):
+            sandbox.update_network_policy(None)
+
 
 if __name__ == "__main__":
     unittest.main()

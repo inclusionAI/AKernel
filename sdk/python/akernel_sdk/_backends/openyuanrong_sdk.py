@@ -24,6 +24,7 @@ from ..types import (
     CommandInfo,
     CommandResult,
     EntryInfo,
+    NetworkPolicy,
     SandboxInfo,
 )
 from . import openyuanrong_sdk_impl as _impl
@@ -247,6 +248,12 @@ class _Session:
         raise UnsupportedBackendFeatureError(
             "Backend 'openyuanrong-sdk' does not support sandbox reload. "
             "Use the default 'openyuanrong-sandbox' backend."
+        )
+
+    def update_network_policy(self, policy: NetworkPolicy | None) -> None:
+        raise UnsupportedBackendFeatureError(
+            "Backend 'openyuanrong-sdk' does not support dynamic network policy "
+            "updates. Use the default 'openyuanrong-sandbox' backend."
         )
 
     def terminate(self) -> None:

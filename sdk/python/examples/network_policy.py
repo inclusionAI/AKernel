@@ -85,6 +85,19 @@ def main() -> None:
         denied = restricted.commands.run(tcp_connection("example.com", 443), timeout=10)
         assert denied.exit_code != 0
         print("Generic egress allowlist enforced domain and port rules.")
+    with Sandbox() as dynamic:
+        dynamic.update_network_policy(NetworkPolicy.block())
+        denied = dynamic.commands.run(direct_connection(), timeout=10)
+        assert denied.exit_code != 0
+
+        dynamic.update_network_policy(
+            NetworkPolicy.deny_dns("github.com", "*.github.com")
+        )
+        allowed = dynamic.commands.run(direct_connection(), timeout=10)
+        assert allowed.exit_code == 0, allowed.stderr
+
+        dynamic.update_network_policy(None)
+        print("Dynamic policy replacement and clearing succeeded.")
 
 
 if __name__ == "__main__":

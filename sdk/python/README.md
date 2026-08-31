@@ -212,6 +212,22 @@ policy = NetworkPolicy.allowlist(
 with Sandbox(network_policy=policy) as sandbox:
     print(sandbox.commands.run("curl https://api.example.com").stdout)
 ```
+Replace the complete policy of a running sandbox atomically with
+`update_network_policy`. Passing `None` or an empty `NetworkPolicy()`
+clears the policy and restores unrestricted networking:
+
+```python
+with Sandbox() as sandbox:
+    sandbox.update_network_policy(NetworkPolicy.block())
+    sandbox.update_network_policy(
+        NetworkPolicy.deny_dns("github.com", "*.github.com")
+    )
+    sandbox.update_network_policy(None)
+```
+
+The desired policy survives sandboxd restarts, explicit reloads, and same-node
+failover. Dynamic replacement is supported by the default
+`openyuanrong-sandbox` backend; the actor-based backend rejects it explicitly.
 
 For independent ingress and egress defaults, deny rules, sandbox-side port
 ranges, DNS allowlists, or stateless matching, construct the schema v2 model
@@ -239,7 +255,7 @@ The resulting enforcement is at IPv4 and transport layers. Another virtual
 host sharing an authorized address and port is not distinguishable; use an
 application proxy when hostname-level isolation is required.
 
-Network policies are fixed when a sandbox is created. The legacy
+Network policy replacement uses whole-policy semantics. The legacy
 `block_network` and `dns_blacklist` fields cannot be combined with schema v2
 sections. DNS policies cover ordinary UDP and TCP DNS and return a refused
 response for denied queries; DNS-over-HTTPS and connections to a known IP are

@@ -342,6 +342,23 @@ class _Session:
         except Exception:
             return False
 
+    def update_network_policy(self, policy: NetworkPolicy | None) -> None:
+        if self._terminated or self._closed:
+            raise BackendOperationError(
+                "update network policy failed: sandbox is closed"
+            )
+        update = getattr(self._sandbox, "update_network_policy", None)
+        if not callable(update):
+            raise UnsupportedBackendFeatureError(
+                "The installed openyuanrong-sandbox backend does not support "
+                "dynamic network policy updates. Upgrade the backend package."
+            )
+        native_policy = None if policy is None else _native_network_policy(policy)
+        try:
+            update(native_policy)
+        except Exception as error:
+            raise _convert_error("update network policy", error) from error
+
     def terminate(self) -> None:
         if self._terminated:
             return
