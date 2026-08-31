@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import http.server
 import os
+import shlex
+import socketserver
+import threading
 import time
 import unittest
 
-from akernel_sdk import Sandbox
+from akernel_sdk import HttpReverseTunnel, Sandbox
 
 _ENABLED = (
     os.environ.get("AKERNEL_RUN_INTEGRATION") == "1"
@@ -50,6 +54,36 @@ if b" 200 " not in status:
     raise RuntimeError(bytes(response).decode("utf-8", "replace"))
 print(bytes(response).rsplit(b"\r\n\r\n", 1)[-1].decode())
 PY"""
+
+_REVERSE_TUNNEL_PROBE = (
+    "exec 3<>/dev/tcp/127.0.0.1/8766; "
+    "printf 'GET /health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n"
+    "Connection: close\\r\\n\\r\\n' >&3; "
+    "while IFS= read -r line <&3; do "
+    'case "$line" in '
+    "*AKERNEL_REVERSE_TUNNEL_OK*) "
+    "printf 'AKERNEL_REVERSE_TUNNEL_OK\\n'; exit 0;; "
+    "esac; "
+    "done; "
+    "exit 1"
+)
+
+
+class _ReverseTunnelHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            body = b"AKERNEL_REVERSE_TUNNEL_OK\n"
+            self.send_response(200)
+        else:
+            body = b"not found\n"
+            self.send_response(404)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
 
 
 @unittest.skipUnless(
@@ -130,18 +164,57 @@ class SandboxIntegrationTest(unittest.TestCase):
     "set AKERNEL_RUN_INTEGRATION=1 and the AKernel SDK environment",
 )
 class SandboxReloadIntegrationTest(unittest.TestCase):
-    def test_internal_checkpoint_and_reload(self):
-        sandbox = Sandbox(
-            cpu=1000,
-            memory=2048,
-            runtime=_RUNTIME,
-            failover=True,
+    def _wait_for_reverse_tunnel(self, sandbox, *, timeout=60):
+        deadline = time.monotonic() + timeout
+        last_result = None
+        while time.monotonic() < deadline:
+            last_result = sandbox.commands.run(
+                "bash -c " + shlex.quote(_REVERSE_TUNNEL_PROBE),
+                timeout=20,
+            )
+            if (
+                last_result.exit_code == 0
+                and last_result.stdout.strip() == "AKERNEL_REVERSE_TUNNEL_OK"
+            ):
+                return
+            time.sleep(0.5)
+
+        assert last_result is not None
+        self.fail(
+            "reverse tunnel did not recover: "
+            f"exit_code={last_result.exit_code}, "
+            f"stdout={last_result.stdout!r}, stderr={last_result.stderr!r}"
         )
+
+    def test_internal_checkpoint_reload_and_reverse_tunnel(self):
+        server = socketserver.ThreadingTCPServer(
+            ("127.0.0.1", 0),
+            _ReverseTunnelHandler,
+        )
+        server.daemon_threads = True
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        tunnel = HttpReverseTunnel(
+            target=f"http://127.0.0.1:{server.server_address[1]}",
+            reverse_port=8765,
+            listen_port=8766,
+        )
+        sandbox = None
         try:
+            sandbox = Sandbox(
+                cpu=1000,
+                memory=2048,
+                storage_mb=256,
+                runtime=_RUNTIME,
+                reverse_tunnel=tunnel,
+                failover=True,
+            )
             sandbox_id = sandbox.id
             commands = sandbox.commands
             files = sandbox.files
             pty = sandbox.pty
+            self.assertIs(sandbox.reverse_tunnel, tunnel)
+            self._wait_for_reverse_tunnel(sandbox)
             created = sandbox.commands.run(
                 "printf checkpoint-before > /tmp/akernel-checkpoint-state"
             )
@@ -162,20 +235,23 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
             self.assertIs(sandbox.commands, commands)
             self.assertIs(sandbox.files, files)
             self.assertIs(sandbox.pty, pty)
-            restored_value = sandbox.commands.run(
-                "cat /tmp/akernel-checkpoint-state"
-            )
+            self.assertIs(sandbox.reverse_tunnel, tunnel)
+            restored_value = sandbox.commands.run("cat /tmp/akernel-checkpoint-state")
             self.assertEqual(restored_value.exit_code, 0)
             self.assertEqual(restored_value.stdout, "checkpoint-before")
+            self._wait_for_reverse_tunnel(sandbox)
             network = sandbox.commands.run(
                 "python3 -c 'import socket; "
-                "s=socket.create_connection((\"example.com\", 443), 10); "
+                's=socket.create_connection(("example.com", 443), 10); '
                 "s.close()'",
                 timeout=30,
             )
             self.assertEqual(network.exit_code, 0, network.stderr)
         finally:
-            sandbox.kill()
+            if sandbox is not None:
+                sandbox.kill()
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":
