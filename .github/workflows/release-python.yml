@@ -35,8 +35,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must use the stable vX.Y.Z format: ${RELEASE_TAG}" >&2
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]]; then
+            echo "Release tag must use vX.Y.Z or vX.Y.ZrcN: ${RELEASE_TAG}" >&2
             exit 1
           fi
 

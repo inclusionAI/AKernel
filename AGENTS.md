@@ -454,9 +454,10 @@ are not part of the default test suite.
 
 ## Release
 
-Python SDK releases use stable `vX.Y.Z` tags. The tag version must match the
-version in `sdk/python/pyproject.toml`, and the tagged commit must be part of
-`main`. Publishing a GitHub Release runs
+Python SDK releases use stable `vX.Y.Z` tags or release-candidate
+`vX.Y.ZrcN` tags. The tag version must match the version in
+`sdk/python/pyproject.toml`, and the tagged commit must be part of `main`.
+Publishing a GitHub Release runs
 `.github/workflows/release-python.yml`, which checks the SDK, builds and tests
 the wheel and source distribution, and publishes them through the PyPI trusted
 publisher configured for the `pypi` GitHub environment. Do not add a PyPI
