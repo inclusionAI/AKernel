@@ -28,7 +28,7 @@ from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_e
 from ._backends.base import BackendSession, SandboxSpec
 from ._backends.registry import load_backend
 from ._dockerfile_launch import DockerfileLaunch
-from ._sandbox_resources import normalize_xpu, validate_storage_mb
+from ._sandbox_resources import normalize_xpu, validate_storage
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
 from .pty import Pty
@@ -195,6 +195,7 @@ class Sandbox:
         failover: bool = False,
         xpu: str | None = None,
         storage_mb: int | None = None,
+        storage_limit_mb: int | None = None,
         network_policy: NetworkPolicy | None = None,
         dockerfile: DockerfileLaunch | None = None,
         extra_config: Mapping[str, object] | None = None,
@@ -227,9 +228,13 @@ class Sandbox:
                 ``type:model:count`` format. Currently only exact-model NVIDIA
                 GPU requests are supported. The backend validates runtime
                 compatibility.
-            storage_mb: Experimental writable root filesystem quota in MiB.
-                When omitted, the configured default is used. Explicit quotas
-                are validated against the selected runtime by the backend.
+            storage_mb: Writable root filesystem scheduling request in MiB.
+                When no separate limit is given, this is also the writable
+                layer's hard limit. ``None`` makes no explicit storage request.
+            storage_limit_mb: Writable root filesystem hard limit in MiB.
+                It must be greater than or equal to ``storage_mb`` when both
+                are set. ``None`` follows ``storage_mb`` or the runtime's
+                configured default.
             network_policy: Optional creation-time network policy. Omitting it
                 leaves sandbox networking unrestricted.
             dockerfile: Supported Dockerfile direct-launch configuration.
@@ -271,7 +276,7 @@ class Sandbox:
         if not runtime:
             raise ValueError("runtime must be a non-empty string")
         normalized_xpu = normalize_xpu(xpu)
-        validate_storage_mb(storage_mb)
+        validate_storage(storage_mb, storage_limit_mb)
         if network_policy is not None and not isinstance(
             network_policy, NetworkPolicy
         ):
@@ -347,6 +352,7 @@ class Sandbox:
         self._memory = memory
         self._xpu = normalized_xpu
         self._storage_mb = storage_mb
+        self._storage_limit_mb = storage_limit_mb
         self._id = ""
 
         spec = SandboxSpec(
@@ -370,6 +376,7 @@ class Sandbox:
             node_id=node_id,
             xpu=normalized_xpu,
             storage_mb=storage_mb,
+            storage_limit_mb=storage_limit_mb,
             network_policy=(
                 None
                 if network_policy is None or network_policy.is_empty
@@ -519,6 +526,7 @@ class Sandbox:
                 image=self._image,
                 xpu=self._xpu,
                 storage_mb=self._storage_mb,
+                storage_limit_mb=self._storage_limit_mb,
             )
         info = self._session.get_info()
         return SandboxInfo(
@@ -532,6 +540,11 @@ class Sandbox:
                 info.storage_mb
                 if info.storage_mb is not None
                 else self._storage_mb
+            ),
+            storage_limit_mb=(
+                info.storage_limit_mb
+                if info.storage_limit_mb is not None
+                else self._storage_limit_mb
             ),
         )
 

@@ -158,6 +158,7 @@ class SandboxInfo:
     image: str | None
     xpu: str | None = None
     storage_mb: int | None = None
+    storage_limit_mb: int | None = None
 
 
 @dataclass(frozen=True)

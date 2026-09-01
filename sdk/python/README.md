@@ -104,6 +104,7 @@ Sandbox(
     *,
     xpu: str | None = None,
     storage_mb: int | None = None,
+    storage_limit_mb: int | None = None,
     network_policy: NetworkPolicy | None = None,
     dockerfile: DockerfileLaunch | None = None,
     extra_config: Mapping[str, object] | None = None,
@@ -125,17 +126,29 @@ supported. The bundled backend currently requires the gVisor `runsc` runtime
 and a node configured for gVisor nvproxy. Runtime compatibility is validated
 by the backend rather than the SDK.
 
-Set the writable root filesystem quota in MiB:
+Set the writable root filesystem scheduling request and hard limit in MiB:
 
 ```python
-with Sandbox(storage_mb=20 * 1024) as sandbox:
+with Sandbox(storage_mb=10 * 1024, storage_limit_mb=20 * 1024) as sandbox:
     print(sandbox.commands.run("df -h /").stdout)
 ```
 
-The bundled backend currently requires `runsc` for an explicit `storage_mb`
-quota and uses sandboxd's disk-backed XFS filestore. Runtime compatibility is
-validated by the backend. When `storage_mb` is omitted, sandboxd retains its
-configured default 10 GiB memory-backed writable overlay. See
+`storage_mb` is the amount reserved by the scheduler. `storage_limit_mb` is
+the writable root filesystem's hard limit. Both default to `None`:
+
+| `storage_mb` | `storage_limit_mb` | Behavior |
+|---|---|---|
+| `None` | `None` | No explicit storage reservation; use the runtime's configured writable-layer limit. |
+| request | `None` | Reserve the request; use the same value as the hard limit. |
+| `None` | limit | Reserve the limit and use it as the hard limit. |
+| request | limit | Reserve the request and enforce the limit; the limit must be at least the request. |
+
+Explicit storage values are supported by `runsc` and Firecracker. Runtime
+compatibility is validated by the backend. With neither value set, the bundled
+deployment keeps its configured 10 GiB writable-layer limit: runsc uses its
+memory-backed overlay and Firecracker uses a sparse ext4 overlay image.
+`SandboxInfo` reports the requested values; it does not resolve an omitted
+value to the runtime default. See
 [`examples/gpu_sandbox.py`](./examples/gpu_sandbox.py) and
 [`examples/storage_sandbox.py`](./examples/storage_sandbox.py).
 
@@ -238,8 +251,8 @@ with Sandbox(
 `enableKVM` is owned by the runc backend and requires a usable `/dev/kvm` on
 the selected node. Runc supports OCI/EROFS root filesystems, read-only mounts,
 networking, command execution, and the default writable overlay. Experimental
-GPU requests remain runsc-only; explicit `storage_mb` quotas are supported by
-runsc and Firecracker. See the
+GPU requests remain runsc-only; explicit `storage_mb` requests and
+`storage_limit_mb` limits are supported by runsc and Firecracker. See the
 [sandbox runtime comparison](../../src/sandboxd/doc/runtime.md) for the
 runtime capability boundaries.
 
@@ -590,7 +603,7 @@ not part of the default test suite.
 | `CommandResult` | `stdout`, `stderr`, `exit_code` |
 | `CommandInfo` | `pid`, `command`, `running` |
 | `EntryInfo` | `name`, `path`, `type`, `size`, `permissions`, `modified_time` |
-| `SandboxInfo` | `id`, `state`, `cpu`, `memory`, `image`, `xpu`, `storage_mb` |
+| `SandboxInfo` | `id`, `state`, `cpu`, `memory`, `image`, `xpu`, `storage_mb`, `storage_limit_mb` |
 | `NodeInfo` | `id`, `status`, `capacity`, `allocatable`, `labels` |
 | `S3Config` | `endpoint`, `bucket`, `object`, optional credentials |
 | `Mount` | `target`, one source, and `type` |

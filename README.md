@@ -169,8 +169,9 @@ with Sandbox(xpu="gpu:l20:1") as sandbox:
 ```
 
 GPU sandboxes require a compatible NVIDIA node and the gVisor `runsc`
-runtime. `storage_mb` is measured in MiB and is supported by `runsc` and
-Firecracker.
+runtime. Writable storage controls are measured in MiB: `storage_mb` requests
+scheduler capacity, while `storage_limit_mb` sets the rootfs writable-layer
+hard limit. Both are supported by `runsc` and Firecracker.
 
 See the complete [basic usage example](./sdk/python/examples/basic_usage.py), the [sandbox runtime example](./sdk/python/examples/sandbox_runtime.py), and the other [SDK examples](./sdk/python/examples/) for more operations.
 

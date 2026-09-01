@@ -19,7 +19,8 @@ Creation-time network policies support unrestricted networking, blocking new
 flows except the YuanRong control and published sandbox-port routes, or denying
 exact and leading-wildcard DNS names.
 Experimental whole-device NVIDIA GPU requests require runsc. Configurable
-writable-storage requests are supported by runsc and Firecracker.
+writable-storage requests and hard limits are supported by runsc and
+Firecracker.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -196,7 +197,8 @@ a configured runtime as an advertised runtime.
 
 Firecracker supports commands, files, PTYs, network policies, published ports,
 reverse tunnels, read-only EROFS image roots and mounts, explicit `storage_mb`
-quotas, and recovery across sandboxd restarts. Its root and filesystem image
+requests and `storage_limit_mb` hard limits, and recovery across sandboxd
+restarts. Its root and filesystem image
 mounts must be local or image-provider-backed regular EROFS files. It rejects
 OCI/Nydus directory roots, directory mounts, writable live host binds, NVIDIA
 GPUs, and nested KVM rather than weakening their semantics.
@@ -213,9 +215,9 @@ direct configuration, build an image with `AKERNEL_ENABLE_RUNC=true`, then use
 `AKERNEL_ENABLE_RUNC=true` for standalone,
 `node.config.sandboxd.enableRunc=true` for Helm, or `enable_runc=true` for
 Terraform. Runc uses the host kernel and therefore has a different isolation
-boundary from runsc. It does not support experimental GPU or explicit
-`storage_mb` requests. Its optional `enableKVM` extra configuration requires a
-usable `/dev/kvm` device.
+boundary from runsc. It does not support experimental GPU, explicit
+`storage_mb` requests, or `storage_limit_mb` limits. Its optional `enableKVM`
+extra configuration requires a usable `/dev/kvm` device.
 
 The bundled sandboxd configuration enables per-sandbox network ACLs. Pooled TAP
 networking requires the host `tun` module and a usable `/dev/net/tun`. The
@@ -390,9 +392,10 @@ explicit override for multi-homed environments.
 
 The standalone sandboxd filestore is a loop-mounted ext4 image under the
 bind-mounted `deploy/standalone/data/` directory. Explicit `storage_mb`
-quotas for runsc and Firecracker use this local-disk filestore. Without an
-explicit quota, runsc retains its configured memory-backed overlay while
-Firecracker creates its configured sparse ext4 default.
+requests and `storage_limit_mb` hard limits for runsc and Firecracker use this
+local-disk filestore. Without explicit storage values, runsc retains its
+configured memory-backed overlay while Firecracker creates its configured
+sparse ext4 default.
 
 Terraform-managed Alibaba Cloud node pools instead attach a dedicated 300 GiB
 ESSD by default, have ACK format it as XFS, and mount it at `/home/akernel`.
@@ -509,9 +512,10 @@ python sdk/python/tests/integration/test_sandbox.py -v
 
 python sdk/python/benchmarks/sandbox_pressure.py --runtime firecracker
 python sdk/python/benchmarks/sandbox_pressure.py \
-  --runtime firecracker --storage-mb 256
+  --runtime firecracker --storage-mb 256 --storage-limit-mb 512
 python sdk/python/benchmarks/sandbox_pressure.py \
-  --xpu gpu:a10:1 --storage-mb 256 --processes 1 --threads 1
+  --xpu gpu:a10:1 --storage-mb 256 --storage-limit-mb 512 \
+  --processes 1 --threads 1
 ```
 
 ## Maintenance Rules

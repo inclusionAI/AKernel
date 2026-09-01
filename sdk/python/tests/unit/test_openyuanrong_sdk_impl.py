@@ -41,6 +41,7 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
             "node_id": None,
             "xpu": None,
             "storage_mb": None,
+            "storage_limit_mb": None,
             "network_policy": None,
             "extra_config": {},
         }
@@ -115,19 +116,47 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
 
     def test_xpu_and_storage_translation_is_runtime_agnostic(self):
         options = self.build_options(
-            runtime="gvisor-next", xpu="GPU:L20:2", storage_mb=256
+            runtime="gvisor-next",
+            xpu="GPU:L20:2",
+            storage_mb=128,
+            storage_limit_mb=256,
         )
         self.assertEqual(
             options.custom_resources,
             {
                 "GPU/l20/count": 2.0,
-                "storage": float(256 * 1024 * 1024),
+                "storage": float(128 * 1024 * 1024),
             },
+        )
+        self.assertEqual(
+            options.custom_extensions["STORAGE_LIMIT"],
+            str(256 * 1024 * 1024),
         )
         self.assertEqual(
             json.loads(options.custom_extensions["rootfs"]),
             {"runtime": "gvisor-next"},
         )
+
+    def test_storage_limit_alone_reserves_its_hard_limit(self):
+        options = self.build_options(storage_limit_mb=256)
+
+        self.assertEqual(
+            options.custom_resources["storage"],
+            float(256 * 1024 * 1024),
+        )
+        self.assertEqual(
+            options.custom_extensions["STORAGE_LIMIT"],
+            str(256 * 1024 * 1024),
+        )
+
+    def test_storage_request_without_limit_omits_limit_extension(self):
+        options = self.build_options(storage_mb=128)
+
+        self.assertEqual(
+            options.custom_resources["storage"],
+            float(128 * 1024 * 1024),
+        )
+        self.assertNotIn("STORAGE_LIMIT", options.custom_extensions)
 
     def test_network_policy_uses_custom_extension_wire_format(self):
         options = self.build_options(

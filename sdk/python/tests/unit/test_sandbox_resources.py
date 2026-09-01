@@ -18,6 +18,7 @@ from akernel_sdk._sandbox_resources import (
     MAX_STORAGE_MB,
     normalize_xpu,
     storage_bytes,
+    validate_storage,
     validate_storage_mb,
     xpu_custom_resource,
 )
@@ -36,6 +37,14 @@ class SandboxResourcesTest(unittest.TestCase):
         validate_storage_mb(MAX_STORAGE_MB)
         with self.assertRaises(ValueError):
             validate_storage_mb(MAX_STORAGE_MB + 1)
+
+    def test_storage_limit_must_cover_request(self):
+        validate_storage(None, None)
+        validate_storage(None, 256)
+        validate_storage(128, None)
+        validate_storage(128, 256)
+        with self.assertRaisesRegex(ValueError, "greater than or equal"):
+            validate_storage(256, 128)
 
 
 if __name__ == "__main__":

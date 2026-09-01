@@ -267,6 +267,7 @@ class _Session:
             image=value.image,
             xpu=self._spec.xpu,
             storage_mb=self._spec.storage_mb,
+            storage_limit_mb=self._spec.storage_limit_mb,
         )
 
     def reload(self) -> bool:
@@ -415,6 +416,9 @@ class OpenYuanRongSandboxBackend:
             node_id=spec.node_id,
             xpu=spec.xpu,
             storage_mb=spec.storage_mb,
+            storage_limit_mb=(
+                spec.storage_limit_mb if spec.storage_limit_mb is not None else 0
+            ),
             network=network,
             extra_config=dict(spec.extra_config),
             create_timeout=create_timeout,

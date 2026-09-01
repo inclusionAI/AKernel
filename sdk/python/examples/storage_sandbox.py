@@ -12,15 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify an experimental gVisor writable root filesystem quota."""
+"""Verify a writable root filesystem request and hard limit."""
 
 from akernel_sdk import Sandbox
 
-STORAGE_MB = 256
+STORAGE_MB = 128
+STORAGE_LIMIT_MB = 256
 
 
 def main() -> None:
-    with Sandbox(storage_mb=STORAGE_MB, cpu=1000, memory=2048) as sandbox:
+    with Sandbox(
+        storage_mb=STORAGE_MB,
+        storage_limit_mb=STORAGE_LIMIT_MB,
+        cpu=1000,
+        memory=2048,
+    ) as sandbox:
         small_write = sandbox.commands.run(
             "dd if=/dev/zero of=/root/quota-ok bs=1M count=32 conv=fsync"
         )
@@ -33,7 +39,10 @@ def main() -> None:
         assert "No space left on device" in oversized_write.stderr, (
             oversized_write.stderr
         )
-        print(f"Writable rootfs quota enforced at {STORAGE_MB} MiB")
+        print(
+            "Writable rootfs request/limit enforced at "
+            f"{STORAGE_MB}/{STORAGE_LIMIT_MB} MiB"
+        )
 
 
 if __name__ == "__main__":

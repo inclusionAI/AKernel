@@ -76,6 +76,7 @@ class SandboxSpec:
     node_id: str | None
     xpu: str | None
     storage_mb: int | None
+    storage_limit_mb: int | None
     network_policy: NetworkPolicy | None
     extra_config: Mapping[str, object]
 

@@ -63,6 +63,7 @@ def _spec(**overrides):
         "node_id": None,
         "xpu": None,
         "storage_mb": None,
+        "storage_limit_mb": None,
         "network_policy": None,
         "extra_config": MappingProxyType({}),
     }
@@ -255,6 +256,42 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
 
         self.assertEqual(sandbox_type.call_args.kwargs["runtime"], "kata")
         self.assertEqual(sandbox_type.call_args.kwargs["image"], "ubuntu:24.04")
+
+    def test_storage_request_and_limit_are_forwarded_to_native_sdk(self):
+        native = MagicMock()
+        native.id = "default-storage"
+        native.get_info.return_value = SimpleNamespace(
+            id="default-storage",
+            state="running",
+            cpu=1000,
+            memory=4096,
+            image=None,
+        )
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(_spec(storage_mb=128, storage_limit_mb=256))
+
+        kwargs = sandbox_type.call_args.kwargs
+        self.assertEqual(kwargs["storage_mb"], 128)
+        self.assertEqual(kwargs["storage_limit_mb"], 256)
+        info = session.get_info()
+        self.assertEqual(info.storage_mb, 128)
+        self.assertEqual(info.storage_limit_mb, 256)
+
+    def test_unspecified_storage_limit_uses_native_default_sentinel(self):
+        native = MagicMock()
+        native.id = "default-storage"
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            self.backend.create(_spec())
+
+        self.assertEqual(sandbox_type.call_args.kwargs["storage_limit_mb"], 0)
 
     def test_create_converts_inputs_and_preserves_akernel_outputs(self):
         native = MagicMock()

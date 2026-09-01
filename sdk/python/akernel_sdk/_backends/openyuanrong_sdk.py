@@ -241,6 +241,7 @@ class _Session:
             image=self._spec.image,
             xpu=self._spec.xpu,
             storage_mb=self._spec.storage_mb,
+            storage_limit_mb=self._spec.storage_limit_mb,
         )
 
     def reload(self) -> bool:
@@ -306,6 +307,7 @@ class OpenYuanRongSdkBackend:
             node_id=spec.node_id,
             xpu=spec.xpu,
             storage_mb=spec.storage_mb,
+            storage_limit_mb=spec.storage_limit_mb,
             network_policy=spec.network_policy,
             extra_config=spec.extra_config,
         )

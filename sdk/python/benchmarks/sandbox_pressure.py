@@ -94,6 +94,7 @@ def _build_sandbox_kwargs(
     idle_timeout,
     xpu,
     storage_mb,
+    storage_limit_mb,
     upstream,
     reverse_port,
     listen_port,
@@ -110,6 +111,8 @@ def _build_sandbox_kwargs(
         kwargs["xpu"] = xpu
     if storage_mb is not None:
         kwargs["storage_mb"] = storage_mb
+    if storage_limit_mb is not None:
+        kwargs["storage_limit_mb"] = storage_limit_mb
     if image:
         kwargs["image"] = image
     if upstream:
@@ -197,6 +200,7 @@ def worker_process(
     idle_timeout,
     xpu,
     storage_mb,
+    storage_limit_mb,
     upstream,
     reverse_port,
     listen_port,
@@ -223,6 +227,7 @@ def worker_process(
         idle_timeout,
         xpu,
         storage_mb,
+        storage_limit_mb,
         upstream,
         reverse_port,
         listen_port,
@@ -298,7 +303,8 @@ def main(args):
         f"   cpu req/limit  : {args.cpu}m / {args.cpu_limit}m\n"
         f"   mem req/limit  : {args.memory}MiB / {args.mem_limit}MiB\n"
         f"   xpu request    : {args.xpu or '<none>'}\n"
-        f"   storage quota  : {args.storage_mb or '<default>'} MiB\n"
+        f"   storage req    : {args.storage_mb or '<none>'} MiB\n"
+        f"   storage limit  : {args.storage_limit_mb or '<default>'} MiB\n"
         f"   tunnel mode    : {bool(args.upstream)}"
         + (
             f" (upstream={args.upstream}, reverse_port={args.reverse_port}, "
@@ -325,6 +331,7 @@ def main(args):
                 args.idle_timeout,
                 args.xpu,
                 args.storage_mb,
+                args.storage_limit_mb,
                 args.upstream,
                 args.reverse_port,
                 args.listen_port,
@@ -448,7 +455,13 @@ if __name__ == "__main__":
         "--storage-mb",
         type=int,
         default=None,
-        help="optional writable root filesystem quota in MiB",
+        help="optional writable root filesystem scheduling request in MiB",
+    )
+    parser.add_argument(
+        "--storage-limit-mb",
+        type=int,
+        default=None,
+        help="optional writable root filesystem hard limit in MiB",
     )
     parser.add_argument(
         "--tunnel",

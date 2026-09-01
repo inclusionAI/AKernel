@@ -59,21 +59,43 @@ def xpu_custom_resource(value: str) -> tuple[str, float]:
     return f"{xpu_type.upper()}/{re.escape(model)}/count", float(count_text)
 
 
-def validate_storage_mb(value: int | None) -> None:
-    """Validate a writable-layer quota accepted by YuanRong's scalar wire type."""
+def _validate_storage_value(name: str, value: int | None) -> None:
+    """Validate one MiB storage value accepted by YuanRong's scalar wire type."""
 
     if value is None:
         return
     if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError("storage_mb must be an integer")
+        raise TypeError(f"{name} must be an integer")
     if value <= 0:
-        raise ValueError("storage_mb must be greater than 0")
+        raise ValueError(f"{name} must be greater than 0")
     if value > MAX_STORAGE_MB:
-        raise ValueError(f"storage_mb must not exceed {MAX_STORAGE_MB}")
+        raise ValueError(f"{name} must not exceed {MAX_STORAGE_MB}")
+
+
+def validate_storage_mb(value: int | None) -> None:
+    """Validate a writable-layer scheduling request in MiB."""
+
+    _validate_storage_value("storage_mb", value)
+
+
+def validate_storage(
+    storage_mb: int | None,
+    storage_limit_mb: int | None,
+) -> None:
+    """Validate writable-layer request and hard-limit values in MiB."""
+
+    validate_storage_mb(storage_mb)
+    _validate_storage_value("storage_limit_mb", storage_limit_mb)
+    if (
+        storage_mb is not None
+        and storage_limit_mb is not None
+        and storage_limit_mb < storage_mb
+    ):
+        raise ValueError("storage_limit_mb must be greater than or equal to storage_mb")
 
 
 def storage_bytes(value: int) -> float:
-    """Convert a validated MiB quota to YuanRong's byte-valued scalar."""
+    """Convert a validated positive MiB value to YuanRong's byte scalar."""
 
     validate_storage_mb(value)
     return float(value * _MIB)

@@ -37,7 +37,7 @@ from .._resource_api import parse_resource_nodes, query_resource_view
 from .._sandbox_resources import (
     normalize_xpu,
     storage_bytes,
-    validate_storage_mb,
+    validate_storage,
     xpu_custom_resource,
 )
 from ..types import (
@@ -155,6 +155,7 @@ def build_options(
     node_id: str | None,
     xpu: str | None,
     storage_mb: int | None,
+    storage_limit_mb: int | None,
     network_policy: NetworkPolicy | None,
     extra_config: Mapping[str, object],
 ) -> Any:
@@ -171,7 +172,7 @@ def build_options(
     if mem_limit and mem_limit < memory:
         raise ValueError("mem_limit must be 0 or greater than or equal to memory")
     normalized_xpu = normalize_xpu(xpu)
-    validate_storage_mb(storage_mb)
+    validate_storage(storage_mb, storage_limit_mb)
 
     options = yr.InvokeOptions()
     # A Sandbox is driven by one sequential SDK client. Disabling ordered RPC
@@ -201,8 +202,13 @@ def build_options(
     if normalized_xpu is not None:
         resource_name, count = xpu_custom_resource(normalized_xpu)
         options.custom_resources[resource_name] = count
-    if storage_mb is not None:
-        options.custom_resources["storage"] = storage_bytes(storage_mb)
+    storage_request_mb = storage_mb if storage_mb is not None else storage_limit_mb
+    if storage_request_mb is not None:
+        options.custom_resources["storage"] = storage_bytes(storage_request_mb)
+    if storage_limit_mb is not None:
+        options.custom_extensions["STORAGE_LIMIT"] = str(
+            int(storage_bytes(storage_limit_mb))
+        )
     if network_policy is not None:
         options.custom_extensions["network_policy"] = json.dumps(
             network_policy.to_dict()

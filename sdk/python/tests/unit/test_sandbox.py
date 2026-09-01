@@ -64,6 +64,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(sandbox.get_info().cpu, 2000)
         self.assertIsNone(sandbox.get_info().xpu)
         self.assertIsNone(sandbox.get_info().storage_mb)
+        self.assertIsNone(sandbox.get_info().storage_limit_mb)
         self.assertIsNone(sandbox.startup_command)
 
         spec = self.backend.create.call_args.args[0]
@@ -72,6 +73,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(dict(spec.env), {})
         self.assertIsNone(spec.xpu)
         self.assertIsNone(spec.storage_mb)
+        self.assertIsNone(spec.storage_limit_mb)
         self.assertFalse(spec.failover)
         self.assertIsNone(spec.network_policy)
         self.assertEqual(dict(spec.extra_config), {})
@@ -258,18 +260,31 @@ class SandboxTest(unittest.TestCase):
                 Sandbox(xpu=value)
         self.backend.create.assert_not_called()
 
-    def test_storage_request_is_delegated_to_backend(self):
-        sandbox = Sandbox(runtime="storage-runtime", storage_mb=256)
-        self.assertEqual(sandbox.get_info().storage_mb, 256)
+    def test_storage_request_and_limit_are_delegated_to_backend(self):
+        sandbox = Sandbox(
+            runtime="storage-runtime",
+            storage_mb=128,
+            storage_limit_mb=256,
+        )
+        info = sandbox.get_info()
+        self.assertEqual(info.storage_mb, 128)
+        self.assertEqual(info.storage_limit_mb, 256)
         spec = self.backend.create.call_args.args[0]
         self.assertEqual(spec.runtime, "storage-runtime")
-        self.assertEqual(spec.storage_mb, 256)
+        self.assertEqual(spec.storage_mb, 128)
+        self.assertEqual(spec.storage_limit_mb, 256)
         sandbox.kill()
 
-    def test_storage_request_validation(self):
-        for value in (True, 0, -1, 1.5):
-            with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
-                Sandbox(storage_mb=value)
+    def test_storage_request_and_limit_validation(self):
+        for name in ("storage_mb", "storage_limit_mb"):
+            for value in (True, 0, -1, 1.5):
+                with (
+                    self.subTest(name=name, value=value),
+                    self.assertRaises((TypeError, ValueError)),
+                ):
+                    Sandbox(**{name: value})
+        with self.assertRaisesRegex(ValueError, "greater than or equal"):
+            Sandbox(storage_mb=256, storage_limit_mb=128)
         self.backend.create.assert_not_called()
 
     def test_block_network_policy_is_passed_to_backend(self):

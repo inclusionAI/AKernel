@@ -162,7 +162,7 @@ def _resolve_entrypoint(
 
 
 _IGNORED_INSTRUCTIONS: dict[str, str] = {
-    "VOLUME": "not supported; use storage_mb or mounts for persistence",
+    "VOLUME": "not supported; use storage_mb/storage_limit_mb or mounts",
     "LABEL": "not supported",
     "HEALTHCHECK": "not supported",
     "SHELL": "not supported",
