@@ -124,9 +124,10 @@ node components and produces the AKernel all-in-one image using the selected
 runtime image and its matching service configuration.
 
 The control-plane and RRT release version is independent of the optional
-actor-based `openyuanrong_sdk` installed in the Python runtime profile. Keep
-the latter on its explicitly pinned legacy version unless that backend is
-being upgraded and tested as a separate compatibility change.
+actor-based `openyuanrong_sdk` installed in the Python runtime profile. This
+actor backend is deprecated and retained only for compatibility with existing
+applications. Keep it on its explicitly pinned legacy version; do not advance
+it with the default `openyuanrong-sandbox` backend or use it for new features.
 
 Initialize submodules with `git submodule update --init --recursive` before
 building. The all-in-one image builds the sandboxd binaries, including
@@ -445,14 +446,16 @@ make sdk-check
 ```
 
 The Python SDK installs `openyuanrong-sandbox` as its default execution
-backend. The actor-based `openyuanrong-sdk` backend is available through the
-`openyuanrong-sdk` extra. Installing that extra leaves both distributions
-present, so `openyuanrong-sandbox` remains the automatic default unless
-`AKERNEL_BACKEND=openyuanrong-sdk` is set before import. Backend selection
-happens once during import and backend modules are loaded lazily on first use.
-Keep public `Sandbox`, `Commands`, `Filesystem`, and value types independent
-of both native packages; all native conversions belong under
-`akernel_sdk._backends`.
+backend. The actor-based `openyuanrong-sdk` backend is deprecated and retained
+only for compatibility with existing applications through the
+`openyuanrong-sdk` extra. Do not update its pinned legacy version alongside
+the default backend or extend it with new capabilities. Installing that extra
+leaves both distributions present, so `openyuanrong-sandbox` remains the
+automatic default unless `AKERNEL_BACKEND=openyuanrong-sdk` is set before
+import. Backend selection happens once during import and backend modules are
+loaded lazily on first use. Keep public `Sandbox`, `Commands`, `Filesystem`,
+and value types independent of both native packages; all native conversions
+belong under `akernel_sdk._backends`.
 
 Dockerfile direct launch is a supported AKernel SDK capability through
 `DockerContext` and

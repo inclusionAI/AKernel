@@ -119,12 +119,15 @@ python -m pip install akernel-sdk
 # Source
 python -m pip install ./sdk/python
 
-# Also install the actor backend
+# Also install the deprecated actor compatibility backend
 python -m pip install "akernel-sdk[openyuanrong-sdk]"
 ```
 
-When the actor extra is installed, both backend packages are present and
-`openyuanrong-sandbox` remains the automatic default. Set
+The actor-based `openyuanrong-sdk` backend is deprecated and retained only for
+compatibility with existing applications. New applications should use the
+default `openyuanrong-sandbox` backend. When the actor extra is installed,
+both backend packages are present and `openyuanrong-sandbox` remains the
+automatic default. Set
 `AKERNEL_BACKEND=openyuanrong-sdk` before importing `akernel_sdk` to select
 the actor backend:
 

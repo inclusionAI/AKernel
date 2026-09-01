@@ -7,7 +7,8 @@ PTYs, port forwarding, and reverse tunnels.
 It supports two backends:
 
 - `openyuanrong-sandbox` (default), using a RESTful API and Rust runtime.
-- `openyuanrong-sdk` (legacy), using YuanRong actors and a Python runtime.
+- `openyuanrong-sdk` (deprecated compatibility backend), using YuanRong actors
+  and a Python runtime.
 
 ## Navigation
 
@@ -62,8 +63,10 @@ Address behavior is deterministic:
   scheme uses HTTP/WS. Exec and file transfer continue to use
   `AKERNEL_SERVER_ADDRESS`.
 
-The legacy actor backend is optional. Install and select it before importing
-`akernel_sdk`:
+The actor-based `openyuanrong-sdk` backend is deprecated and retained only for
+compatibility with existing applications. New applications should use
+`openyuanrong-sandbox`. If compatibility requires the actor backend, install
+and select it before importing `akernel_sdk`:
 
 ```bash
 pip install "akernel-sdk[openyuanrong-sdk]"

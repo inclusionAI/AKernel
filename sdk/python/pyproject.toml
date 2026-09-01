@@ -29,22 +29,22 @@ classifiers = [
 ]
 dependencies = [
     "idna>=3,<4",
-    "openyuanrong-sandbox==0.10.1rc3",
+    "openyuanrong-sandbox==0.10.1rc4",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
 ]
 
 [project.optional-dependencies]
 openyuanrong-sdk = [
-    "openyuanrong-sdk==0.10.0",
+    "openyuanrong-sdk==0.9.9",
 ]
 all = [
-    "openyuanrong-sdk==0.10.0",
+    "openyuanrong-sdk==0.9.9",
 ]
 dev = [
     "build>=1.2,<2",
     "mypy>=1.10,<2",
-    "openyuanrong-sdk==0.10.0",
+    "openyuanrong-sdk==0.9.9",
     "ruff>=0.11,<1",
 ]
 
