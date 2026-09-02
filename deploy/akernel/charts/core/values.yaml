@@ -23,6 +23,24 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
+# Snapshot-backed sandbox lifecycle data plane.
+snapshot:
+  storage:
+    backend: datasystem
+    mode: distributed_cache
+    s3:
+      # Supported provider profiles: generic, obs, oss.
+      provider: generic
+      endpoint: ""
+      region: us-east-1
+      bucket: ""
+      existingSecret: ""
+      accessKeyKey: access-key
+      secretKeyKey: secret-key
+      securityTokenKey: security-token
+      useHttps: true
+      pathStyle: false
+
 auth:
   # Existing Secret that contains the JWT signing seed. For
   # `helm template | kubectl apply`, prefer pre-creating this Secret with

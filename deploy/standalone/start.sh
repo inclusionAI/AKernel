@@ -350,10 +350,71 @@ prepare_host_network_modules() {
 
 # Start the AKernel all-in-one container. Traefik runs separately so traffic
 # from the gateway enters this network namespace through PREROUTING.
-start_node_container() {
+start_node_container() (
     log_info "Starting container: ${NODE_CONTAINER_NAME}"
     # FunctionMaster's HTTP provider publishes the per-sandbox routes required
     # by reverse tunnels; the legacy etcd mode cannot publish those routes.
+
+    local snapshot_backend="${AKERNEL_SNAPSHOT_STORAGE_BACKEND:-datasystem}"
+    local snapshot_env_file=""
+    cleanup_snapshot_env_file() {
+        if [[ -n "${snapshot_env_file}" ]]; then
+            rm -f -- "${snapshot_env_file}"
+        fi
+    }
+    trap cleanup_snapshot_env_file EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    local snapshot_docker_env=(
+        -e AKERNEL_SNAPSHOT_STORAGE_BACKEND="${snapshot_backend}"
+    )
+    if [ "${snapshot_backend}" = "s3" ]; then
+        local snapshot_env_names=(
+            AKERNEL_SNAPSHOT_STORAGE_BACKEND
+            AKERNEL_SNAPSHOT_STORAGE_MODE
+            AKERNEL_SNAPSHOT_S3_PROVIDER
+            AKERNEL_SNAPSHOT_S3_ENDPOINT
+            AKERNEL_SNAPSHOT_S3_REGION
+            AKERNEL_SNAPSHOT_S3_BUCKET
+            AKERNEL_SNAPSHOT_S3_ACCESS_KEY
+            AKERNEL_SNAPSHOT_S3_SECRET_KEY
+            AKERNEL_SNAPSHOT_S3_SECURITY_TOKEN
+            AKERNEL_SNAPSHOT_S3_USE_HTTPS
+            AKERNEL_SNAPSHOT_S3_PATH_STYLE
+        )
+        local snapshot_env_values=(
+            s3
+            "${AKERNEL_SNAPSHOT_STORAGE_MODE:-distributed_cache}"
+            "${AKERNEL_SNAPSHOT_S3_PROVIDER:-}"
+            "${AKERNEL_SNAPSHOT_S3_ENDPOINT:-}"
+            "${AKERNEL_SNAPSHOT_S3_REGION:-}"
+            "${AKERNEL_SNAPSHOT_S3_BUCKET:-}"
+            "${AKERNEL_SNAPSHOT_S3_ACCESS_KEY:-}"
+            "${AKERNEL_SNAPSHOT_S3_SECRET_KEY:-}"
+            "${AKERNEL_SNAPSHOT_S3_SECURITY_TOKEN:-}"
+            "${AKERNEL_SNAPSHOT_S3_USE_HTTPS:-true}"
+            "${AKERNEL_SNAPSHOT_S3_PATH_STYLE:-false}"
+        )
+        local index
+        for ((index = 0; index < ${#snapshot_env_names[@]}; index++)); do
+            case "${snapshot_env_values[index]}" in
+                *$'\r'*|*$'\n'*)
+                    log_error "${snapshot_env_names[index]} must not contain CR or LF"
+                    return 1
+                    ;;
+            esac
+        done
+        umask 077
+        snapshot_env_file=$(mktemp "${TMPDIR:-/tmp}/akernel-snapshot-s3.XXXXXX")
+        chmod 0600 "${snapshot_env_file}"
+        for ((index = 0; index < ${#snapshot_env_names[@]}; index++)); do
+            printf '%s=%s\n' "${snapshot_env_names[index]}" \
+                "${snapshot_env_values[index]}" >>"${snapshot_env_file}"
+        done
+        snapshot_docker_env=(--env-file "${snapshot_env_file}")
+    fi
 
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
         --name "${NODE_CONTAINER_NAME}" \
@@ -373,6 +434,7 @@ start_node_container() {
         -e TZ=Asia/Shanghai \
         -e ENABLE_TRACE="${ENABLE_TRACE:-false}" \
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
+        "${snapshot_docker_env[@]}" \
         "${PROXY_RUN_ARGS[@]}" \
         "${GPU_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
@@ -384,7 +446,7 @@ start_node_container() {
         -v "${CONFIG_DIR}/config.json:/home/akernel/images/config.json:ro" \
         -v "${SANDBOXD_CONFIG_FILE}:/home/akernel/sandboxd/config.toml:ro" \
         "${IMAGE}"
-}
+)
 
 # Wait for container to be ready
 wait_for_ready() {

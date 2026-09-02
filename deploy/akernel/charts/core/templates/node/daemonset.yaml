@@ -1,3 +1,30 @@
+{{- $snapshotBackend := .Values.snapshot.storage.backend -}}
+{{- if not (has $snapshotBackend (list "datasystem" "s3")) -}}
+{{- fail "snapshot.storage.backend must be datasystem or s3" -}}
+{{- end -}}
+{{- if eq $snapshotBackend "s3" -}}
+{{- $snapshotMode := .Values.snapshot.storage.mode -}}
+{{- if not (has $snapshotMode (list "distributed_cache" "distributed_only")) -}}
+{{- fail "snapshot.storage.mode must be distributed_cache or distributed_only for S3" -}}
+{{- end -}}
+{{- $snapshotProvider := .Values.snapshot.storage.s3.provider -}}
+{{- if not (has $snapshotProvider (list "generic" "obs" "oss")) -}}
+{{- fail "snapshot.storage.s3.provider must be generic, obs, or oss" -}}
+{{- end -}}
+{{- if not (kindIs "bool" .Values.snapshot.storage.s3.useHttps) -}}
+{{- fail "snapshot.storage.s3.useHttps must be a boolean" -}}
+{{- end -}}
+{{- if not (kindIs "bool" .Values.snapshot.storage.s3.pathStyle) -}}
+{{- fail "snapshot.storage.s3.pathStyle must be a boolean" -}}
+{{- end -}}
+{{- if and (eq $snapshotProvider "oss") .Values.snapshot.storage.s3.pathStyle -}}
+{{- fail "OSS S3-compatible storage requires virtual-hosted addressing" -}}
+{{- end -}}
+{{- $snapshotEndpoint := required "snapshot.storage.s3.endpoint is required" .Values.snapshot.storage.s3.endpoint -}}
+{{- $snapshotRegion := required "snapshot.storage.s3.region is required" .Values.snapshot.storage.s3.region -}}
+{{- $snapshotBucket := required "snapshot.storage.s3.bucket is required" .Values.snapshot.storage.s3.bucket -}}
+{{- $snapshotSecret := required "snapshot.storage.s3.existingSecret is required" .Values.snapshot.storage.s3.existingSecret -}}
+{{- end -}}
 {{- if .Values.kruise.enabled }}
 apiVersion: apps.kruise.io/v1alpha1
 {{- else }}
@@ -82,6 +109,40 @@ spec:
           value: "1"
         - name: YR_RRT_CONTROL_SOCKET_PATH
           value: "/run/akernel"
+        - name: AKERNEL_SNAPSHOT_STORAGE_BACKEND
+          value: {{ .Values.snapshot.storage.backend | quote }}
+        {{- if eq .Values.snapshot.storage.backend "s3" }}
+        - name: AKERNEL_SNAPSHOT_STORAGE_MODE
+          value: {{ .Values.snapshot.storage.mode | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_PROVIDER
+          value: {{ .Values.snapshot.storage.s3.provider | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_ENDPOINT
+          value: {{ .Values.snapshot.storage.s3.endpoint | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_REGION
+          value: {{ .Values.snapshot.storage.s3.region | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_BUCKET
+          value: {{ .Values.snapshot.storage.s3.bucket | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_USE_HTTPS
+          value: {{ .Values.snapshot.storage.s3.useHttps | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_PATH_STYLE
+          value: {{ .Values.snapshot.storage.s3.pathStyle | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.snapshot.storage.s3.existingSecret | quote }}
+              key: {{ required "snapshot.storage.s3.accessKeyKey is required" .Values.snapshot.storage.s3.accessKeyKey | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.snapshot.storage.s3.existingSecret | quote }}
+              key: {{ required "snapshot.storage.s3.secretKeyKey is required" .Values.snapshot.storage.s3.secretKeyKey | quote }}
+        - name: AKERNEL_SNAPSHOT_S3_SECURITY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.snapshot.storage.s3.existingSecret | quote }}
+              key: {{ required "snapshot.storage.s3.securityTokenKey is required" .Values.snapshot.storage.s3.securityTokenKey | quote }}
+              optional: true
+        {{- end }}
         - name: ETCD_ADDRESS
           value: {{ get $nodeEtcd "host" | default (printf "akernel-etcd.%s.svc.cluster.local" .Release.Namespace) | quote }}
         - name: ETCD_PORT

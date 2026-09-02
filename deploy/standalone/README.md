@@ -57,13 +57,97 @@ rather than tmpfs. Without `storage_mb`, runsc retains its configured
 memory-backed overlay while Firecracker uses its configured sparse ext4
 default.
 
-Sandbox checkpoints for runsc and Firecracker use YuanRong's local-only
-snapshot mode. Checkpoint state is kept under the persistent
-`/home/akernel/checkpoints` data mount. Workloads trigger an anonymous recovery
-point through `POST /checkpoint` on `/run/akernel/rrt.sock`, and the SDK can
-reload the same logical sandbox from the latest usable point. Recovery points
-follow the source sandbox lifecycle; they are not exposed as reusable SDK
-objects.
+### Snapshot storage
+
+Sandbox checkpoints for runsc and Firecracker use the embedded YuanRong
+DataSystem by default. With no snapshot environment overrides, `start.sh`
+passes `AKERNEL_SNAPSHOT_STORAGE_BACKEND=datasystem`; the S3-only storage mode,
+provider, endpoint and credentials are not emitted.
+
+Workloads trigger an anonymous recovery point through `POST /checkpoint` on
+`/run/akernel/rrt.sock`, and the SDK can reload the same logical sandbox from
+the latest usable point. Recovery points follow the source sandbox lifecycle;
+they are not exposed as reusable SDK objects.
+
+Select the unified S3-compatible backend when snapshots must live in object
+storage. S3 is always an explicit distributed mode:
+
+```bash
+AKERNEL_SNAPSHOT_STORAGE_BACKEND=s3 \
+AKERNEL_SNAPSHOT_STORAGE_MODE=distributed_cache \
+AKERNEL_SNAPSHOT_S3_PROVIDER=generic \
+AKERNEL_SNAPSHOT_S3_ENDPOINT=minio.example.internal:9000 \
+AKERNEL_SNAPSHOT_S3_REGION=us-east-1 \
+AKERNEL_SNAPSHOT_S3_BUCKET=akernel-snapshots \
+AKERNEL_SNAPSHOT_S3_ACCESS_KEY='<encrypted-access-key>' \
+AKERNEL_SNAPSHOT_S3_SECRET_KEY='<encrypted-secret-key>' \
+AKERNEL_SNAPSHOT_S3_USE_HTTPS=false \
+AKERNEL_SNAPSHOT_S3_PATH_STYLE=true \
+./start.sh
+```
+
+`AKERNEL_SNAPSHOT_STORAGE_MODE` accepts only `distributed_cache` or
+`distributed_only` for S3 and defaults to `distributed_cache`. In cache mode,
+the object is authoritative after publication while the local checkpoint is a
+bounded restore cache. In distributed-only mode, the local directory exists
+only while capturing, publishing, materializing or pinned for restore.
+AKernel deliberately rejects `local_only` with `backend=s3`; omit all S3
+settings to keep the default embedded DataSystem behavior.
+
+The provider is `generic`, `obs`, or `oss`; it selects validation and
+addressing defaults while every provider uses the same AWS Signature V4 S3
+protocol client. Private endpoints and CNAMEs are allowed. OSS requires
+virtual-hosted addressing (`PATH_STYLE=false`). The optional
+`AKERNEL_SNAPSHOT_S3_SECURITY_TOKEN` carries an encrypted temporary token.
+`provider=obs` is not the removed OBS-native backend and does not migrate
+`AKERNEL_SNAPSHOT_OBS_*` configuration or existing objects. Those removed
+variables are not accepted.
+
+The all-in-one image contains `/home/yuanrong/.akernel-s3-snapshot-capable`
+only when its real openYuanRong package passes the build-time detector. The
+detector requires all of the following evidence from the same package:
+
+- process config parses, validates and exports the six non-secret S3 options
+  plus credential environment;
+- both FunctionSystem launch paths pass the six non-secret options without
+  credential argv;
+- the executable FunctionAgent contains the S3 flags, credential environment,
+  5 GiB guard and publication postcondition contract.
+
+The detector removes a stale marker before checking. If the marker is absent,
+`AKERNEL_SNAPSHOT_STORAGE_BACKEND=s3` fails before producing YuanRong argv or
+exporting credentials. Do not create the marker manually: it is package
+capability evidence, not a user feature flag. Upgrade the all-in-one image as a
+unit before enabling S3, and test rollback by confirming an old or incomplete
+package removes the marker.
+
+For standalone S3, `start.sh` validates every value for CR/LF, writes all
+snapshot environment to a mode-`0600` temporary env-file under
+`${TMPDIR:-/tmp}`, and supplies Docker/Pouch with `--env-file`. The file is
+removed by an EXIT/signal trap after container creation or on failure. This
+keeps AK/SK/token out of the host process list and generated command output;
+they remain visible to the container engine, host root and the FunctionAgent
+process, which are therefore part of the credential trust boundary.
+
+`start.sh` uses the container engine directly when the caller has access. If
+that probe fails, it uses only passwordless `sudo -n`; the same root-owned
+engine reads the `0600` env-file by path. Interactive sudo is not attempted.
+Failure to read the file, start the container or validate the S3 capability
+causes startup to fail, and the cleanup trap still removes the file.
+
+Remote snapshots larger than 5 GiB are rejected before upload because this
+version does not implement multipart CopyObject. `/home/akernel/checkpoints`
+is the node's local staging directory; SDK checkpoint records have no automatic
+TTL and remain until `Sandbox.delete_checkpoint()` is called. A restored
+sandbox is a new sandbox and receives fresh network routes.
+
+One node configures one remote snapshot backend. Snapshot records freeze their
+backend, and restore rejects a record whose backend does not match the current
+FunctionAgent. Before switching from DataSystem to S3 or rolling back, stop new
+checkpoint creation, wait for in-flight publish/restore/delete operations, and
+restore or delete records that belong to the old backend. Do not remove the S3
+Secret or bucket while S3-backed records remain. There is no implicit dual-read,
+cross-provider copy or destination atomic CAS.
 
 `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
 starting the pooled-TAP runtimes. Runc retains its separate veth network path.

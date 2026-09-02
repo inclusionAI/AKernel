@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 ulimit -n 32768
 export YR_RUNTIME_BACKEND=sandboxd
+source /root/yr_pause_resume_args.sh
 
 resolve_node_ip() {
     local default_device
@@ -43,6 +44,11 @@ YR_NODE_IP="$(resolve_node_ip)"
 echo "Using ${YR_NODE_IP} as the YuanRong node address"
 CHECKPOINT_DIR="/home/akernel/checkpoints"
 mkdir -p "${CHECKPOINT_DIR}"
+configure_snapshot_args \
+    /home/yuanrong/.akernel-rrt-capable \
+    "${CHECKPOINT_DIR}" \
+    "${AKS_LOCAL_MODE:-false}" \
+    /home/yuanrong/.akernel-s3-snapshot-capable || exit 1
 
 # Select the legacy etcd registry or the FunctionMaster HTTP provider.
 if [ "${TRAEFIK_MODE:-etcd}" = "etcd" ]; then
@@ -109,10 +115,9 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --iam_local_ip 127.0.0.1 \
         --frontend_lease_bypass true \
         --force_low_reliability_instance true \
-        --snapshot_storage_mode local_only \
-        --checkpoint_dir "${CHECKPOINT_DIR}" \
         --enable_sandbox_router true \
-        --enable_direct_routing false
+        --enable_direct_routing false \
+        "${standalone_snapshot_args[@]}"
 else
     /usr/bin/yr start \
         --ip_address "${YR_NODE_IP}" \
@@ -149,7 +154,6 @@ else
         --function_proxy_merge_process_enable true \
         --enable_direct_routing false \
         --force_low_reliability_instance true \
-        --snapshot_storage_mode local_only \
-        --checkpoint_dir "${CHECKPOINT_DIR}" \
+        "${snapshot_args[@]}" \
         --block true
 fi

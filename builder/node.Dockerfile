@@ -395,6 +395,10 @@ COPY ./builder/scripts/yr_node_bootstrap.sh ${YR_INSTALLATION_DIR}/yr_node_boots
 COPY ./builder/scripts/master_entrypoint.sh ${YR_INSTALLATION_DIR}/entrypoint.sh
 COPY ./builder/scripts/*.sh /root/
 COPY ./builder/systemd_services/*.service /etc/systemd/system/
+RUN chmod 0755 \
+      /root/yr_pause_resume_args.sh \
+      /root/detect-openyuanrong-s3-snapshot-capability.sh && \
+    /root/detect-openyuanrong-s3-snapshot-capability.sh ${YR_INSTALLATION_DIR}
 
 RUN curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
         "${OTELCOL_CONTRIB_URL}" \

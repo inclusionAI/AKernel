@@ -1,5 +1,20 @@
 core:
   createNamespace: false
+  snapshot:
+    storage:
+      backend: datasystem
+      mode: distributed_cache
+      s3:
+        provider: generic
+        endpoint: ""
+        region: us-east-1
+        bucket: ""
+        existingSecret: ""
+        accessKeyKey: access-key
+        secretKeyKey: secret-key
+        securityTokenKey: security-token
+        useHttps: true
+        pathStyle: false
 
 monitor:
   enabled: true
