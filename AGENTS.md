@@ -547,9 +547,9 @@ python sdk/python/benchmarks/sandbox_pressure.py \
   in the same change so future agents receive current guidance.
 - Use Conventional Commits with a concise title and a prose body explaining
   what changed and why; do not create title-only commits. Keep a blank line
-  between title and body, wrap the body for terminal readability, and sign
-  commits with `git commit -s` to include the Developer Certificate of Origin
-  sign-off.
+  between title and body, limit every commit-message line to 72 characters,
+  and sign commits with `git commit -s` to include the Developer Certificate
+  of Origin sign-off. Mechanically check line lengths before pushing.
 - Keep unrelated dirty files out of commits, especially local deployment state,
   generated binaries, Terraform state, kubeconfigs, tokens, and private
   registry configuration.

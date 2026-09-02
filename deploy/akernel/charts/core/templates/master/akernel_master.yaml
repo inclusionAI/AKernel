@@ -79,6 +79,21 @@ spec:
           env:
             - name: AKERNEL_ROLE
               value: "master"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
             {{- if .Values.frontend.enabled }}
             - name: ENABLE_FAAS_FRONTEND
               value: "false"

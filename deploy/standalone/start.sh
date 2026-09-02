@@ -360,6 +360,7 @@ start_node_container() {
         --privileged \
         --net bridge \
         --restart always \
+        -e AKERNEL_ROLE="standalone" \
         -e AKS_LOCAL_MODE="true" \
         -e YR_RRT_CONTROL_SOCKET_PATH="/run/akernel" \
         -e TRAEFIK_MODE="http" \

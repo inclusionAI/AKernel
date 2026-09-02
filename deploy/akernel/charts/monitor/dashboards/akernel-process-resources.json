@@ -1,0 +1,511 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "AKernel component CPU, memory, file descriptor, thread, and uptime metrics collected by the OTel process receiver.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "CPU utilization summed across process states.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (k8s_node_name, k8s_pod_name, component_name) (process_cpu_utilization_ratio{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\",component_name=~\"$component_name\"})",
+          "legendFormat": "{{k8s_node_name}} / {{k8s_pod_name}} / {{component_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "CPU utilization by component",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Resident physical memory reported by each process.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0,
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (k8s_node_name, k8s_pod_name, component_name) (process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\",component_name=~\"$component_name\"})",
+          "legendFormat": "{{k8s_node_name}} / {{k8s_pod_name}} / {{component_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Resident memory by component",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Open file descriptors currently held by each process.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (k8s_node_name, k8s_pod_name, component_name) (process_open_file_descriptors{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\",component_name=~\"$component_name\"})",
+          "legendFormat": "{{k8s_node_name}} / {{k8s_pod_name}} / {{component_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Open file descriptors by component",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Thread count reported by each process.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (k8s_node_name, k8s_pod_name, component_name) (process_threads{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\",component_name=~\"$component_name\"})",
+          "legendFormat": "{{k8s_node_name}} / {{k8s_pod_name}} / {{component_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Threads by component",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Seconds since each process started.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "min"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (k8s_node_name, k8s_pod_name, component_name) (process_uptime_seconds{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\",component_name=~\"$component_name\"})",
+          "legendFormat": "{{k8s_node_name}} / {{k8s_pod_name}} / {{component_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Process uptime",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Current resident memory snapshot for the selected components.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true
+          },
+          "mappings": [],
+          "noValue": "N/A",
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Value"
+          }
+        ]
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "topk(50, sum by (k8s_node_name, k8s_pod_name, akernel_role, component_name) (process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\",component_name=~\"$component_name\"}))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Current resident memory snapshot",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "15s",
+  "schemaVersion": 42,
+  "tags": [
+    "akernel",
+    "otel",
+    "process",
+    "resources",
+    "cpu",
+    "memory",
+    "file-descriptors"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_memory_usage_bytes{job=\"akernel-process\"}, akernel_env)",
+        "includeAll": true,
+        "label": "Environment",
+        "multi": true,
+        "name": "akernel_env",
+        "options": [],
+        "query": {
+          "query": "label_values(process_memory_usage_bytes{job=\"akernel-process\"}, akernel_env)",
+          "refId": "Prometheus-akernel-env-Variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\"}, k8s_node_name)",
+        "includeAll": true,
+        "label": "Node",
+        "multi": true,
+        "name": "k8s_node_name",
+        "options": [],
+        "query": {
+          "query": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\"}, k8s_node_name)",
+          "refId": "Prometheus-node-Variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\"}, k8s_pod_name)",
+        "includeAll": true,
+        "label": "Pod",
+        "multi": true,
+        "name": "k8s_pod_name",
+        "options": [],
+        "query": {
+          "query": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\"}, k8s_pod_name)",
+          "refId": "Prometheus-pod-Variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\"}, akernel_role)",
+        "includeAll": true,
+        "label": "Role",
+        "multi": true,
+        "name": "akernel_role",
+        "options": [],
+        "query": {
+          "query": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\"}, akernel_role)",
+          "refId": "Prometheus-role-Variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\"}, component_name)",
+        "includeAll": true,
+        "label": "Component",
+        "multi": true,
+        "name": "component_name",
+        "options": [],
+        "query": {
+          "query": "label_values(process_memory_usage_bytes{job=\"akernel-process\",akernel_env=~\"$akernel_env\",k8s_node_name=~\"$k8s_node_name\",k8s_pod_name=~\"$k8s_pod_name\",akernel_role=~\"$akernel_role\"}, component_name)",
+          "refId": "Prometheus-component-Variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AKernel Process Resources",
+  "uid": "akernel-process-resources",
+  "version": 1
+}
