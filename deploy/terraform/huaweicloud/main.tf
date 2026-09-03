@@ -113,6 +113,7 @@ locals {
     master_service_loadbalancer_ip = var.master_public_access_8888 ? var.master_service_loadbalancer_ip : ""
     sandboxd_nat_backend           = var.sandboxd_nat_backend
     enable_runc                    = var.enable_runc
+    enable_ascend                  = var.enable_ascend
     node_secret_create             = var.node_secret_create
     node_home_use_csi_ephemeral    = var.node_home_use_csi_ephemeral
     node_home_csi_storage_class    = var.node_home_csi_storage_class

@@ -224,9 +224,9 @@ class Sandbox:
                 from the latest local anonymous checkpoint after failure.
                 Use :meth:`reload` to request the same rollback explicitly.
             xpu: Experimental whole-device accelerator request in
-                ``type:model:count`` format. Currently only exact-model NVIDIA
-                GPU requests are supported. The backend validates runtime
-                compatibility.
+                ``type:model:count`` format. Exact-model NVIDIA GPU and Ascend
+                NPU requests are supported; the backend validates runtime and
+                node compatibility.
             storage_mb: Experimental writable root filesystem quota in MiB.
                 When omitted, the configured default is used. Explicit quotas
                 are validated against the selected runtime by the backend.

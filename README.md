@@ -164,16 +164,31 @@ with Sandbox(cpu=1000, memory=2048) as sandbox:
     print(sandbox.files.read("/tmp/hello.txt"))
 ```
 
-Experimental gVisor sandboxes can request an exact NVIDIA GPU model:
+Experimental runsc or runc sandboxes can request an exact NVIDIA GPU model:
 
 ```python
-with Sandbox(xpu="gpu:l20:1") as sandbox:
+with Sandbox(runtime="runc", xpu="gpu:l20:1") as sandbox:
     print(sandbox.commands.run("nvidia-smi -L").stdout)
 ```
 
-GPU sandboxes require a compatible NVIDIA node and the gVisor `runsc`
-runtime. `storage_mb` is measured in MiB and is supported by `runsc` and
-Firecracker.
+GPU sandboxes require a compatible NVIDIA node and either the gVisor `runsc`
+runtime or native `runc`. Runsc remains subject to its nvproxy driver-version
+compatibility check; that check does not disable native-runc GPU support.
+`storage_mb` is measured in MiB and is supported by `runsc` and Firecracker.
+
+Ascend 310P3 and 910 A2/A3 sandboxes use the native `runc` runtime and an exact SoC
+model:
+
+```python
+with Sandbox(runtime="runc", xpu="npu:ascend910b4:1") as sandbox:
+    print(sandbox.commands.run("npu-smi info").stdout)
+```
+
+Atlas 300I Pro nodes use the exact model token `npu:ascend310p3:1`.
+
+The node image and deployment must enable both runc and Ascend support. The
+node-local provider discovers physical devices, owns exclusive leases, and
+injects only the leased device nodes and versioned read-only driver mounts.
 
 See the complete [basic usage example](./sdk/python/examples/basic_usage.py), the [sandbox runtime example](./sdk/python/examples/sandbox_runtime.py), and the other [SDK examples](./sdk/python/examples/) for more operations.
 

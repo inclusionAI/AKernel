@@ -375,6 +375,12 @@ variable "enable_runc" {
   default     = false
 }
 
+variable "enable_ascend" {
+  type        = bool
+  description = "Enable Ascend 310P3 or 910 A2/A3 physical NPUs; requires enable_runc and a node image built with AKERNEL_ENABLE_ASCEND=true."
+  default     = false
+}
+
 variable "node_home_use_csi_ephemeral" {
   type        = bool
   description = "Mount /home/akernel from a per-node CSI ephemeral volume instead of hostPath /home/akernel."

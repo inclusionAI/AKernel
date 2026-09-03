@@ -257,7 +257,7 @@ class SandboxTest(unittest.TestCase):
             (1, TypeError),
             ("gpu", ValueError),
             ("gpu::1", ValueError),
-            ("npu:l20:1", ValueError),
+            ("tpu:l20:1", ValueError),
             ("gpu:l20:0", ValueError),
             ("gpu:l20:1.5", ValueError),
             ("gpu:l20/evil:1", ValueError),

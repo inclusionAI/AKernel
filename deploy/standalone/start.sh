@@ -23,6 +23,7 @@ TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
+AKERNEL_ENABLE_ASCEND="${AKERNEL_ENABLE_ASCEND:-false}"
 LITEBUS_DATA_KEY=""
 
 # Container runtime command (docker or pouch)
@@ -30,6 +31,7 @@ DOCKER_CMD=""
 DOCKER_PREFIX=()
 PROXY_RUN_ARGS=()
 GPU_RUN_ARGS=()
+ASCEND_RUN_ARGS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -103,6 +105,18 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    case "${AKERNEL_ENABLE_ASCEND}" in
+        true|false)
+            ;;
+        *)
+            log_error "AKERNEL_ENABLE_ASCEND must be true or false"
+            exit 1
+            ;;
+    esac
+    if [[ "${AKERNEL_ENABLE_ASCEND}" == "true" && "${AKERNEL_ENABLE_RUNC}" != "true" ]]; then
+        log_error "AKERNEL_ENABLE_ASCEND=true requires AKERNEL_ENABLE_RUNC=true"
+        exit 1
+    fi
 
     # Create data directory
     mkdir -p "${DATA_DIR}"
@@ -236,6 +250,30 @@ configure_gpu() {
     log_info "Enabling NVIDIA GPU access for the AKernel node container"
 }
 
+configure_ascend() {
+    if [[ "${AKERNEL_ENABLE_ASCEND}" != "true" ]]; then
+        return 0
+    fi
+    local required_path
+    for required_path in \
+        /usr/local/Ascend/driver \
+        /usr/local/dcmi \
+        /usr/local/bin/npu-smi \
+        /var/queue_schedule; do
+        if [[ ! -e "${required_path}" ]]; then
+            log_error "Ascend host path is missing: ${required_path}"
+            exit 1
+        fi
+    done
+    ASCEND_RUN_ARGS=(
+        -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro
+        -v /usr/local/dcmi:/usr/local/dcmi:ro
+        -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi:ro
+        -v /var/queue_schedule:/var/queue_schedule:ro
+    )
+    log_info "Enabling Ascend NPU access for runc sandboxes"
+}
+
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
     local sed_args=(
@@ -265,6 +303,20 @@ configure_network() {
         fi
         sed_args+=(
             -e 's|^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$|runc="/usr/local/bin/runc"|'
+        )
+    fi
+    if [[ "${AKERNEL_ENABLE_ASCEND}" == "true" ]]; then
+        if ! grep -q '^[[:space:]]*# AKERNEL_XPU_ASCEND[[:space:]]*$' \
+            "${CONFIG_DIR}/sandboxd_config.toml"; then
+            log_error "AKERNEL_ENABLE_ASCEND requires the # AKERNEL_XPU_ASCEND marker in sandboxd_config.toml"
+            exit 1
+        fi
+        sed_args+=(
+            -e '/^[[:space:]]*# AKERNEL_XPU_ASCEND[[:space:]]*$/c\
+[plugin.xpu.ascend]\
+enabled=true\
+adapter="/usr/local/libexec/akernel/ascend-oci-adapter"\
+mount_profile="/etc/akernel/ascend/mounts.json"'
         )
     fi
     sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
@@ -375,6 +427,7 @@ start_node_container() {
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
         "${PROXY_RUN_ARGS[@]}" \
         "${GPU_RUN_ARGS[@]}" \
+        "${ASCEND_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
         -v "${DATA_DIR}:/home/akernel" \
         -v "${CONFIG_DIR}/oss_auths.json:/home/akernel/sandboxd/config/oss_auths.json:ro" \
@@ -528,6 +581,7 @@ ensure_image "${IMAGE}"
 ensure_image "${TRAEFIK_IMAGE}"
 configure_container_proxy
 configure_gpu
+configure_ascend
 configure_network
 prepare_host_network_modules
 start_node_container
