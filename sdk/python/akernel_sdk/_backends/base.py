@@ -73,6 +73,7 @@ class SandboxSpec:
     reverse_tunnel: HttpReverseTunnel | None
     detached: bool
     failover: bool
+    inherit_entrypoint: bool
     node_id: str | None
     xpu: str | None
     storage_mb: int | None
@@ -151,6 +152,12 @@ class BackendSession(Protocol):
     def get_info(self) -> SandboxInfo: ...
 
     def reload(self) -> bool: ...
+
+    def wait_entrypoint(self) -> int: ...
+
+    @property
+    def entrypoint_exit_info(self) -> Mapping[str, object] | None: ...
+
     def update_network_policy(self, policy: NetworkPolicy | None) -> None: ...
 
     def terminate(self) -> None: ...

@@ -13,6 +13,7 @@ BASE_DIR=$(
 export DEPLOY_PATH="/home/yuanrong/master/"
 mkdir -p "$DEPLOY_PATH"
 export YR_LOG_PATH="$DEPLOY_PATH/log"
+export YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG:-/run/akernel/yr-image-process.json}"
 
 # If ConfigMap-mounted config exists, symlink it to override the baked-in default
 [ -f /etc/otel-collector/otel_config.yaml ] && ln -sf /etc/otel-collector/otel_config.yaml /home/yuanrong/otel_config.yaml
@@ -96,6 +97,7 @@ exec "${YR_BIN}" start --master --block true \
     --trace_config "$(cat /home/yuanrong/trace/trace_config.json)" \
     --ds_rpc_thread_num 128 \
     --function_proxy_merge_process_enable true \
+    --force_low_reliability_instance true \
     --enable_traefik_provider=${ENABLE_TRAEFIK_PROVIDER} \
     --traefik_http_entry_point=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
     --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \

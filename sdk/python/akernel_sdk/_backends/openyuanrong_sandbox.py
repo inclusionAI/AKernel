@@ -342,6 +342,36 @@ class _Session:
         except Exception:
             return False
 
+    def wait_entrypoint(self) -> int:
+        if not self._spec.inherit_entrypoint:
+            raise RuntimeError("inherit_entrypoint was not enabled for this sandbox")
+        wait = getattr(self._sandbox, "wait_entrypoint", None)
+        if not callable(wait):
+            raise UnsupportedBackendFeatureError(
+                "The installed openyuanrong-sandbox backend does not support "
+                "waiting for an inherited image entrypoint. Upgrade it to "
+                "0.10.2rc1 or newer."
+            )
+        try:
+            return int(wait())
+        except Exception as error:
+            raise _convert_error(
+                "wait for inherited image entrypoint", error
+            ) from error
+
+    @property
+    def entrypoint_exit_info(self) -> Mapping[str, object] | None:
+        if not self._spec.inherit_entrypoint:
+            return None
+        value = getattr(self._sandbox, "entrypoint_exit_info", None)
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise BackendOperationError(
+                "inherited image entrypoint returned invalid exit information"
+            )
+        return dict(value)
+
     def update_network_policy(self, policy: NetworkPolicy | None) -> None:
         if self._terminated or self._closed:
             raise BackendOperationError(
@@ -414,11 +444,20 @@ class OpenYuanRongSandboxBackend:
     def create(self, spec: SandboxSpec) -> BackendSession:
         self._validate(spec)
         supports_failover = _supports_keyword(yr_sandbox.Sandbox, "failover")
+        supports_inherit_entrypoint = _supports_keyword(
+            yr_sandbox.Sandbox, "inherit_entrypoint"
+        )
         if spec.failover and not supports_failover:
             raise UnsupportedBackendFeatureError(
                 "The installed openyuanrong-sandbox backend does not support "
                 "automatic sandbox failover. Upgrade it to a version with "
                 "failover support."
+            )
+        if spec.inherit_entrypoint and not supports_inherit_entrypoint:
+            raise UnsupportedBackendFeatureError(
+                "The installed openyuanrong-sandbox backend does not support "
+                "inheriting image ENTRYPOINT and CMD. Upgrade it to 0.10.2rc1 "
+                "or newer."
             )
         rootfs = None
         if spec.rootfs is not None:
@@ -492,6 +531,8 @@ class OpenYuanRongSandboxBackend:
         )
         if supports_failover:
             create_args["failover"] = spec.failover
+        if supports_inherit_entrypoint:
+            create_args["inherit_entrypoint"] = spec.inherit_entrypoint
         try:
             sandbox = yr_sandbox.Sandbox(**create_args)
         except Exception as error:

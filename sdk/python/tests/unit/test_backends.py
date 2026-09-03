@@ -62,6 +62,7 @@ def _spec(**overrides):
         "reverse_tunnel": None,
         "detached": False,
         "failover": False,
+        "inherit_entrypoint": False,
         "node_id": None,
         "xpu": None,
         "storage_mb": None,
@@ -212,6 +213,33 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
 
         self.assertIs(sandbox_type.call_args.kwargs["failover"], True)
 
+    def test_inherit_entrypoint_is_forwarded_to_capable_native_sdk(self):
+        native = MagicMock()
+        native.id = "default-image-process"
+        native.wait_entrypoint.return_value = 17
+        native.entrypoint_exit_info = {
+            "status": "exited",
+            "shell_exit_code": 17,
+        }
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            session = self.backend.create(
+                _spec(image="example/image:latest", inherit_entrypoint=True)
+            )
+
+        self.assertIs(
+            sandbox_type.call_args.kwargs["inherit_entrypoint"],
+            True,
+        )
+        self.assertEqual(session.wait_entrypoint(), 17)
+        self.assertEqual(
+            session.entrypoint_exit_info,
+            {"status": "exited", "shell_exit_code": 17},
+        )
+
     def test_old_native_sdk_omits_disabled_failover(self):
         native = MagicMock()
         native.id = "default-compatible"
@@ -244,6 +272,25 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             ),
         ):
             self.backend.create(_spec(failover=True))
+
+    def test_old_native_sdk_rejects_enabled_inherit_entrypoint(self):
+        def supports_keyword(_callable, name):
+            return name != "inherit_entrypoint"
+
+        with (
+            patch.object(
+                openyuanrong_sandbox,
+                "_supports_keyword",
+                side_effect=supports_keyword,
+            ),
+            self.assertRaisesRegex(
+                UnsupportedBackendFeatureError,
+                "inheriting image ENTRYPOINT",
+            ),
+        ):
+            self.backend.create(
+                _spec(image="example/image:latest", inherit_entrypoint=True)
+            )
 
     def test_explicit_kata_image_is_forwarded_to_native_sdk(self):
         native = MagicMock()
@@ -670,6 +717,20 @@ class OpenYuanRongSdkBackendTest(unittest.TestCase):
             ),
         ):
             self.backend.create(_spec(failover=True))
+
+        build_options.assert_not_called()
+
+    def test_inherit_entrypoint_is_explicitly_unsupported(self):
+        with (
+            patch.object(openyuanrong_sdk._impl, "build_options") as build_options,
+            self.assertRaisesRegex(
+                UnsupportedBackendFeatureError,
+                "inheriting image ENTRYPOINT",
+            ),
+        ):
+            self.backend.create(
+                _spec(image="example/image:latest", inherit_entrypoint=True)
+            )
 
         build_options.assert_not_called()
 

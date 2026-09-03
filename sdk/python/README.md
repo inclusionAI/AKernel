@@ -508,6 +508,15 @@ with Sandbox(image="ubuntu:24.04") as sandbox:
     print(sandbox.commands.run("cat /etc/os-release").stdout)
 ```
 
+To start the effective OCI image `ENTRYPOINT` and `CMD` as the managed sandbox
+workload, enable entrypoint inheritance and wait for its exit status:
+
+```python
+with Sandbox(image="example/worker:latest", inherit_entrypoint=True) as sandbox:
+    exit_code = sandbox.wait_entrypoint()
+    print(exit_code, sandbox.entrypoint_exit_info)
+```
+
 Or use an object in S3-compatible storage as the rootfs:
 
 ```python

@@ -78,6 +78,7 @@ class SandboxTest(unittest.TestCase):
         self.assertIsNone(spec.xpu)
         self.assertIsNone(spec.storage_mb)
         self.assertFalse(spec.failover)
+        self.assertFalse(spec.inherit_entrypoint)
         self.assertIsNone(spec.network_policy)
         self.assertEqual(dict(spec.extra_config), {})
         sandbox.kill()
@@ -183,6 +184,45 @@ class SandboxTest(unittest.TestCase):
 
         with self.assertRaisesRegex(TypeError, "failover must be a boolean"):
             Sandbox(failover=1)
+
+    def test_inherit_entrypoint_is_validated_and_forwarded(self):
+        self.session.wait_entrypoint.return_value = 17
+        self.session.entrypoint_exit_info = {
+            "status": "exited",
+            "shell_exit_code": 17,
+        }
+        sandbox = Sandbox(
+            image="example/image:latest",
+            inherit_entrypoint=True,
+        )
+        spec = self.backend.create.call_args.args[0]
+        self.assertTrue(spec.inherit_entrypoint)
+        self.assertEqual(sandbox.wait_entrypoint(), 17)
+        self.assertEqual(
+            sandbox.entrypoint_exit_info,
+            {"status": "exited", "shell_exit_code": 17},
+        )
+        sandbox.kill()
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "inherit_entrypoint must be a boolean",
+        ):
+            Sandbox(image="example/image:latest", inherit_entrypoint=1)
+        with self.assertRaisesRegex(
+            ValueError,
+            "inherit_entrypoint requires an image",
+        ):
+            Sandbox(inherit_entrypoint=True)
+
+        sandbox = Sandbox(image="example/image:latest")
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "inherit_entrypoint was not enabled",
+        ):
+            sandbox.wait_entrypoint()
+        self.assertIsNone(sandbox.entrypoint_exit_info)
+        sandbox.kill()
 
     def test_reload_preserves_identity_and_facades(self):
         self.session.reload.return_value = True

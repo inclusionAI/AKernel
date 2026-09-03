@@ -29,7 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "idna>=3,<4",
-    "openyuanrong-sandbox==0.10.1rc4",
+    "openyuanrong-sandbox==0.10.2rc2",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
 ]

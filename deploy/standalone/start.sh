@@ -23,6 +23,7 @@ TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
+YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG:-/run/akernel/yr-image-process.json}"
 LITEBUS_DATA_KEY=""
 
 # Container runtime command (docker or pouch)
@@ -362,6 +363,7 @@ start_node_container() {
         --restart always \
         -e AKS_LOCAL_MODE="true" \
         -e YR_RRT_CONTROL_SOCKET_PATH="/run/akernel" \
+        -e YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG}" \
         -e TRAEFIK_MODE="http" \
         -e TRAEFIK_HTTP_ENTRYPOINT="web" \
         -e TRAEFIK_ENABLE_TLS="false" \

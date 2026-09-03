@@ -193,6 +193,7 @@ class Sandbox:
         node_id: str | None = None,
         *,
         failover: bool = False,
+        inherit_entrypoint: bool = False,
         xpu: str | None = None,
         storage_mb: int | None = None,
         network_policy: NetworkPolicy | None = None,
@@ -223,6 +224,8 @@ class Sandbox:
             failover: Restore the same logical sandbox on its original node
                 from the latest local anonymous checkpoint after failure.
                 Use :meth:`reload` to request the same rollback explicitly.
+            inherit_entrypoint: Start the OCI image's effective ENTRYPOINT and
+                CMD as the sandbox workload. Valid only with ``image``.
             xpu: Experimental whole-device accelerator request in
                 ``type:model:count`` format. Currently only exact-model NVIDIA
                 GPU requests are supported. The backend validates runtime
@@ -301,6 +304,10 @@ class Sandbox:
             raise TypeError("detached must be a boolean")
         if not isinstance(failover, bool):
             raise TypeError("failover must be a boolean")
+        if not isinstance(inherit_entrypoint, bool):
+            raise TypeError("inherit_entrypoint must be a boolean")
+        if inherit_entrypoint and image is None:
+            raise ValueError("inherit_entrypoint requires an image")
         if node_id is not None:
             if not isinstance(node_id, str):
                 raise TypeError("node_id must be a string")
@@ -345,6 +352,7 @@ class Sandbox:
         self._memory = memory
         self._xpu = normalized_xpu
         self._storage_mb = storage_mb
+        self._inherit_entrypoint = inherit_entrypoint
         self._id = ""
 
         spec = SandboxSpec(
@@ -365,6 +373,7 @@ class Sandbox:
             reverse_tunnel=reverse_tunnel,
             detached=detached,
             failover=failover,
+            inherit_entrypoint=inherit_entrypoint,
             node_id=node_id,
             xpu=normalized_xpu,
             storage_mb=storage_mb,
@@ -466,6 +475,23 @@ class Sandbox:
         if self._closed or self._session is None:
             return False
         return self._session.reload()
+
+    def wait_entrypoint(self) -> int:
+        """Wait for the inherited OCI image process and return its exit code."""
+
+        if not self._inherit_entrypoint:
+            raise RuntimeError("inherit_entrypoint was not enabled for this sandbox")
+        if self._closed or self._session is None:
+            raise RuntimeError("sandbox is closed")
+        return self._session.wait_entrypoint()
+
+    @property
+    def entrypoint_exit_info(self) -> Mapping[str, object] | None:
+        """Structured exit details cached after :meth:`wait_entrypoint`."""
+
+        if not self._inherit_entrypoint or self._session is None:
+            return None
+        return self._session.entrypoint_exit_info
 
     def update_network_policy(self, policy: NetworkPolicy | None) -> None:
         """Atomically replace the complete network policy of this sandbox.

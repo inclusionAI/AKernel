@@ -23,6 +23,9 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
+yuanrong:
+  imageProcessConfig: "/run/akernel/yr-image-process.json"
+
 auth:
   # Existing Secret that contains the JWT signing seed. For
   # `helm template | kubectl apply`, prefer pre-creating this Secret with

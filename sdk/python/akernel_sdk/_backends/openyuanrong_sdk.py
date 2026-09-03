@@ -250,6 +250,16 @@ class _Session:
             "Use the default 'openyuanrong-sandbox' backend."
         )
 
+    def wait_entrypoint(self) -> int:
+        raise UnsupportedBackendFeatureError(
+            "Backend 'openyuanrong-sdk' does not support inheriting image "
+            "ENTRYPOINT and CMD. Use the default 'openyuanrong-sandbox' backend."
+        )
+
+    @property
+    def entrypoint_exit_info(self) -> Mapping[str, object] | None:
+        return None
+
     def update_network_policy(self, policy: NetworkPolicy | None) -> None:
         raise UnsupportedBackendFeatureError(
             "Backend 'openyuanrong-sdk' does not support dynamic network policy "
@@ -289,6 +299,11 @@ class OpenYuanRongSdkBackend:
         _impl.ensure_initialized()
 
     def create(self, spec: SandboxSpec) -> BackendSession:
+        if spec.inherit_entrypoint:
+            raise UnsupportedBackendFeatureError(
+                "Backend 'openyuanrong-sdk' does not support inheriting image "
+                "ENTRYPOINT and CMD. Use the default 'openyuanrong-sandbox' backend."
+            )
         if spec.failover:
             raise UnsupportedBackendFeatureError(
                 "Backend 'openyuanrong-sdk' does not support automatic sandbox "

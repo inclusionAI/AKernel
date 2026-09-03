@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 ulimit -n 32768
 export YR_RUNTIME_BACKEND=sandboxd
+export YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG:-/run/akernel/yr-image-process.json}"
 
 resolve_node_ip() {
     local default_device
