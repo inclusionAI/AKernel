@@ -30,6 +30,16 @@ class SandboxResourcesTest(unittest.TestCase):
             xpu_custom_resource("gpu:a10.2:2"),
             (r"GPU/a10\.2/count", 2.0),
         )
+        self.assertEqual(normalize_xpu("NPU:Ascend910B4:2"), "npu:ascend910b4:2")
+        self.assertEqual(normalize_xpu("NPU:Ascend310P3:1"), "npu:ascend310p3:1")
+        self.assertEqual(
+            xpu_custom_resource("npu:ascend310p3:1"),
+            ("NPU/ascend310p3/count", 1.0),
+        )
+        self.assertEqual(
+            xpu_custom_resource("npu:ascend910_9391:1"),
+            ("NPU/ascend910_9391/count", 1.0),
+        )
 
     def test_storage_wire_value_and_upper_bound(self):
         self.assertEqual(storage_bytes(256), float(256 * 1024 * 1024))

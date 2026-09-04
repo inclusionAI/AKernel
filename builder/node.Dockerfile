@@ -7,6 +7,7 @@ ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG AKERNEL_RUNTIME_PROFILE=rrt
 ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
+ARG AKERNEL_ENABLE_ASCEND=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
@@ -114,6 +115,28 @@ WORKDIR /src/sandboxd
 COPY ./src/sandboxd/ ./
 RUN make release
 
+FROM ${SANDBOXD_BUILD_IMAGE} AS ascend-adapter-true
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc libc6-dev make && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /src/sandboxd
+COPY ./src/sandboxd/ ./
+RUN make ascend-oci-adapter && \
+    install -D -m 0755 output/ascend-oci-adapter \
+      /ascend/usr/local/libexec/akernel/ascend-oci-adapter && \
+    install -D -m 0644 configs/ascend/mounts.json \
+      /ascend/etc/akernel/ascend/mounts.json && \
+    install -D -m 0644 third_party/mind-cluster/LICENSE \
+      /ascend/opt/akernel/licenses/mind-cluster/LICENSE && \
+    install -D -m 0644 third_party/mind-cluster/Third_Party_Open_Source_Software_Notice.md \
+      /ascend/opt/akernel/licenses/mind-cluster/Third_Party_Open_Source_Software_Notice.md
+
+FROM ${SANDBOXD_BUILD_IMAGE} AS ascend-adapter-false
+RUN mkdir -p /ascend/usr/local/libexec/akernel
+
+FROM ascend-adapter-${AKERNEL_ENABLE_ASCEND} AS ascend-adapter
+
 FROM ${FIRECRACKER_BUILD_IMAGE} AS firecracker-runtime-true
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
@@ -216,6 +239,7 @@ RUN cargo build --locked --release --bin distill_fs
 FROM ${AKERNEL_NODE_BASE_IMAGE}
 ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_ENABLE_RUNC
+ARG AKERNEL_ENABLE_ASCEND
 ARG AKERNEL_ENABLE_FIRECRACKER
 ARG AKERNEL_RUNTIME_PROFILE
 ARG AKERNEL_VERSION
@@ -272,7 +296,10 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       "libnvidia-container1=${LIBNVIDIA_CONTAINER_VERSION}" \
-      "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}"; \
+      "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}" \
+      "nvidia-container-toolkit=${LIBNVIDIA_CONTAINER_VERSION}"; \
+    command -v nvidia-container-cli; \
+    test -x /usr/bin/nvidia-container-runtime-hook; \
     rm -rf /var/lib/apt/lists/*
 
 RUN if command -v update-alternatives >/dev/null 2>&1; then \
@@ -351,6 +378,7 @@ COPY --from=distill-fs-builder /src/distill-fs/target/release/distill_fs /usr/lo
 COPY --from=kata-runtime /kata/opt/kata /opt/kata
 COPY --from=runc-runtime /runc/usr/local/bin/ /usr/local/bin/
 COPY --from=firecracker-runtime /firecracker/ /
+COPY --from=ascend-adapter /ascend/ /
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
       ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2; \
     fi
@@ -373,6 +401,12 @@ RUN if [ "${AKERNEL_ENABLE_RUNC}" = "true" ]; then \
     else \
       test ! -e /usr/local/bin/runc; \
       test ! -e /usr/local/bin/runc-shim; \
+    fi
+RUN if [ "${AKERNEL_ENABLE_ASCEND}" = "true" ]; then \
+      test "${AKERNEL_ENABLE_RUNC}" = "true"; \
+      chmod 0755 /usr/local/libexec/akernel/ascend-oci-adapter; \
+    else \
+      test ! -e /usr/local/libexec/akernel/ascend-oci-adapter; \
     fi
 
 COPY ./builder/config/yr_services.yaml /tmp/yr_services_rrt.yaml
@@ -416,6 +450,7 @@ LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.akernel.gvisor.release="${GVISOR_RELEASE}" \
       org.akernel.runc.version="${RUNC_VERSION}" \
       org.akernel.runc.enabled="${AKERNEL_ENABLE_RUNC}" \
+      org.akernel.ascend.enabled="${AKERNEL_ENABLE_ASCEND}" \
       org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}" \
       org.akernel.firecracker.release="${FIRECRACKER_RELEASE}" \
       org.akernel.firecracker.enabled="${AKERNEL_ENABLE_FIRECRACKER}"

@@ -16,7 +16,7 @@ It supports two backends:
   - [Navigation](#navigation)
   - [Install and configure](#install-and-configure)
   - [Create a sandbox](#create-a-sandbox)
-    - [Experimental GPU and writable storage](#experimental-gpu-and-writable-storage)
+    - [Experimental GPU, NPU, and writable storage](#experimental-gpu-npu-and-writable-storage)
     - [Network ACLs](#network-acls)
   - [Sandbox runtimes](#sandbox-runtimes)
   - [Commands](#commands)
@@ -113,7 +113,7 @@ Sandbox(
 )
 ```
 
-### Experimental GPU and writable storage
+### Experimental GPU, NPU, and writable storage
 
 Request a whole NVIDIA GPU by type, exact product model, and count:
 
@@ -124,9 +124,20 @@ with Sandbox(xpu="gpu:l20:1") as sandbox:
 
 The `type:model:count` value is case-insensitive and canonicalized to lower
 case. The model is required and matched exactly; wildcard models are not
-supported. The bundled backend currently requires the gVisor `runsc` runtime
-and a node configured for gVisor nvproxy. Runtime compatibility is validated
-by the backend rather than the SDK.
+supported. The bundled backend supports GPU sandboxes with gVisor `runsc` or
+native `runc`. Runsc remains subject to its nvproxy driver compatibility gate;
+that gate does not disable native-runc GPU support.
+
+Request one supported Ascend 310P3 or 910 A2/A3 physical NPU with runc:
+
+```python
+with Sandbox(runtime="runc", xpu="npu:ascend910b4:1") as sandbox:
+    print(sandbox.commands.run("npu-smi info").stdout)
+```
+
+The model token is matched exactly against resources reported by the selected
+node. Runtime and provider-owned environment validation are enforced by the
+backend in the same way as GPU requests.
 
 Set the writable root filesystem quota in MiB:
 
@@ -314,8 +325,8 @@ with Sandbox(
 `enableKVM` is owned by the runc backend and requires a usable `/dev/kvm` on
 the selected node. Runc supports OCI/EROFS root filesystems, read-only mounts,
 networking, command execution, and the default writable overlay. Experimental
-GPU requests remain runsc-only; explicit `storage_mb` quotas are supported by
-runsc and Firecracker. See the
+GPU requests support runsc and runc, while Ascend NPU requests are runc-only;
+explicit `storage_mb` quotas are supported by runsc and Firecracker. See the
 [sandbox runtime comparison](../../src/sandboxd/doc/runtime.md) for the
 runtime capability boundaries.
 

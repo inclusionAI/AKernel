@@ -445,6 +445,9 @@ node:
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
       # Sandboxd probes runc and runc-shim before advertising the runtime.
       enableRunc: false
+      # Requires an image built with AKERNEL_ENABLE_ASCEND=true and runc enabled.
+      # Deploy this profile only to Ascend nodes whose host driver paths exist.
+      enableAscend: false
       config: |-
         rootDir="/home/akernel/sandboxd/root"
         storeDir="/home/akernel/sandboxd/store"
@@ -501,6 +504,8 @@ node:
         state_root="/run/sandboxd/runc"
         shim_binary="/usr/local/bin/runc-shim"
         kvm_device="/dev/kvm"
+
+        # AKERNEL_XPU_ASCEND
 
         # image-manager config. root holds image-manager runtime state
         # (daemons/, mount_records.db) and is wiped on pod change; input

@@ -170,6 +170,20 @@ spec:
         - mountPath: /home/akernel/sandboxd/config.toml
           name: akernel-node-config
           subPath: sandboxd_config.toml
+        {{- if .Values.node.config.sandboxd.enableAscend }}
+        - mountPath: /usr/local/Ascend/driver
+          name: ascend-driver
+          readOnly: true
+        - mountPath: /usr/local/dcmi
+          name: ascend-dcmi
+          readOnly: true
+        - mountPath: /usr/local/bin/npu-smi
+          name: ascend-npu-smi
+          readOnly: true
+        - mountPath: /var/queue_schedule
+          name: ascend-queue-schedule
+          readOnly: true
+        {{- end }}
         - mountPath: /home/akernel
           name: home-disk
           {{- if not .Values.node.homeDisk.useEphemeralPVC }}
@@ -226,6 +240,24 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: 500Mi
+      {{- if .Values.node.config.sandboxd.enableAscend }}
+      - name: ascend-driver
+        hostPath:
+          path: /usr/local/Ascend/driver
+          type: Directory
+      - name: ascend-dcmi
+        hostPath:
+          path: /usr/local/dcmi
+          type: Directory
+      - name: ascend-npu-smi
+        hostPath:
+          path: /usr/local/bin/npu-smi
+          type: File
+      - name: ascend-queue-schedule
+        hostPath:
+          path: /var/queue_schedule
+          type: Directory
+      {{- end }}
       {{- if or .Values.monitoring.prometheusEndpoint .Values.monitoring.lokiEndpoint .Values.monitoring.tempoEndpoint }}
       - name: otel-collector-config
         configMap:
