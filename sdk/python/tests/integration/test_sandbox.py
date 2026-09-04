@@ -20,6 +20,7 @@ import time
 import unittest
 
 from akernel_sdk import HttpReverseTunnel, Sandbox
+from akernel_sdk._backends.errors import BackendOperationError
 
 _ENABLED = (
     os.environ.get("AKERNEL_RUN_INTEGRATION") == "1"
@@ -27,6 +28,9 @@ _ENABLED = (
     and bool(os.environ.get("AKERNEL_TOKEN"))
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
+_RECOVERY_ENABLED = (
+    _ENABLED and os.environ.get("AKERNEL_RUN_RECOVERY_INTEGRATION") == "1"
+)
 
 _INSTALL_CURL_COMMAND = (
     "apt-get update && "
@@ -226,6 +230,47 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
                 sandbox.kill()
             server.shutdown()
             server.server_close()
+
+
+@unittest.skipUnless(
+    _RECOVERY_ENABLED,
+    "set AKERNEL_RUN_RECOVERY_INTEGRATION=1 with the SDK environment",
+)
+class SandboxColdRecoveryIntegrationTest(unittest.TestCase):
+    def test_reload_without_snapshot_cold_starts_same_logical_sandbox(self):
+        sandbox = Sandbox(
+            cpu=1000,
+            memory=2048,
+            runtime=_RUNTIME,
+            failover=True,
+        )
+        try:
+            logical_id = sandbox.id
+            facades = (sandbox.commands, sandbox.files, sandbox.pty)
+            completed = sandbox.commands.run("printf completed-before-cold-start")
+            sandbox.files.write("/tmp/cold-start-only", "old-runtime")
+            pending = sandbox.commands.run("sleep 60", background=True)
+
+            self.assertIs(sandbox.reload(), True)
+
+            self.assertEqual(sandbox.id, logical_id)
+            self.assertEqual((sandbox.commands, sandbox.files, sandbox.pty), facades)
+            self.assertEqual(completed.stdout, "completed-before-cold-start")
+            self.assertEqual(
+                sandbox.commands.run("test ! -e /tmp/cold-start-only").exit_code,
+                0,
+            )
+            self.assertEqual(
+                sandbox.commands.run("printf command-after-cold-start").stdout,
+                "command-after-cold-start",
+            )
+            with self.assertRaisesRegex(
+                BackendOperationError,
+                "pre-reload command handle was not restored after sandbox cold start",
+            ):
+                pending.wait(timeout=10)
+        finally:
+            sandbox.kill()
 
 
 if __name__ == "__main__":

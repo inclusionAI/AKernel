@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import os
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -30,6 +32,7 @@ from akernel_sdk._backends.errors import (
     InvalidBackendError,
     UnsupportedBackendFeatureError,
 )
+from akernel_sdk.commands import Commands as PublicCommands
 from akernel_sdk.types import (
     CommandInfo,
     CommandResult,
@@ -41,6 +44,26 @@ from akernel_sdk.types import (
     PortRange,
     S3Config,
 )
+
+_COLD_START_HANDLE_ERROR = (
+    "pre-reload command handle was not restored after sandbox cold start"
+)
+_OPERATION_CONFLICT = "another sandbox operation is in flight"
+
+
+def _blocking_native(result=None, error=None):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def operation(*_args, **_kwargs):
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release native operation")
+        if error is not None:
+            raise error
+        return result
+
+    return operation, entered, release
 
 
 def _spec(**overrides):
@@ -144,6 +167,18 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         self.backend = openyuanrong_sandbox.OpenYuanRongSandboxBackend(self.config)
 
+    def _create_session(self, native):
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            return self.backend.create(_spec())
+
+    @staticmethod
+    def _start(session, cmd="sleep 60", *, stdin=False):
+        return session.commands.start(cmd, envs=None, cwd=None, stdin=stdin)
+
     def test_connection_config_maps_to_yr_environment(self):
         self.assertEqual(os.environ["YR_SERVER_ADDRESS"], "api.example:443")
         self.assertEqual(os.environ["YR_TLS"], "1")
@@ -230,6 +265,626 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
             self.backend.create(_spec())
 
         self.assertNotIn("failover", sandbox_type.call_args.kwargs)
+
+    def test_reload_cold_start_success_keeps_native_session_and_facades(self):
+        native = MagicMock()
+        native.id = "default-reload"
+        native.reload.return_value = True
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        native_session = session._sandbox
+        commands = session.commands
+        files = session.files
+
+        self.assertIs(session.reload(), True)
+        self.assertIs(session._sandbox, native_session)
+        self.assertIs(session.commands, commands)
+        self.assertIs(session.files, files)
+        native.reload.assert_called_once_with()
+
+    def test_start_in_flight_makes_reload_fail_without_crossing_generation(self):
+        native = MagicMock()
+        native.id = "default-start-boundary"
+        old_handle = MagicMock(pid=321)
+        start_native, start_entered, start_release = _blocking_native(old_handle)
+        native.commands.run.side_effect = start_native
+        session = self._create_session(native)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                session.commands.start,
+                "sleep 60",
+                envs=None,
+                cwd=None,
+                stdin=False,
+            )
+            self.assertTrue(start_entered.wait(1))
+            try:
+                self.assertIs(session.reload(), False)
+                native.reload.assert_not_called()
+            finally:
+                start_release.set()
+            pid = future.result(timeout=1)
+
+        self.assertEqual(pid.generation, 0)
+        native.reload.return_value = True
+        self.assertIs(session.reload(), True)
+        old_handle.wait.side_effect = RuntimeError("old process missing")
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            _COLD_START_HANDLE_ERROR,
+        ):
+            session.commands.wait(pid, 30)
+
+    def test_reload_in_flight_rejects_start_before_native_and_advances_once(self):
+        native = MagicMock()
+        native.id = "default-reload-boundary"
+        reload_native, reload_entered, reload_release = _blocking_native(True)
+        native.reload.side_effect = reload_native
+        session = self._create_session(native)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(session.reload)
+            self.assertTrue(reload_entered.wait(1))
+            try:
+                with self.assertRaisesRegex(
+                    BackendOperationError,
+                    _OPERATION_CONFLICT,
+                ):
+                    self._start(session, "printf new")
+                native.commands.run.assert_not_called()
+            finally:
+                reload_release.set()
+            self.assertIs(future.result(timeout=1), True)
+
+        new_handle = MagicMock(pid=654)
+        native.commands.run.return_value = new_handle
+        new_pid = self._start(session, "printf new")
+        self.assertEqual(new_pid.generation, 1)
+
+    def test_wait_in_flight_makes_reload_fail_without_invalidating_generation(self):
+        native = MagicMock()
+        native.id = "default-wait-boundary"
+        old_handle = MagicMock(pid=321)
+        native.commands.run.return_value = old_handle
+        wait_native, wait_entered, wait_release = _blocking_native(
+            error=RuntimeError("opaque wait failure")
+        )
+        old_handle.wait.side_effect = wait_native
+        session = self._create_session(native)
+
+        pid = self._start(session)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(session.commands.wait, pid, 30)
+            self.assertTrue(wait_entered.wait(1))
+            try:
+                self.assertIs(session.reload(), False)
+                native.reload.assert_not_called()
+            finally:
+                wait_release.set()
+            with self.assertRaisesRegex(
+                BackendOperationError,
+                "wait for process 321 failed: opaque wait failure",
+            ):
+                future.result(timeout=1)
+
+        old_handle.wait.side_effect = None
+        old_handle.wait.return_value = SimpleNamespace(
+            stdout="still generation zero\n",
+            stderr="",
+            exit_code=0,
+        )
+        self.assertEqual(
+            session.commands.wait(pid, 30),
+            CommandResult("still generation zero\n", "", 0),
+        )
+
+    def test_wait_allows_concurrent_stdin_and_kill_to_finish_process(self):
+        native = MagicMock()
+        native.id = "default-command-readers"
+        old_handle = MagicMock(pid=321)
+        native.commands.run.return_value = old_handle
+        wait_entered = threading.Event()
+        stdin_called = threading.Event()
+        kill_called = threading.Event()
+        process_finished = threading.Event()
+
+        def wait_native(_timeout):
+            wait_entered.set()
+            if not process_finished.wait(5):
+                raise TimeoutError("test did not finish native process")
+            return SimpleNamespace(stdout="finished\n", stderr="", exit_code=0)
+
+        def send_stdin_native(*_args):
+            stdin_called.set()
+
+        def kill_native(_pid):
+            kill_called.set()
+            process_finished.set()
+            return True
+
+        old_handle.wait.side_effect = wait_native
+        native.commands.send_stdin.side_effect = send_stdin_native
+        native.commands.kill.side_effect = kill_native
+        session = self._create_session(native)
+        pid = self._start(session, "cat", stdin=True)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(session.commands.wait, pid, None)
+            self.assertTrue(wait_entered.wait(1))
+            try:
+                try:
+                    session.commands.send_stdin(pid, "input", False)
+                    self.assertIs(session.commands.kill(pid), True)
+                except BackendOperationError as error:
+                    self.fail(f"concurrent command operation was rejected: {error}")
+            finally:
+                process_finished.set()
+            result = future.result(timeout=1)
+
+        self.assertTrue(stdin_called.is_set())
+        self.assertTrue(kill_called.is_set())
+        self.assertEqual(result, CommandResult("finished\n", "", 0))
+
+    def test_reload_exception_clears_in_progress_flag(self):
+        native = MagicMock()
+        native.id = "default-reload-exception"
+        reload_native, reload_entered, reload_release = _blocking_native(
+            error=RuntimeError("reload failed")
+        )
+        native.reload.side_effect = reload_native
+        session = self._create_session(native)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(session.reload)
+            self.assertTrue(reload_entered.wait(1))
+            try:
+                with self.assertRaisesRegex(
+                    BackendOperationError,
+                    _OPERATION_CONFLICT,
+                ):
+                    self._start(session, "printf blocked")
+                native.commands.run.assert_not_called()
+            finally:
+                reload_release.set()
+            self.assertIs(future.result(timeout=1), False)
+
+        native.commands.run.return_value = MagicMock(pid=654)
+        pid = self._start(session, "printf after-failure")
+        self.assertEqual(pid.generation, 0)
+        native.reload.side_effect = None
+        native.reload.return_value = True
+        self.assertIs(session.reload(), True)
+
+    def test_old_handle_native_failure_marks_generation_with_explicit_error(self):
+        native = MagicMock()
+        native.id = "default-cold-start-handle"
+        native.reload.return_value = True
+        old_handle = MagicMock()
+        old_handle.pid = 321
+        old_handle.wait.side_effect = RuntimeError("opaque native failure")
+        native.commands.run.return_value = old_handle
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        pid = session.commands.start(
+            "sleep 60", envs=None, cwd=None, stdin=False
+        )
+        self.assertIs(session.reload(), True)
+
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            "pre-reload command handle was not restored after sandbox cold start",
+        ) as raised:
+            session.commands.wait(pid, 30)
+
+        self.assertNotIn("opaque native failure", str(raised.exception))
+
+    def test_invalid_old_generation_fails_closed_without_pid_operations(self):
+        native = MagicMock()
+        native.id = "default-cold-start-generation"
+        native.reload.return_value = True
+        failed_handle = MagicMock(pid=321)
+        failed_handle.wait.side_effect = RuntimeError("native process missing")
+        second_handle = MagicMock(pid=654)
+        native.commands.run.side_effect = [failed_handle, second_handle]
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        failed_pid = session.commands.start(
+            "sleep 60", envs=None, cwd=None, stdin=False
+        )
+        second_pid = session.commands.start(
+            "cat", envs=None, cwd=None, stdin=True
+        )
+        self.assertIs(session.reload(), True)
+        with self.assertRaises(BackendOperationError):
+            session.commands.wait(failed_pid, 30)
+
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            "pre-reload command handle was not restored after sandbox cold start",
+        ):
+            session.commands.kill(second_pid)
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            "pre-reload command handle was not restored after sandbox cold start",
+        ):
+            session.commands.send_stdin(second_pid, "input", False)
+
+        native.commands.kill.assert_not_called()
+        native.commands.send_stdin.assert_not_called()
+
+    def test_new_generation_handle_works_after_old_generation_is_invalid(self):
+        native = MagicMock()
+        native.id = "default-new-generation"
+        native.reload.return_value = True
+        old_handle = MagicMock(pid=321)
+        old_handle.wait.side_effect = RuntimeError("native process missing")
+        new_handle = MagicMock(pid=321)
+        new_handle.wait.return_value = SimpleNamespace(
+            stdout="new runtime\n",
+            stderr="",
+            exit_code=0,
+        )
+        native.commands.run.side_effect = [old_handle, new_handle]
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        old_pid = session.commands.start(
+            "sleep 60", envs=None, cwd=None, stdin=False
+        )
+        self.assertIs(session.reload(), True)
+        with self.assertRaises(BackendOperationError):
+            session.commands.wait(old_pid, 30)
+        new_pid = session.commands.start(
+            "printf new", envs=None, cwd=None, stdin=False
+        )
+
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            "pre-reload command handle was not restored after sandbox cold start",
+        ):
+            session.commands.wait(old_pid, 30)
+        self.assertEqual(
+            session.commands.wait(new_pid, 30),
+            CommandResult("new runtime\n", "", 0),
+        )
+        old_handle.wait.assert_called_once_with(30)
+        new_handle.wait.assert_called_once_with(30)
+
+    def test_snapshot_like_old_handle_native_success_remains_valid(self):
+        native = MagicMock()
+        native.id = "default-snapshot-handle"
+        native.reload.return_value = True
+        old_handle = MagicMock(pid=321)
+        old_handle.wait.return_value = SimpleNamespace(
+            stdout="restored\n",
+            stderr="",
+            exit_code=0,
+        )
+        native.commands.run.return_value = old_handle
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        pid = session.commands.start(
+            "sleep 1", envs=None, cwd=None, stdin=False
+        )
+        self.assertIs(session.reload(), True)
+
+        self.assertEqual(
+            session.commands.wait(pid, 30),
+            CommandResult("restored\n", "", 0),
+        )
+
+    def test_cold_start_mode_invalidates_old_pid_before_native_operations(self):
+        native = MagicMock()
+        native.id = "default-authoritative-cold-start"
+
+        def reload_native():
+            native._last_reload_mode = "cold-start"
+            return True
+
+        native.reload.side_effect = reload_native
+        native.commands.run.return_value = MagicMock(pid=321)
+        native.commands.kill.return_value = True
+        session = self._create_session(native)
+        pid = self._start(session, "cat", stdin=True)
+
+        self.assertIs(session.reload(), True)
+
+        with self.assertRaisesRegex(BackendOperationError, _COLD_START_HANDLE_ERROR):
+            session.commands.kill(pid)
+        with self.assertRaisesRegex(BackendOperationError, _COLD_START_HANDLE_ERROR):
+            session.commands.send_stdin(pid, "input", False)
+        native.commands.kill.assert_not_called()
+        native.commands.send_stdin.assert_not_called()
+
+    def test_cold_start_mode_rejects_plain_pid_before_native_operations(self):
+        native = MagicMock()
+        native.id = "default-authoritative-cold-start-plain-pid"
+
+        def reload_native():
+            native._last_reload_mode = "cold-start"
+            return True
+
+        native.reload.side_effect = reload_native
+        old_handle = MagicMock(pid=321)
+        old_handle.wait.return_value = SimpleNamespace(
+            stdout="wrong runtime\n", stderr="", exit_code=0
+        )
+        native.commands.run.return_value = old_handle
+        native.commands.kill.return_value = True
+        session = self._create_session(native)
+        pid = self._start(session, "cat", stdin=True)
+
+        self.assertIs(session.reload(), True)
+
+        plain_pid = int(pid)
+        with self.assertRaisesRegex(BackendOperationError, _COLD_START_HANDLE_ERROR):
+            session.commands.wait(plain_pid, 30)
+        with self.assertRaisesRegex(BackendOperationError, _COLD_START_HANDLE_ERROR):
+            session.commands.kill(plain_pid)
+        with self.assertRaisesRegex(BackendOperationError, _COLD_START_HANDLE_ERROR):
+            session.commands.send_stdin(plain_pid, "input", False)
+        old_handle.wait.assert_not_called()
+        native.commands.kill.assert_not_called()
+        native.commands.send_stdin.assert_not_called()
+
+    def test_plain_pid_remains_fail_closed_for_new_generation_after_cold_start(self):
+        native = MagicMock()
+        native.id = "default-new-generation-plain-pid"
+
+        def reload_native():
+            native._last_reload_mode = "cold-start"
+            return True
+
+        native.reload.side_effect = reload_native
+        old_handle = MagicMock(pid=321)
+        new_handle = MagicMock(pid=321)
+        new_handle.wait.return_value = SimpleNamespace(
+            stdout="new runtime\n", stderr="", exit_code=0
+        )
+        native.commands.run.side_effect = [old_handle, new_handle]
+        session = self._create_session(native)
+        self._start(session)
+        self.assertIs(session.reload(), True)
+        new_pid = self._start(session, "printf new")
+
+        self.assertEqual(
+            session.commands.wait(new_pid, 30),
+            CommandResult("new runtime\n", "", 0),
+        )
+        with self.assertRaisesRegex(BackendOperationError, _COLD_START_HANDLE_ERROR):
+            session.commands.wait(int(new_pid), 30)
+        new_handle.wait.assert_called_once_with(30)
+
+    def test_snapshot_mode_keeps_old_pid_native_operations_available(self):
+        native = MagicMock()
+        native.id = "default-authoritative-snapshot"
+
+        def reload_native():
+            native._last_reload_mode = "snapshot"
+            return True
+
+        native.reload.side_effect = reload_native
+        native.commands.run.return_value = MagicMock(pid=321)
+        native.commands.kill.return_value = True
+        session = self._create_session(native)
+        pid = self._start(session, "cat", stdin=True)
+
+        self.assertIs(session.reload(), True)
+
+        self.assertIs(session.commands.kill(pid), True)
+        session.commands.send_stdin(pid, "input", False)
+        native.commands.kill.assert_called_once_with(321)
+        native.commands.send_stdin.assert_called_once_with(321, "input", False)
+
+    def test_snapshot_mode_keeps_plain_pid_operations_available(self):
+        native = MagicMock()
+        native.id = "default-authoritative-snapshot-plain-pid"
+
+        def reload_native():
+            native._last_reload_mode = "snapshot"
+            return True
+
+        native.reload.side_effect = reload_native
+        native.commands.run.return_value = MagicMock(pid=321)
+        native.commands.kill.return_value = True
+        session = self._create_session(native)
+        pid = self._start(session)
+
+        self.assertIs(session.reload(), True)
+
+        self.assertIs(session.commands.kill(int(pid)), True)
+        native.commands.kill.assert_called_once_with(321)
+
+    def test_old_native_sdk_without_reload_mode_keeps_conservative_behavior(self):
+        commands = MagicMock()
+        commands.run.return_value = MagicMock(pid=321)
+        commands.kill.return_value = True
+        native = SimpleNamespace(
+            id="default-old-sdk",
+            commands=commands,
+            files=MagicMock(),
+            reload=MagicMock(return_value=True),
+        )
+        session = self._create_session(native)
+        pid = self._start(session)
+
+        self.assertIs(session.reload(), True)
+
+        self.assertIs(session.commands.kill(pid), True)
+        commands.kill.assert_called_once_with(321)
+
+    def test_reload_false_does_not_advance_or_invalidate_handle_generation(self):
+        native = MagicMock()
+        native.id = "default-failed-reload-handle"
+        native.reload.return_value = False
+        old_handle = MagicMock(pid=321)
+        old_handle.wait.return_value = SimpleNamespace(
+            stdout="still running\n",
+            stderr="",
+            exit_code=0,
+        )
+        native.commands.run.return_value = old_handle
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ):
+            session = self.backend.create(_spec())
+
+        pid = session.commands.start(
+            "sleep 1", envs=None, cwd=None, stdin=False
+        )
+        self.assertIs(session.reload(), False)
+
+        self.assertEqual(
+            session.commands.wait(pid, 30),
+            CommandResult("still running\n", "", 0),
+        )
+
+    def test_public_command_handle_preserves_tracked_pid_token(self):
+        native = MagicMock()
+        native.id = "default-public-token"
+        native.reload.return_value = True
+        old_handle = MagicMock(pid=321)
+        old_handle.wait.side_effect = RuntimeError("native process missing")
+        native.commands.run.return_value = old_handle
+        session = self._create_session(native)
+
+        handle = PublicCommands(session.commands).run(
+            "sleep 60", background=True
+        )
+        self.assertIsInstance(handle.pid, int)
+        self.assertIsNot(type(handle.pid), int)
+        self.assertIs(session.reload(), True)
+
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            _COLD_START_HANDLE_ERROR,
+        ):
+            handle.wait(30)
+
+    def test_explicit_int_pid_uses_legacy_path_without_generation_claim(self):
+        native = MagicMock()
+        native.id = "default-legacy-pid"
+        native.reload.return_value = True
+        old_handle = MagicMock(pid=321)
+        old_handle.wait.side_effect = RuntimeError("opaque legacy failure")
+        native.commands.run.return_value = old_handle
+        session = self._create_session(native)
+
+        tracked_pid = self._start(session)
+        self.assertIs(session.reload(), True)
+
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            "wait for process 321 failed: opaque legacy failure",
+        ) as raised:
+            session.commands.wait(int(tracked_pid), 30)
+        self.assertNotIn("not restored after sandbox cold start", str(raised.exception))
+
+    def test_old_generation_kill_false_does_not_invalidate(self):
+        native = MagicMock()
+        native.id = "default-old-kill-false"
+        native.reload.return_value = True
+        first_handle = MagicMock(pid=321)
+        second_handle = MagicMock(pid=654)
+        second_handle.wait.return_value = SimpleNamespace(
+            stdout="snapshot preserved\n",
+            stderr="",
+            exit_code=0,
+        )
+        native.commands.run.side_effect = [first_handle, second_handle]
+        native.commands.kill.return_value = False
+        session = self._create_session(native)
+
+        first_pid = self._start(session)
+        second_pid = self._start(session, "printf restored")
+        self.assertIs(session.reload(), True)
+
+        self.assertIs(session.commands.kill(first_pid), False)
+        self.assertEqual(
+            session.commands.wait(second_pid, 30),
+            CommandResult("snapshot preserved\n", "", 0),
+        )
+
+    def test_old_generation_kill_exception_invalidates_other_handles(self):
+        native = MagicMock()
+        native.id = "default-old-kill-exception"
+        native.reload.return_value = True
+        first_handle = MagicMock(pid=321)
+        second_handle = MagicMock(pid=654)
+        native.commands.run.side_effect = [first_handle, second_handle]
+        native.commands.kill.side_effect = RuntimeError("opaque kill failure")
+        session = self._create_session(native)
+
+        first_pid = self._start(session)
+        second_pid = self._start(session)
+        self.assertIs(session.reload(), True)
+
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            _COLD_START_HANDLE_ERROR,
+        ):
+            session.commands.kill(first_pid)
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            _COLD_START_HANDLE_ERROR,
+        ):
+            session.commands.wait(second_pid, 30)
+        second_handle.wait.assert_not_called()
+
+    def test_old_generation_stdin_exception_invalidates_other_handles(self):
+        native = MagicMock()
+        native.id = "default-old-stdin-exception"
+        native.reload.return_value = True
+        first_handle = MagicMock(pid=321)
+        second_handle = MagicMock(pid=654)
+        native.commands.run.side_effect = [first_handle, second_handle]
+        native.commands.send_stdin.side_effect = RuntimeError(
+            "opaque stdin failure"
+        )
+        session = self._create_session(native)
+
+        first_pid = self._start(session, "cat", stdin=True)
+        second_pid = self._start(session)
+        self.assertIs(session.reload(), True)
+
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            _COLD_START_HANDLE_ERROR,
+        ):
+            session.commands.send_stdin(first_pid, "input", False)
+        with self.assertRaisesRegex(
+            BackendOperationError,
+            _COLD_START_HANDLE_ERROR,
+        ):
+            session.commands.wait(second_pid, 30)
+        second_handle.wait.assert_not_called()
 
     def test_old_native_sdk_rejects_enabled_failover(self):
         with (

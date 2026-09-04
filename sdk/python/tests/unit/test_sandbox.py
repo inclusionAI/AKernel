@@ -33,7 +33,7 @@ from akernel_sdk import sandbox as sandbox_module
 from akernel_sdk._dockercontext import LocalDockerContext
 from akernel_sdk._dockerfile import DockerfileBuildError, DockerfileParseError
 from akernel_sdk._dockerfile_runner import DockerfileApplyResult
-from akernel_sdk.types import SandboxInfo
+from akernel_sdk.types import CommandResult, SandboxInfo
 
 
 class SandboxTest(unittest.TestCase):
@@ -83,6 +83,53 @@ class SandboxTest(unittest.TestCase):
         sandbox.kill()
         self.session.terminate.assert_called_once_with()
         self.session.close.assert_called_once_with()
+
+    def test_failover_is_typed_and_forwarded(self):
+        sandbox = Sandbox(failover=True)
+        spec = self.backend.create.call_args.args[0]
+
+        self.assertTrue(spec.failover)
+        sandbox.kill()
+
+    def test_failover_rejects_non_boolean_values(self):
+        with self.assertRaisesRegex(TypeError, "failover"):
+            Sandbox(failover=1)
+        self.backend.create.assert_not_called()
+
+    def test_reload_cold_start_success_returns_true_without_replacing_facades(self):
+        self.session.reload.return_value = True
+        sandbox = Sandbox()
+        before = (sandbox.commands, sandbox.files, sandbox.pty, sandbox._session)
+
+        self.assertIs(sandbox.reload(), True)
+        for current, original in zip(
+            (sandbox.commands, sandbox.files, sandbox.pty, sandbox._session),
+            before,
+            strict=True,
+        ):
+            self.assertIs(current, original)
+        self.session.reload.assert_called_once_with()
+
+    def test_completed_command_result_stays_readable_after_reload(self):
+        completed = CommandResult("completed\n", "", 0)
+        self.session.commands.run.return_value = completed
+        self.session.reload.return_value = True
+        sandbox = Sandbox()
+
+        result = sandbox.commands.run("printf completed")
+        self.assertIs(sandbox.reload(), True)
+
+        self.assertIs(result, completed)
+        self.assertEqual(result.stdout, "completed\n")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.exit_code, 0)
+
+    def test_reload_returns_false_after_close(self):
+        sandbox = Sandbox()
+        sandbox.kill()
+
+        self.assertIs(sandbox.reload(), False)
+        self.session.reload.assert_not_called()
 
     def test_extra_config_is_validated_and_defensively_copied(self):
         labels = ["worker"]
