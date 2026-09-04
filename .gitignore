@@ -16,6 +16,7 @@ __pycache__/
 /sdk/python/dist/
 
 # Local build artifacts.
+.artifacts/
 builder/*.img
 builder/*.tar
 builder/*.tar.gz

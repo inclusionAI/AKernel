@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import inspect
+import math
 import os
+import time
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -153,6 +156,130 @@ class _CommandsDriver:
     def __init__(self, commands: Any) -> None:
         self._commands = commands
         self._handles: dict[int, Any] = {}
+        self._command_ids: dict[int, str] = {}
+        self._stable_commands: bool | None = None
+
+    def _stable_client(self) -> tuple[Any, str] | None:
+        client = getattr(self._commands, "_client", None)
+        sandbox_id = getattr(self._commands, "_sid", None)
+        if client is None or not isinstance(sandbox_id, str) or not sandbox_id:
+            return None
+        return client, sandbox_id
+
+    def _uses_stable_commands(self) -> bool:
+        if self._stable_commands is not None:
+            return self._stable_commands
+        stable_client = self._stable_client()
+        if stable_client is None:
+            self._stable_commands = False
+            return False
+        client, sandbox_id = stable_client
+        try:
+            response = client.invoke(sandbox_id, "process.capabilities", {})
+        except Exception:
+            # Do not cache transient transport failures. The native client can
+            # still serve older RRTs, and the next operation may retry discovery.
+            return False
+        capabilities = response.get("capabilities")
+        self._stable_commands = isinstance(capabilities, list) and (
+            "stable-command-id" in capabilities
+        )
+        return self._stable_commands
+
+    def _invoke_stable(
+        self,
+        action: str,
+        values: Mapping[str, Any],
+        *,
+        timeout: int | None = None,
+    ) -> Mapping[str, Any]:
+        stable_client = self._stable_client()
+        if stable_client is None:
+            raise RuntimeError("stable command transport is unavailable")
+        client, sandbox_id = stable_client
+        if timeout is None:
+            response = client.invoke(sandbox_id, action, dict(values))
+        else:
+            response = client.invoke(
+                sandbox_id,
+                action,
+                dict(values),
+                timeout=timeout,
+            )
+        if not isinstance(response, Mapping):
+            raise RuntimeError(f"{action} returned an invalid response")
+        return response
+
+    @staticmethod
+    def _stable_result(value: Mapping[str, Any]) -> CommandResult:
+        exit_code = value.get("exit_code")
+        return CommandResult(
+            stdout=str(value.get("stdout") or ""),
+            stderr=str(value.get("stderr") or value.get("error") or ""),
+            exit_code=int(exit_code) if isinstance(exit_code, int) else -1,
+        )
+
+    def _wait_stable(self, pid: int, timeout: int | None) -> CommandResult:
+        command_id = self._command_ids.get(pid)
+        identity: dict[str, Any] = {"pid": pid}
+        if command_id is not None:
+            identity["command_id"] = command_id
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            if deadline is None:
+                wait_timeout = 10.0
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._invoke_stable("process.kill", identity)
+                    return CommandResult(
+                        stdout="",
+                        stderr=f"Command timed out after {timeout} seconds",
+                        exit_code=-1,
+                    )
+                wait_timeout = min(10.0, remaining)
+            response = self._invoke_stable(
+                "process.poll",
+                {**identity, "wait_timeout": wait_timeout},
+                timeout=max(1, math.ceil(wait_timeout) + 1),
+            )
+            status = str(response.get("status") or "").upper()
+            if status in {"PENDING", "RUNNING"}:
+                continue
+            if status in {"SUCCEEDED", "FAILED", "TIMED_OUT", "KILLED"}:
+                return self._stable_result(response)
+            raise RuntimeError(
+                str(response.get("error") or f"unknown command status {status!r}")
+            )
+
+    def _start_stable(
+        self,
+        cmd: str,
+        *,
+        envs: Mapping[str, str] | None,
+        cwd: str | None,
+        stdin: bool,
+        timeout: int | None = None,
+    ) -> int:
+        command_id = f"cmd-{uuid.uuid4().hex}"
+        values: dict[str, Any] = {
+            "command_id": command_id,
+            "cmd": cmd,
+            "envs": dict(envs) if envs is not None else None,
+            "cwd": cwd,
+            "want_stdin": stdin,
+        }
+        if timeout is not None:
+            values["timeout"] = timeout
+        response = self._invoke_stable("process.start", values)
+        error = response.get("error")
+        if error:
+            raise RuntimeError(str(error))
+        pid = response.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            raise RuntimeError(f"process.start returned invalid pid {pid!r}")
+        self._command_ids[pid] = command_id
+        return pid
 
     def run(
         self,
@@ -163,6 +290,15 @@ class _CommandsDriver:
         timeout: int,
     ) -> CommandResult:
         try:
+            if self._uses_stable_commands():
+                pid = self._start_stable(
+                    cmd,
+                    envs=envs,
+                    cwd=cwd,
+                    stdin=False,
+                    timeout=timeout,
+                )
+                return self._wait_stable(pid, timeout)
             value = self._commands.run(
                 cmd,
                 envs=dict(envs) if envs is not None else None,
@@ -182,6 +318,13 @@ class _CommandsDriver:
         stdin: bool,
     ) -> int:
         try:
+            if self._uses_stable_commands():
+                return self._start_stable(
+                    cmd,
+                    envs=envs,
+                    cwd=cwd,
+                    stdin=stdin,
+                )
             handle = self._commands.run(
                 cmd,
                 background=True,
@@ -196,6 +339,11 @@ class _CommandsDriver:
         return pid
 
     def wait(self, pid: int, timeout: int | None) -> CommandResult:
+        if self._uses_stable_commands():
+            try:
+                return self._wait_stable(pid, timeout)
+            except Exception as error:
+                raise _convert_error(f"wait for process {pid}", error) from error
         handle = self._handles.get(pid)
         if handle is None:
             raise BackendOperationError(f"no command handle for pid {pid}")
@@ -206,18 +354,50 @@ class _CommandsDriver:
 
     def kill(self, pid: int) -> bool:
         try:
+            if self._uses_stable_commands():
+                values: dict[str, Any] = {"pid": pid}
+                if command_id := self._command_ids.get(pid):
+                    values["command_id"] = command_id
+                return bool(self._invoke_stable("process.kill", values).get("killed"))
             return bool(self._commands.kill(pid))
         except Exception as error:
             raise _convert_error(f"kill process {pid}", error) from error
 
     def send_stdin(self, pid: int, data: str, eof: bool) -> None:
         try:
+            if self._uses_stable_commands():
+                values: dict[str, Any] = {
+                    "pid": pid,
+                    "data": data,
+                    "eof": eof,
+                }
+                if command_id := self._command_ids.get(pid):
+                    values["command_id"] = command_id
+                response = self._invoke_stable("process.send_stdin", values)
+                if error := response.get("error"):
+                    raise RuntimeError(str(error))
+                return
             self._commands.send_stdin(pid, data, eof)
         except Exception as error:
             raise _convert_error(f"send stdin to process {pid}", error) from error
 
     def list(self) -> list[CommandInfo]:
         try:
+            if self._uses_stable_commands():
+                values = self._invoke_stable("process.list", {})
+                processes = values.get("processes")
+                if not isinstance(processes, list):
+                    return []
+                return [
+                    CommandInfo(
+                        pid=int(value.get("pid") or 0),
+                        command=str(value.get("cmd") or ""),
+                        running=str(value.get("status") or "").upper()
+                        in {"PENDING", "RUNNING"},
+                    )
+                    for value in processes
+                    if isinstance(value, Mapping)
+                ]
             return [_command_info(value) for value in self._commands.list()]
         except Exception as error:
             raise _convert_error("list processes", error) from error

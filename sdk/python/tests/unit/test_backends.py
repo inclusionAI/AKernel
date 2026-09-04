@@ -151,6 +151,69 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(os.environ["YR_GATEWAY_TLS"], "0")
         self.assertEqual(os.environ["YR_TOKEN"], "secret")
 
+    def test_stable_command_protocol_adds_id_and_polls_result(self):
+        client = MagicMock()
+
+        def invoke(_sandbox_id, action, values, **_kwargs):
+            if action == "process.capabilities":
+                return {"capabilities": ["stable-command-id"]}
+            if action == "process.start":
+                self.assertRegex(values["command_id"], r"^cmd-[0-9a-f]{32}$")
+                return {"pid": 17, "status": "RUNNING"}
+            if action == "process.poll":
+                self.assertEqual(values["pid"], 17)
+                self.assertRegex(values["command_id"], r"^cmd-[0-9a-f]{32}$")
+                return {
+                    "pid": 17,
+                    "status": "SUCCEEDED",
+                    "stdout": "ok\n",
+                    "stderr": "",
+                    "exit_code": 0,
+                }
+            self.fail(f"unexpected action {action}")
+
+        client.invoke.side_effect = invoke
+        commands = SimpleNamespace(_client=client, _sid="default-worker")
+        driver = openyuanrong_sandbox._CommandsDriver(commands)
+
+        self.assertEqual(
+            driver.run("echo ok", envs=None, cwd=None, timeout=60),
+            CommandResult("ok\n", "", 0),
+        )
+
+    def test_stable_background_command_uses_id_for_followup_actions(self):
+        client = MagicMock()
+
+        def invoke(_sandbox_id, action, values, **_kwargs):
+            if action == "process.capabilities":
+                return {"capabilities": ["stable-command-id"]}
+            if action == "process.start":
+                return {"pid": 23, "status": "RUNNING"}
+            if action == "process.list":
+                return {
+                    "processes": [{"pid": 23, "cmd": "sleep 30", "status": "RUNNING"}]
+                }
+            if action == "process.send_stdin":
+                self.assertRegex(values["command_id"], r"^cmd-[0-9a-f]{32}$")
+                return {"error": None}
+            if action == "process.kill":
+                self.assertRegex(values["command_id"], r"^cmd-[0-9a-f]{32}$")
+                return {"killed": True, "error": None}
+            self.fail(f"unexpected action {action}")
+
+        client.invoke.side_effect = invoke
+        commands = SimpleNamespace(_client=client, _sid="default-worker")
+        driver = openyuanrong_sandbox._CommandsDriver(commands)
+
+        pid = driver.start("sleep 30", envs=None, cwd=None, stdin=True)
+        self.assertEqual(pid, 23)
+        self.assertEqual(
+            driver.list(),
+            [CommandInfo(pid=23, command="sleep 30", running=True)],
+        )
+        driver.send_stdin(pid, "input", False)
+        self.assertTrue(driver.kill(pid))
+
     def test_runtime_identifier_without_explicit_rootfs_is_forwarded(self):
         native = MagicMock()
         native.id = "default-gvisor-next"

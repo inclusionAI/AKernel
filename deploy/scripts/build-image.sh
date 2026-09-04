@@ -31,6 +31,9 @@ open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
 open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
 rrt_runtime_url="${RRT_RUNTIME_URL:-}"
 rrt_runtime_sha256="${RRT_RUNTIME_SHA256:-}"
+open_yr_data_plane_wheel_path="${OPEN_YR_DATA_PLANE_WHEEL_PATH:-}"
+open_yr_data_plane_wheel_url="${OPEN_YR_DATA_PLANE_WHEEL_URL:-}"
+open_yr_data_plane_wheel_sha256="${OPEN_YR_DATA_PLANE_WHEEL_SHA256:-}"
 print_component_versions=0
 
 component_revision() {
@@ -111,6 +114,18 @@ while [[ $# -gt 0 ]]; do
       rrt_runtime_sha256="$2"
       shift 2
       ;;
+    --open-yr-data-plane-wheel-path)
+      open_yr_data_plane_wheel_path="$2"
+      shift 2
+      ;;
+    --open-yr-data-plane-wheel-url)
+      open_yr_data_plane_wheel_url="$2"
+      shift 2
+      ;;
+    --open-yr-data-plane-wheel-sha256)
+      open_yr_data_plane_wheel_sha256="$2"
+      shift 2
+      ;;
     --print-component-versions)
       print_component_versions=1
       shift
@@ -137,6 +152,25 @@ case "${AKERNEL_ENABLE_FIRECRACKER:-true}" in
 esac
 
 require_cmd docker
+
+docker_build_common_args=()
+if [[ -n "${AKERNEL_BUILD_NETWORK:-}" ]]; then
+  case "${AKERNEL_BUILD_NETWORK}" in
+    default|host|none) ;;
+    *) die "AKERNEL_BUILD_NETWORK must be default, host, or none" ;;
+  esac
+  docker_build_common_args+=(--network "${AKERNEL_BUILD_NETWORK}")
+  if [[ "${AKERNEL_BUILD_NETWORK}" == "host" ]]; then
+    for proxy_name in \
+      HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY \
+      http_proxy https_proxy all_proxy no_proxy; do
+      proxy_value="${!proxy_name:-}"
+      if [[ -n "${proxy_value}" ]]; then
+        docker_build_common_args+=(--build-arg "${proxy_name}=${proxy_value}")
+      fi
+    done
+  fi
+fi
 
 if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
   load_env_config "${env_name}"
@@ -194,9 +228,45 @@ if [[ -n "${rrt_runtime_url}" || -n "${rrt_runtime_sha256}" ]]; then
   )
 fi
 
+if [[ -n "${open_yr_data_plane_wheel_path}" && -n "${open_yr_data_plane_wheel_url}" ]]; then
+  die "OPEN_YR_DATA_PLANE_WHEEL_PATH and OPEN_YR_DATA_PLANE_WHEEL_URL are mutually exclusive"
+fi
+if [[ -z "${open_yr_data_plane_wheel_path}" && -z "${open_yr_data_plane_wheel_url}" ]]; then
+  die "the Rust data-plane wheel is required; set OPEN_YR_DATA_PLANE_WHEEL_PATH or OPEN_YR_DATA_PLANE_WHEEL_URL"
+fi
+if [[ -z "${open_yr_data_plane_wheel_sha256}" ]]; then
+  die "OPEN_YR_DATA_PLANE_WHEEL_SHA256 is required with the Rust data-plane wheel"
+fi
+
+node_build_contexts=(--build-context "open_yr_data_plane_wheel=.")
+data_plane_context_dir=""
+open_yr_data_plane_wheel_name=""
+if [[ -n "${open_yr_data_plane_wheel_path}" ]]; then
+  if [[ ! -f "${open_yr_data_plane_wheel_path}" ]]; then
+    die "Rust data-plane wheel does not exist: ${open_yr_data_plane_wheel_path}"
+  fi
+  actual_data_plane_sha256="$(sha256sum "${open_yr_data_plane_wheel_path}" | awk '{print $1}')"
+  if [[ "${actual_data_plane_sha256}" != "${open_yr_data_plane_wheel_sha256}" ]]; then
+    die "Rust data-plane wheel checksum mismatch: expected ${open_yr_data_plane_wheel_sha256}, got ${actual_data_plane_sha256}"
+  fi
+  open_yr_data_plane_wheel_name="$(basename "${open_yr_data_plane_wheel_path}")"
+  case "${open_yr_data_plane_wheel_name}" in
+    openyuanrong_data_plane-*.whl) ;;
+    *) die "Rust data-plane path must retain its openyuanrong_data_plane wheel filename" ;;
+  esac
+  data_plane_context_dir="$(mktemp -d)"
+  trap 'rm -rf -- "${data_plane_context_dir}"' EXIT
+  ln "${open_yr_data_plane_wheel_path}" \
+    "${data_plane_context_dir}/${open_yr_data_plane_wheel_name}"
+  node_build_contexts=(
+    --build-context "open_yr_data_plane_wheel=${data_plane_context_dir}"
+  )
+fi
+
 info "building ${runtime_image} with runtime profile ${runtime_profile}"
 docker build \
   -f builder/runtime.Dockerfile \
+  "${docker_build_common_args[@]}" \
   --target "runtime-${runtime_profile}" \
   "${runtime_build_args[@]}" \
   -t "${runtime_image}" \
@@ -241,8 +311,16 @@ if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; th
     --build-arg "OPEN_YR_CORE_WHEEL_SHA256=${open_yr_core_wheel_sha256}"
   )
 fi
+
+node_build_args+=(
+  --build-arg "OPEN_YR_DATA_PLANE_WHEEL_URL=${open_yr_data_plane_wheel_url}"
+  --build-arg "OPEN_YR_DATA_PLANE_WHEEL_SHA256=${open_yr_data_plane_wheel_sha256}"
+  --build-arg "OPEN_YR_DATA_PLANE_WHEEL_NAME=${open_yr_data_plane_wheel_name}"
+)
 docker build \
   -f builder/node.Dockerfile \
+  "${docker_build_common_args[@]}" \
+  "${node_build_contexts[@]}" \
   "${node_build_args[@]}" \
   -t "${all_in_one_image}" \
   .

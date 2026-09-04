@@ -12,6 +12,9 @@ OPEN_YR_CORE_WHEEL_URL ?=
 OPEN_YR_CORE_WHEEL_SHA256 ?=
 RRT_RUNTIME_URL ?=
 RRT_RUNTIME_SHA256 ?=
+OPEN_YR_DATA_PLANE_WHEEL_PATH ?=
+OPEN_YR_DATA_PLANE_WHEEL_URL ?=
+OPEN_YR_DATA_PLANE_WHEEL_SHA256 ?=
 TOKEN_TTL ?= $(if $(TTL),$(TTL),24h)
 TENANT ?= default
 ROLE ?= developer
@@ -55,6 +58,7 @@ help:
 	@echo "  make build AKERNEL_ENABLE_FIRECRACKER=false Exclude Firecracker"
 	@echo "  make build AKERNEL_ENABLE_RUNC=true Include the optional runc payload"
 	@echo "  make build RRT_RUNTIME_URL=... RRT_RUNTIME_SHA256=... Override RRT artifact"
+	@echo "  make build OPEN_YR_DATA_PLANE_WHEEL_PATH=<wheel> Use a local Rust data-plane wheel"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
 	@echo "  make plan                          Terraform plan"
@@ -107,6 +111,9 @@ build:
 	if [[ -n "$(OPEN_YR_CORE_WHEEL_SHA256)" ]]; then args+=(--open-yr-core-wheel-sha256 "$(OPEN_YR_CORE_WHEEL_SHA256)"); fi; \
 	if [[ -n "$(RRT_RUNTIME_URL)" ]]; then args+=(--rrt-runtime-url "$(RRT_RUNTIME_URL)"); fi; \
 	if [[ -n "$(RRT_RUNTIME_SHA256)" ]]; then args+=(--rrt-runtime-sha256 "$(RRT_RUNTIME_SHA256)"); fi; \
+	if [[ -n "$(OPEN_YR_DATA_PLANE_WHEEL_PATH)" ]]; then args+=(--open-yr-data-plane-wheel-path "$(OPEN_YR_DATA_PLANE_WHEEL_PATH)"); fi; \
+	if [[ -n "$(OPEN_YR_DATA_PLANE_WHEEL_URL)" ]]; then args+=(--open-yr-data-plane-wheel-url "$(OPEN_YR_DATA_PLANE_WHEEL_URL)"); fi; \
+	if [[ -n "$(OPEN_YR_DATA_PLANE_WHEEL_SHA256)" ]]; then args+=(--open-yr-data-plane-wheel-sha256 "$(OPEN_YR_DATA_PLANE_WHEEL_SHA256)"); fi; \
 	./deploy/scripts/build-image.sh "$${args[@]}"
 
 .PHONY: versions

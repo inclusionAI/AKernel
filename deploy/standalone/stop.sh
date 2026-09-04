@@ -7,7 +7,10 @@
 
 set -e
 
-CONTAINER_NAMES=("akernel-traefik" "akernel-node")
+CONTAINER_NAMES=(
+    "${AKERNEL_TRAEFIK_CONTAINER_NAME:-akernel-traefik}"
+    "${AKERNEL_NODE_CONTAINER_NAME:-akernel-node}"
+)
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""

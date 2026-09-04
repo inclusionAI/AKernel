@@ -1,8 +1,10 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: prometheus-pvc-ssd
+  name: {{ .Values.prometheusServer.persistence.claimName | default "prometheus-pvc-ssd" }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
   labels:
     {{- include "monitor.labels" . | nindent 4 }}
 spec:

@@ -8,15 +8,36 @@ two containers on the default container bridge:
 - `akernel-traefik` runs the official Traefik image as the external gateway.
 
 Keeping the gateway in a separate network namespace allows sandboxd's normal
-`PREROUTING` rules to handle gateway traffic. The all-in-one frontend sends
-traffic from the node network namespace, so the standalone sandboxd config
-also enables its local-output DNAT support.
+`PREROUTING` rules to handle gateway traffic. Traefik passes HTTPS/TLS through
+to the Rust Edge Frontend on port 8443 and forwards plain HTTP to Edge on port
+8080. Edge sends control requests to the core frontend and sandbox data traffic
+through the Rust Node Proxy. The all-in-one components send traffic from the
+node network namespace, so the standalone sandboxd config also enables its
+local-output DNAT support.
+
+Building the all-in-one image requires the separately published Rust data-plane
+wheel. Download it first, then provide its absolute path and SHA-256:
+
+```bash
+make build IMAGE_REPOSITORY=akernel-local IMAGE_TAG=rust-data-plane \
+  OPEN_YR_DATA_PLANE_WHEEL_PATH=/absolute/path/openyuanrong_data_plane.whl \
+  OPEN_YR_DATA_PLANE_WHEEL_SHA256=<sha256>
+```
+
+The local wheel is mounted into the Docker build through a dedicated read-only
+BuildKit context and is not retained in an image layer. If a public artifact
+URL becomes available, use `OPEN_YR_DATA_PLANE_WHEEL_URL` instead of
+`OPEN_YR_DATA_PLANE_WHEEL_PATH`.
 
 The default runtime is gVisor `runsc`. The bundled image also contains Kata
 Containers and Firecracker. Both `Sandbox(runtime="kata")` and
 `Sandbox(runtime="firecracker")` require `/dev/kvm` plus hardware or nested
 virtualization on the Docker host. Nodes without KVM remain usable with runsc
 and do not advertise either VM runtime to the scheduler.
+
+`runsc` uses the `systrap` platform by default. Hosts that expose `/dev/kvm`
+may select gVisor's KVM platform for standalone startup with
+`AKERNEL_RUNSC_PLATFORM=kvm ./start.sh`.
 
 See the maintained
 [runtime selection example](../../sdk/python/examples/sandbox_runtime.py) for
@@ -167,8 +188,9 @@ This will:
 - Start the privileged AKernel all-in-one container
 - Start an independent Traefik container for the HTTPS API and HTTP sandbox
   port-forwarding gateway
-- Configure Traefik to poll FunctionMaster's HTTP provider for per-sandbox
-  tunnel routes, including custom tunnel ports
+- Configure Traefik with TLS passthrough and HTTP forwarding to the Rust Edge
+  Frontend
+- Wait for the Rust Edge Frontend readiness endpoint before exposing it
 - Generate a deployment-specific IAM signing seed and a 24-hour SDK token
 - Generate a sandboxd config using `AKERNEL_NAT_BACKEND` (`iptables` by
   default)
@@ -247,9 +269,20 @@ needed:
 TRAEFIK_IMAGE="traefik:v3.6.8" ./start.sh
 ```
 
+To run an isolated second standalone instance on the same Docker host, give it
+distinct container names and a distinct data directory. Pass the same names to
+`stop.sh`:
+
+```bash
+AKERNEL_NODE_CONTAINER_NAME=akernel-rustdp-node \
+AKERNEL_TRAEFIK_CONTAINER_NAME=akernel-rustdp-traefik \
+AKERNEL_STANDALONE_DATA_DIR=/absolute/path/to/rustdp-data \
+IMAGE=akernel-local:rust-data-plane ./start.sh
+```
+
 ### Data Directory Location
 
-By default, data is stored in `./data`. To change this, edit `start.sh`:
+By default, data is stored in `./data`. Override it without editing the script:
 ```bash
-DATA_DIR="/path/to/your/data"
+AKERNEL_STANDALONE_DATA_DIR="/path/to/your/data" ./start.sh
 ```

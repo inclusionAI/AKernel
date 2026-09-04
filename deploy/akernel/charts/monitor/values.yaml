@@ -187,6 +187,7 @@ prometheusServer:
       ephemeral-storage: "1Gi"
 
   persistence:
+    claimName: prometheus-pvc-ssd
     storageClass: ""
     size: 20Gi
     accessMode: ReadWriteOnce

@@ -39,6 +39,9 @@ filestore_xfs_enabled=false
 loop_device_dir="/dev"
 overlay_tmpfs_size="10G"
 
+[plugin.runtime.runsc]
+platform="systrap"
+
 [plugin.runtime.basic_spec]
 runsc="/home/akernel/images/config.json"
 runc=""

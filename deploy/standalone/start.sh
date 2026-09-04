@@ -10,18 +10,18 @@ set -e
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${SCRIPT_DIR}/config"
-DATA_DIR="${SCRIPT_DIR}/data"
-FRONTEND_PORT="8888"
+DATA_DIR="${AKERNEL_STANDALONE_DATA_DIR:-${SCRIPT_DIR}/data}"
 ETCD_PORT="${ETCD_PORT:-2379}"
 ETCD_PEER_PORT="${ETCD_PEER_PORT:-2378}"
-NODE_CONTAINER_NAME="akernel-node"
-TRAEFIK_CONTAINER_NAME="akernel-traefik"
+NODE_CONTAINER_NAME="${AKERNEL_NODE_CONTAINER_NAME:-akernel-node}"
+TRAEFIK_CONTAINER_NAME="${AKERNEL_TRAEFIK_CONTAINER_NAME:-akernel-traefik}"
 IMAGE="${IMAGE:-akerneldev/all-in-one:latest}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.6.8}"
 IAM_SEED_FILE="${DATA_DIR}/iam-seed"
 TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
+AKERNEL_RUNSC_PLATFORM="${AKERNEL_RUNSC_PLATFORM:-systrap}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
 LITEBUS_DATA_KEY=""
 
@@ -100,6 +100,21 @@ check_prerequisites() {
             ;;
         *)
             log_error "AKERNEL_ENABLE_RUNC must be true or false"
+            exit 1
+            ;;
+    esac
+
+    case "${AKERNEL_RUNSC_PLATFORM}" in
+        systrap)
+            ;;
+        kvm)
+            if [[ ! -c /dev/kvm ]]; then
+                log_error "AKERNEL_RUNSC_PLATFORM=kvm requires /dev/kvm"
+                exit 1
+            fi
+            ;;
+        *)
+            log_error "AKERNEL_RUNSC_PLATFORM must be 'systrap' or 'kvm'"
             exit 1
             ;;
     esac
@@ -241,6 +256,7 @@ configure_network() {
     local sed_args=(
         -E
         -e "s/^[[:space:]]*nat_backend[[:space:]]*=.*/nat_backend=\"${AKERNEL_NAT_BACKEND}\"/"
+        -e "s/^[[:space:]]*platform[[:space:]]*=.*/platform=\"${AKERNEL_RUNSC_PLATFORM}\"/"
     )
 
     case "${AKERNEL_NAT_BACKEND}" in
@@ -257,6 +273,11 @@ configure_network() {
         log_error "Missing nat_backend in ${CONFIG_DIR}/sandboxd_config.toml"
         exit 1
     fi
+    if ! grep -q '^[[:space:]]*platform[[:space:]]*=' \
+        "${CONFIG_DIR}/sandboxd_config.toml"; then
+        log_error "Missing runsc platform in ${CONFIG_DIR}/sandboxd_config.toml"
+        exit 1
+    fi
     if [[ "${AKERNEL_ENABLE_RUNC}" == "true" ]]; then
         if ! grep -q '^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$' \
             "${CONFIG_DIR}/sandboxd_config.toml"; then
@@ -267,6 +288,8 @@ configure_network() {
             -e 's|^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$|runc="/usr/local/bin/runc"|'
         )
     fi
+
+    log_info "Using the runsc ${AKERNEL_RUNSC_PLATFORM} platform"
     sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
     mv "${config_tmp}" "${SANDBOXD_CONFIG_FILE}"
 
@@ -283,25 +306,26 @@ configure_network() {
 
 prepare_host_network_modules() {
     local modprobe_bin
-    modprobe_bin="$(command -v modprobe || true)"
-    if [[ -z "${modprobe_bin}" ]]; then
-        log_error "modprobe is required to load AKernel host network modules"
-        exit 1
-    fi
-
-    if [[ "$(id -u)" -eq 0 ]]; then
-        "${modprobe_bin}" tun
-    elif sudo -n "${modprobe_bin}" tun; then
-        :
-    else
-        log_error "Unable to load tun; run this script as root or allow passwordless sudo for modprobe"
-        exit 1
+    if [[ ! -c /dev/net/tun ]]; then
+        modprobe_bin="$(command -v modprobe || true)"
+        if [[ -z "${modprobe_bin}" ]]; then
+            log_error "modprobe is required to load the missing tun module"
+            exit 1
+        fi
+        if [[ "$(id -u)" -eq 0 ]]; then
+            "${modprobe_bin}" tun
+        elif sudo -n "${modprobe_bin}" tun; then
+            :
+        else
+            log_error "Unable to load tun; run this script as root or allow passwordless sudo for modprobe"
+            exit 1
+        fi
     fi
     if [[ ! -c /dev/net/tun ]]; then
         log_error "tun loaded but /dev/net/tun is unavailable"
         exit 1
     fi
-    log_info "Loaded host tun module for pooled TAP networking"
+    log_info "Host tun device is ready for pooled TAP networking"
 
     if [[ "${AKERNEL_NAT_BACKEND}" != "iptables" ]]; then
         return 0
@@ -352,9 +376,6 @@ prepare_host_network_modules() {
 # from the gateway enters this network namespace through PREROUTING.
 start_node_container() {
     log_info "Starting container: ${NODE_CONTAINER_NAME}"
-    # FunctionMaster's HTTP provider publishes the per-sandbox routes required
-    # by reverse tunnels; the legacy etcd mode cannot publish those routes.
-
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
         --name "${NODE_CONTAINER_NAME}" \
         --privileged \
@@ -368,7 +389,7 @@ start_node_container() {
         -e ETCD_PORT="${ETCD_PORT}" \
         -e ETCD_PEER_PORT="${ETCD_PEER_PORT}" \
         -e NODE_NAME="$(hostname)" \
-        -e POD_NAME=akernel-node-local \
+        -e POD_NAME="${NODE_CONTAINER_NAME}-local" \
         -e POD_NAMESPACE=default \
         -e TZ=Asia/Shanghai \
         -e ENABLE_TRACE="${ENABLE_TRACE:-false}" \
@@ -419,38 +440,39 @@ write_traefik_config() {
     mkdir -p "${traefik_dir}"
 
     cat > "${traefik_dir}/dynamic.yml" <<EOF
-http:
+tcp:
   routers:
-    akernel-frontend:
+    akernel-edge-tls:
       entryPoints:
         - websecure
-      rule: "PathPrefix(\`/terminal\`) || PathPrefix(\`/api/instances\`) || PathPrefix(\`/api/jobs\`) || PathPrefix(\`/functions\`) || PathPrefix(\`/api-docs\`) || PathPrefix(\`/admin/v1/functions\`) || PathPrefix(\`/serverless/v1/functions\`) || PathPrefix(\`/serverless/v1/stream\`) || PathPrefix(\`/serverless/v1/componentshealth\`) || PathPrefix(\`/serverless/v1/posix\`) || PathPrefix(\`/serverless/v2\`) || PathPrefix(\`/frontend/v1/instance\`) || PathPrefix(\`/datasystem/v1\`) || PathPrefix(\`/app/v1\`) || PathPrefix(\`/client/v1/lease\`) || PathPrefix(\`/invocations\`) || PathPrefix(\`/global-scheduler\`) || Path(\`/healthz\`)"
-      service: akernel-frontend
-      tls: {}
-    sandbox-router:
-      entryPoints:
-        - websecure
-      rule: "PathPrefix(\`/api/sandbox\`) || PathPrefix(\`/direct/\`) || Path(\`/direct\`)"
-      priority: 100
-      service: akernel-frontend
-      tls: {}
+      rule: "HostSNI(\`*\`)"
+      service: akernel-edge-tls
+      tls:
+        passthrough: true
 
   services:
-    akernel-frontend:
+    akernel-edge-tls:
       loadBalancer:
-        serversTransport: akernel-frontend
         servers:
-          - url: "https://${node_ip}:${FRONTEND_PORT}"
+          - address: "${node_ip}:8443"
 
-  serversTransports:
-    akernel-frontend:
-      insecureSkipVerify: true
-      disableHTTP2: true
+http:
+  routers:
+    akernel-edge-plain:
+      entryPoints:
+        - web
+      rule: "PathPrefix(\`/\`)"
+      service: akernel-edge-plain
+
+  services:
+    akernel-edge-plain:
+      loadBalancer:
+        servers:
+          - url: "http://${node_ip}:8080"
 EOF
 }
 
 start_traefik_container() {
-    local provider_endpoint="$1"
     local dynamic_config="${DATA_DIR}/traefik/dynamic.yml"
 
     log_info "Starting container: ${TRAEFIK_CONTAINER_NAME}"
@@ -463,12 +485,39 @@ start_traefik_container() {
         --entryPoints.web.address=:80 \
         --entryPoints.websecure.address=:443 \
         --providers.file.filename=/etc/traefik/dynamic.yml \
-        --providers.http.endpoint="${provider_endpoint}" \
-        --providers.http.pollInterval=1s \
         --log.level=INFO \
         --accessLog=true \
         --accessLog.format=json \
         --accessLog.fields.names.RequestPath=drop
+}
+
+wait_for_data_plane() {
+    local retries=90
+    local delay=2
+
+    log_info "Waiting for the Rust Edge Frontend"
+    for i in $(seq 1 ${retries}); do
+        if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} exec "${NODE_CONTAINER_NAME}" \
+            curl -fkSs http://127.0.0.1:18080/readyz > /dev/null; then
+            log_info "Rust Edge Frontend is ready"
+            return 0
+        fi
+
+        if ! "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} inspect \
+            --format '{{.State.Running}}' "${NODE_CONTAINER_NAME}" 2> /dev/null \
+            | grep -q true; then
+            log_error "AKernel node exited while the Rust data plane was starting"
+            return 1
+        fi
+
+        if [[ ${i} -eq ${retries} ]]; then
+            log_error "Rust Edge Frontend did not become ready"
+            "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} exec "${NODE_CONTAINER_NAME}" \
+                systemctl --no-pager --full status yuanrong.service || true
+            return 1
+        fi
+        sleep ${delay}
+    done
 }
 
 wait_for_gateway() {
@@ -538,9 +587,8 @@ if [[ -z "${NODE_IP}" ]]; then
     exit 1
 fi
 write_traefik_config "${NODE_IP}"
-TRAEFIK_PROVIDER_ENDPOINT="http://${NODE_IP}:22770/global-scheduler/traefik/config"
-log_info "Using FunctionMaster route provider: ${TRAEFIK_PROVIDER_ENDPOINT}"
-start_traefik_container "${TRAEFIK_PROVIDER_ENDPOINT}"
+wait_for_data_plane
+start_traefik_container
 TRAEFIK_IP="$(container_ip "${TRAEFIK_CONTAINER_NAME}")"
 if [[ -z "${TRAEFIK_IP}" ]]; then
     log_error "Could not determine the Traefik container IP"

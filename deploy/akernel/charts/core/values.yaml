@@ -97,6 +97,11 @@ master:
 frontend:
   enabled: true
   replicas: 2
+  # sandboxd creates runtime processes outside Kubernetes' resource accounting.
+  # For high-throughput data-plane deployments, use required node affinity and
+  # a matching taint toleration to keep the shared Edge off sandbox workers.
+  affinity: {}
+  tolerations: []
   service:
     type: ClusterIP
     annotations: {}
@@ -119,6 +124,37 @@ frontend:
     metaServiceAddress: ""
     iamServerAddress: ""
 
+# Rust edge frontend (co-located in the frontend container) plus the per-node
+# Rust proxy. Disabled by default so
+# existing releases retain the legacy Traefik/sandboxRouter topology until
+# explicitly migrated.
+dataPlane:
+  enabled: false
+  clusterName: ""
+  edge:
+    enabled: true
+    tlsPort: 8443
+    plainPort: 8080
+    healthPort: 18080
+    validateIam: true
+    # High-volume per-request access records may be disabled independently of
+    # security audit records when the Edge binary supports split log controls.
+    accessLogEnabled: true
+    auditLogEnabled: true
+    allowAnyClient: false
+    allowedClientCidrs:
+    - 127.0.0.0/8
+    service:
+      type: ClusterIP
+      tlsPort: 443
+      plainPort: 80
+      annotations: {}
+  node:
+    port: 9443
+    healthPort: 18443
+    allowAnyEdge: true
+    securityMode: network
+
 node:
   secret:
     create: true
@@ -131,7 +167,9 @@ node:
     pullPolicy: ""
   resources:
     limits:
-      ephemeral-storage: 1Gi
+      # Runtime/session logs share the container writable layer. Keep enough
+      # headroom for a full-node sandbox benchmark without kubelet eviction.
+      ephemeral-storage: 10Gi
     requests:
       ephemeral-storage: 1Gi
   annotations: {}
@@ -445,6 +483,8 @@ node:
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
       # Sandboxd probes runc and runc-shim before advertising the runtime.
       enableRunc: false
+      # Must be unique when multiple AKernel releases share a physical node.
+      cgroupRootName: "/akernel"
       config: |-
         rootDir="/home/akernel/sandboxd/root"
         storeDir="/home/akernel/sandboxd/store"

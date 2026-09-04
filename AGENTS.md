@@ -117,11 +117,12 @@ The build creates only the selected image reference; it does not add a second
 
 The build helper performs two Docker builds. `builder/runtime.Dockerfile`
 creates `yr-runtime-rootfs.img`; the default `rrt` profile contains the
-pinned openYuanRong RRT binary without Python. Set
+pinned openYuanRong RRT binary without Python and verifies that it is byte-for-
+byte identical to the binary in the matching `openyuanrong_rrt` wheel. Set
 `RUNTIME_PROFILE=python` to include the optional Python 3.10 through 3.14
-runtimes and `openyuanrong_sdk`. `builder/node.Dockerfile` then compiles the
-node components and produces the AKernel all-in-one image using the selected
-runtime image and its matching service configuration.
+runtimes, `openyuanrong_sdk`, and the RRT wheel. `builder/node.Dockerfile` then
+compiles the node components and produces the AKernel all-in-one image using
+the selected runtime image and its matching service configuration.
 
 The control-plane and RRT release version is independent of the optional
 actor-based `openyuanrong_sdk` installed in the Python runtime profile. This
@@ -160,6 +161,29 @@ release control plane.
 To test an unreleased RRT binary, provide both `RRT_RUNTIME_URL` and
 `RRT_RUNTIME_SHA256` to `make build`. The runtime build verifies the binary
 before packaging it into the selected runtime root filesystem.
+
+The Rust data plane is packaged separately from the core wheel. Every image
+build must provide its SHA-256 plus exactly one source: a local authenticated
+Buildkite download or a public URL. A local wheel is exposed to Docker through
+a dedicated read-only BuildKit context and is not copied into the primary build
+context or a persistent image layer:
+
+```bash
+make build \
+  OPEN_YR_DATA_PLANE_WHEEL_PATH=/absolute/path/openyuanrong_data_plane.whl \
+  OPEN_YR_DATA_PLANE_WHEEL_SHA256=<sha256>
+```
+
+Use `OPEN_YR_DATA_PLANE_WHEEL_URL` instead of the path after the artifact has a
+public URL. The all-in-one image installs both wheels through Python packaging,
+keeps `/usr/bin/yr` as the legacy native CLI for Kubernetes entrypoints, and
+uses `/usr/local/bin/yr` to start the Rust Node Proxy and Edge Frontend in
+standalone mode.
+
+On a development host whose proxy only listens on loopback, set
+`AKERNEL_BUILD_NETWORK=host` while building. The helper then gives BuildKit host
+network access and forwards the standard proxy environment variables as Docker
+proxy build arguments. The default remains Docker's isolated build network.
 
 Inspect the selected local versions without building an image:
 
@@ -391,6 +415,13 @@ layout. When a custom topology sets it, the override applies only to public
 sandbox port URLs and reverse tunnels; exec and file transfer continue to use
 `AKERNEL_SERVER_ADDRESS`. Standalone uses `akerneldev/all-in-one:latest` by
 default; pass `IMAGE` to test a locally built or differently tagged image.
+
+In standalone mode Traefik terminates neither YuanRong protocol nor TLS. Its
+HTTPS TCP entrypoint passes TLS through to the Rust Edge Frontend on port 8443,
+and its HTTP entrypoint forwards to the Edge plain listener on port 8080. Edge
+routes control traffic to the core frontend; sandbox traffic follows the Rust
+Edge Frontend to Node Proxy path. Their local readiness endpoints are 18080
+and 18443 respectively.
 
 Standalone GPU testing additionally requires NVIDIA Container Toolkit on the
 host and `AKERNEL_ENABLE_GPU=true`. sandboxd uses the read-only cgroup

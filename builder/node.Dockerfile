@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # Copyright (c) 2026 Ant Group Corporation.
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -16,6 +18,9 @@ ARG OPEN_YR_CORE_WHEEL_SHA256=
 ARG OPEN_YR_RELEASE_BASE_URL=https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release
 ARG OPEN_YR_CORE_AMD64_SHA256=65c1f27e7e700a253a2e907dea0273e85f1c76610e48c93544caa6bcc07ac3af
 ARG OPEN_YR_CORE_ARM64_SHA256=29d25c3388c2913346035ee8df9b8159e702de7a8e6f783e3e218ab773896333
+ARG OPEN_YR_DATA_PLANE_WHEEL_URL=
+ARG OPEN_YR_DATA_PLANE_WHEEL_SHA256=
+ARG OPEN_YR_DATA_PLANE_WHEEL_NAME=
 ARG GVISOR_DOWNLOAD_IMAGE=ubuntu:24.04
 ARG GVISOR_RELEASE
 ARG GVISOR_AMD64_URL
@@ -223,6 +228,9 @@ ARG AKERNEL_REVISION
 ARG OPEN_YR_VERSION
 ARG OPEN_YR_CORE_WHEEL_URL
 ARG OPEN_YR_CORE_WHEEL_SHA256
+ARG OPEN_YR_DATA_PLANE_WHEEL_URL
+ARG OPEN_YR_DATA_PLANE_WHEEL_SHA256
+ARG OPEN_YR_DATA_PLANE_WHEEL_NAME
 ARG OPEN_YR_RELEASE_BASE_URL
 ARG OPEN_YR_CORE_AMD64_SHA256
 ARG OPEN_YR_CORE_ARM64_SHA256
@@ -297,10 +305,11 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 ENV YR_INSTALLATION_DIR=/home/yuanrong
 
-# Install the complete, language-runtime-free openYuanRong control plane from
-# its checksum-pinned core wheel. A URL and checksum pair may override the
-# release asset when validating an unreleased daily build.
-RUN set -eux; \
+# Install the complete, language-runtime-free openYuanRong control plane and
+# the standalone Rust data-plane executables. The data-plane wheel can arrive
+# either from a public URL or from a BuildKit file mount supplied by the build
+# helper for authenticated Buildkite artifacts.
+RUN --mount=type=bind,from=open_yr_data_plane_wheel,source=.,target=/run/open_yr_data_plane_wheel,ro set -eux; \
     case "${TARGETARCH:-}" in \
       amd64) wheel_arch=x86_64; wheel_platform=amd64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
       arm64) wheel_arch=aarch64; wheel_platform=arm64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
@@ -325,21 +334,41 @@ RUN set -eux; \
       test -z "${OPEN_YR_CORE_WHEEL_SHA256}"; \
     fi; \
     wheel="/tmp/${wheel_name}"; \
-    target=/tmp/openyuanrong-core; \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
       "${wheel_url}" -o "${wheel}"; \
     echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
+    data_plane_wheel_name="${OPEN_YR_DATA_PLANE_WHEEL_NAME}"; \
+    if [ -n "${OPEN_YR_DATA_PLANE_WHEEL_URL}" ]; then \
+      data_plane_wheel_name="$(python3 -c 'import os, sys, urllib.parse; print(os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path)))' "${OPEN_YR_DATA_PLANE_WHEEL_URL}")"; \
+    fi; \
+    case "${data_plane_wheel_name}" in openyuanrong_data_plane-*.whl) ;; *) echo "the data-plane source must reference a valid openyuanrong_data_plane wheel filename" >&2; exit 1 ;; esac; \
+    data_plane_wheel="/tmp/${data_plane_wheel_name}"; \
+    if [ -n "${OPEN_YR_DATA_PLANE_WHEEL_URL}" ]; then \
+      curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+        "${OPEN_YR_DATA_PLANE_WHEEL_URL}" -o "${data_plane_wheel}"; \
+    else \
+      test -f "/run/open_yr_data_plane_wheel/${data_plane_wheel_name}"; \
+      cp "/run/open_yr_data_plane_wheel/${data_plane_wheel_name}" "${data_plane_wheel}"; \
+    fi; \
+    echo "${OPEN_YR_DATA_PLANE_WHEEL_SHA256}  ${data_plane_wheel}" | sha256sum -c -; \
     python3 -m pip install \
       --break-system-packages \
       --no-cache-dir \
-      --no-deps \
-      --target "${target}" \
-      "${wheel}"; \
-    test -x "${target}/yr/functionsystem/bin/yr"; \
+      --index-url "${PIP_INDEX_URL}" \
+      --timeout 120 \
+      --retries 10 \
+      "${wheel}" \
+      "${data_plane_wheel}"; \
+    yr_package_dir="$(python3 -c 'from pathlib import Path; import yr; print(Path(yr.__file__).resolve().parent)')"; \
+    python_bin_dir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("scripts"))')"; \
+    test -x "${yr_package_dir}/functionsystem/bin/yr"; \
+    test -x "${yr_package_dir}/data_plane/bin/yr-node-proxy"; \
+    test -x "${yr_package_dir}/data_plane/bin/yr-edge-frontend"; \
+    test -x "${yr_package_dir}/data_plane/bin/yr-data-plane-forward"; \
+    test -x "${python_bin_dir}/yr"; \
     mkdir -p "${YR_INSTALLATION_DIR}"; \
-    cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
-    rm -rf "${target}" "${wheel}"; \
-    ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
+    rm -f "${wheel}" "${data_plane_wheel}"; \
+    ln -sfn "${yr_package_dir}/functionsystem/bin/yr" /usr/bin/yr
 
 COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img
 

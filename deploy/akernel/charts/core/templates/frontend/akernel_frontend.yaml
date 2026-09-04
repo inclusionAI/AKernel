@@ -102,6 +102,51 @@ spec:
               value: "false"
             - name: ENABLE_IAM_SERVER
               value: "true"
+            - name: ENABLE_SANDBOX_ROUTER
+              value: {{ not .Values.dataPlane.enabled | quote }}
+            {{- if .Values.dataPlane.enabled }}
+            # The frontend has no sandboxd/node-proxy. Advertising worker
+            # capacity here lets the global scheduler place sandboxes on a
+            # control-plane-only agent, where runtime creation fails.
+            - name: YR_CPU_NUM_MILLICORES
+              value: "0"
+            - name: YR_MEMORY_NUM_MB
+              value: "0"
+            {{- end }}
+            {{- if and .Values.dataPlane.enabled .Values.dataPlane.edge.enabled }}
+            - name: ENABLE_EDGE_FRONTEND
+              value: "true"
+            - name: INSTANCE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: YR_ETCD_ADDR_LIST
+              value: {{ printf "akernel-etcd.%s.svc.cluster.local:%v" .Release.Namespace (get $frontendEtcd "port" | default "2379") | quote }}
+            - name: YR_DATA_SYSTEM_CLUSTER_NAME
+              value: {{ .Values.dataPlane.clusterName | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_TLS_BIND
+              value: {{ printf "0.0.0.0:%v" .Values.dataPlane.edge.tlsPort | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_PLAIN_BIND
+              value: {{ printf "0.0.0.0:%v" .Values.dataPlane.edge.plainPort | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_HEALTH_BIND
+              value: {{ printf "0.0.0.0:%v" .Values.dataPlane.edge.healthPort | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_CONTROL_PLANE_ADDRESS
+              value: "$(INSTANCE_IP):8888"
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_IAM_ADDRESS
+              value: "$(INSTANCE_IP):31112"
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_VALIDATE_IAM
+              value: {{ .Values.dataPlane.edge.validateIam | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_ACCESS_LOG_ENABLED
+              value: {{ .Values.dataPlane.edge.accessLogEnabled | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_AUDIT_LOG_ENABLED
+              value: {{ .Values.dataPlane.edge.auditLogEnabled | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_ALLOWED_CLIENT_CIDRS
+              value: {{ join "," .Values.dataPlane.edge.allowedClientCidrs | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_ALLOW_ANY_CLIENT
+              value: {{ .Values.dataPlane.edge.allowAnyClient | quote }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_NODE_SECURITY_MODE
+              value: {{ .Values.dataPlane.node.securityMode | quote }}
+            {{- end }}
             - name: META_SERVICE_ADDRESS
               value: {{ .Values.frontend.master.metaServiceAddress | default (printf "akernel-master.%s.svc.cluster.local:31111" .Release.Namespace) | quote }}
             - name: IAM_SERVER_ADDRESS
@@ -131,20 +176,44 @@ spec:
           ports:
             - name: http
               containerPort: 8888
+            - name: iam
+              containerPort: 31112
+            {{- if and .Values.dataPlane.enabled .Values.dataPlane.edge.enabled }}
+            - name: edge-tls
+              containerPort: {{ .Values.dataPlane.edge.tlsPort }}
+              protocol: TCP
+            - name: edge-plain
+              containerPort: {{ .Values.dataPlane.edge.plainPort }}
+              protocol: TCP
+            - name: edge-health
+              containerPort: {{ .Values.dataPlane.edge.healthPort }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
+              {{- if and .Values.dataPlane.enabled .Values.dataPlane.edge.enabled }}
+              port: edge-health
+              scheme: HTTP
+              {{- else }}
               port: 8888
               scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
+              {{- if and .Values.dataPlane.enabled .Values.dataPlane.edge.enabled }}
+              path: /readyz
+              port: edge-health
+              scheme: HTTP
+              {{- else }}
               path: /healthz
               port: 8888
               scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3

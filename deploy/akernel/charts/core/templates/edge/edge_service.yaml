@@ -1,0 +1,26 @@
+{{- if and .Values.dataPlane.enabled .Values.dataPlane.edge.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: akernel-edge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: akernel-edge
+  {{- with .Values.dataPlane.edge.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.dataPlane.edge.service.type }}
+  ports:
+    - name: tls
+      port: {{ .Values.dataPlane.edge.service.tlsPort }}
+      targetPort: edge-tls
+      protocol: TCP
+    - name: plain
+      port: {{ .Values.dataPlane.edge.service.plainPort }}
+      targetPort: edge-plain
+      protocol: TCP
+  selector:
+    app: akernel-frontend
+{{- end }}

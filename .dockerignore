@@ -33,6 +33,7 @@ src/yuanrong/
 **/*.egg-info/
 
 # Local image and archive outputs.
+.artifacts/
 builder/*.img
 builder/*.tar
 builder/*.tar.gz

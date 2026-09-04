@@ -15,6 +15,14 @@ data:
   sandboxd_config.toml: |
 {{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
 {{- $runcMarker := "# AKERNEL_RUNTIME_RUNC" }}
+{{- $defaultCgroupRoot := "cgroup_root_name=\"/akernel\"" }}
+{{- $cgroupRootName := .Values.node.config.sandboxd.cgroupRootName | default "/akernel" }}
+{{- if ne $cgroupRootName "/akernel" }}
+{{- if not (contains $defaultCgroupRoot $sandboxdConfig) }}
+{{- fail "custom node.config.sandboxd.cgroupRootName requires the default cgroup_root_name marker in node.config.sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = replace $defaultCgroupRoot (printf "cgroup_root_name=\"%s\"" $cgroupRootName) $sandboxdConfig }}
+{{- end }}
 {{- if .Values.node.config.sandboxd.enableRunc }}
 {{- if not (contains $runcMarker $sandboxdConfig) }}
 {{- fail "node.config.sandboxd.enableRunc requires the # AKERNEL_RUNTIME_RUNC marker in node.config.sandboxd.config" }}

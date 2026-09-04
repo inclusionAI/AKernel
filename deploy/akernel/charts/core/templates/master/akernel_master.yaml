@@ -90,10 +90,22 @@ spec:
                 secretKeyRef:
                   name: {{ include "core.litebusSecretName" . }}
                   key: litebus-data-key
+            {{- if .Values.dataPlane.enabled }}
+            # The master participates in the YuanRong control plane but has no
+            # sandboxd/node-proxy, so it must not advertise worker capacity.
+            - name: YR_CPU_NUM_MILLICORES
+              value: "0"
+            - name: YR_MEMORY_NUM_MB
+              value: "0"
+            {{- end }}
             - name: ETCD_ADDRESS
               value: {{ get $masterEtcd "host" | default (printf "akernel-etcd.%s.svc.cluster.local" .Release.Namespace) | quote }}
             - name: ETCD_PORT
               value: {{ get $masterEtcd "port" | default "2379" | quote }}
+            {{- if .Values.dataPlane.enabled }}
+            - name: YR_DATA_SYSTEM_CLUSTER_NAME
+              value: {{ .Values.dataPlane.clusterName | quote }}
+            {{- end }}
             {{- if .Values.monitoring.prometheusEndpoint }}
             - name: PROMETHEUS_ENDPOINT
               value: {{ .Values.monitoring.prometheusEndpoint | quote }}
@@ -113,7 +125,7 @@ spec:
             - name: ENABLE_TRACE
               value: {{ ne (.Values.monitoring.tempoEndpoint | default "") "" | ternary "true" "false" | quote }}
             - name: TRAEFIK_MODE
-              value: {{ .Values.traefik.mode | default "http" | quote }}
+              value: {{ .Values.dataPlane.enabled | ternary "disabled" (.Values.traefik.mode | default "http") | quote }}
             - name: TRAEFIK_ENABLE_TLS
               value: {{ .Values.traefik.enableWebEntrypoint | default false | ternary false (.Values.traefik.enableTLS | default false) | quote }}
             - name: TRAEFIK_HTTP_ENTRYPOINT
@@ -132,6 +144,14 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
+          {{- if .Values.dataPlane.enabled }}
+          startupProbe:
+            tcpSocket:
+              port: 22770
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 36
+          {{- end }}
           readinessProbe:
             tcpSocket:
               port: 22770
