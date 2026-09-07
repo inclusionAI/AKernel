@@ -110,8 +110,23 @@ Sandbox(
     network_policy: NetworkPolicy | None = None,
     dockerfile: DockerfileLaunch | None = None,
     extra_config: Mapping[str, object] | None = None,
+    elastic_resources: bool = False,
 )
 ```
+
+### Experimental scheduler resources
+
+The scheduler development branch supports `elastic_resources=True` with the
+`openyuanrong-sdk` backend and `runsc`. In this mode `cpu` (millicores) and
+`memory` (MiB) are the initial hard limits; `cpu_limit` and `mem_limit` are
+growth ceilings. Zero ceilings follow the initial value. For scheduler
+preparation, use `cpu=500, memory=512, cpu_limit=8000, mem_limit=8192`.
+
+This requires matching scheduler/runtime components; stock or older nodes may
+ignore the deployment option. The pressure-driven resize path and deployment
+acceptance are still in development. Do not treat this option alone as proof
+that elastic scheduling is ready. Without the option, existing request/limit
+semantics apply.
 
 ### Experimental GPU and writable storage
 

@@ -442,6 +442,10 @@ class OpenYuanRongSandboxBackend:
             )
 
     def create(self, spec: SandboxSpec) -> BackendSession:
+        if spec.elastic_resources:
+            raise UnsupportedBackendFeatureError(
+                "elastic_resources requires the openyuanrong-sdk backend"
+            )
         self._validate(spec)
         supports_failover = _supports_keyword(yr_sandbox.Sandbox, "failover")
         supports_inherit_entrypoint = _supports_keyword(

@@ -153,6 +153,15 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(os.environ["YR_TOKEN"], "secret")
 
     def test_runtime_identifier_without_explicit_rootfs_is_forwarded(self):
+    def test_elastic_resources_cannot_be_silently_ignored(self):
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox") as native:
+            with self.assertRaisesRegex(
+                UnsupportedBackendFeatureError, "elastic_resources"
+            ):
+                self.backend.create(_spec(elastic_resources=True))
+        native.assert_not_called()
+
+    def test_kata_without_explicit_rootfs_passes_runtime_config_override(self):
         native = MagicMock()
         native.id = "default-gvisor-next"
         with patch.object(

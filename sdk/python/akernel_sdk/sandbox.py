@@ -199,6 +199,7 @@ class Sandbox:
         network_policy: NetworkPolicy | None = None,
         dockerfile: DockerfileLaunch | None = None,
         extra_config: Mapping[str, object] | None = None,
+        elastic_resources: bool = False,
     ) -> None:
         """Create and wait for a sandbox to become ready.
 
@@ -252,6 +253,9 @@ class Sandbox:
             extra_config: Optional JSON-compatible configuration owned by the
                 selected runtime. AKernel validates and forwards it without
                 interpreting runtime-specific fields.
+            elastic_resources: Experimental scheduler mode: start with cpu and
+                memory as hard limits, retaining cpu_limit and mem_limit as
+                growth ceilings. Requires a matching scheduler node and runsc.
 
         Raises:
             TypeError: An argument has an invalid type.
@@ -277,6 +281,10 @@ class Sandbox:
         if not runtime:
             raise ValueError("runtime must be a non-empty string")
         normalized_xpu = normalize_xpu(xpu)
+        if not isinstance(elastic_resources, bool):
+            raise TypeError("elastic_resources must be a bool")
+        if elastic_resources and runtime != "runsc":
+            raise ValueError("elastic_resources is currently supported only by runsc")
         validate_storage_mb(storage_mb)
         if network_policy is not None and not isinstance(network_policy, NetworkPolicy):
             raise TypeError("network_policy must be a NetworkPolicy or None")
@@ -380,6 +388,7 @@ class Sandbox:
             node_id=node_id,
             xpu=normalized_xpu,
             storage_mb=storage_mb,
+            elastic_resources=elastic_resources,
             network_policy=(
                 None
                 if network_policy is None or network_policy.is_empty

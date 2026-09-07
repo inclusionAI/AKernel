@@ -79,6 +79,7 @@ class SandboxSpec:
     storage_mb: int | None
     network_policy: NetworkPolicy | None
     extra_config: Mapping[str, object]
+    elastic_resources: bool = False
 
 
 class CommandsDriver(Protocol):

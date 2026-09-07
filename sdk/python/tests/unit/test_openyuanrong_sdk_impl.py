@@ -66,6 +66,21 @@ class OpenYuanRongSdkImplTest(unittest.TestCase):
             },
         )
 
+    def test_elastic_resources_options(self):
+        options = self.build_options(
+            cpu=500, memory=512, cpu_limit=8000, mem_limit=8192, elastic_resources=True
+        )
+        self.assertEqual(
+            options.custom_extensions["scheduler_elastic_resources"], "true"
+        )
+        self.assertEqual((options.cpu, options.memory), (500, 512))
+        self.assertEqual((options.cpu_limit, options.mem_limit), (8000, 8192))
+        self.assertNotIn(
+            "scheduler_elastic_resources", self.build_options().custom_extensions
+        )
+        with self.assertRaisesRegex(ValueError, "runsc"):
+            self.build_options(elastic_resources=True, runtime="kata")
+
     def test_s3_rootfs_wire_format(self):
         config = S3Config("https://s3.example.com", "rootfs", "ubuntu.img")
         options = self.build_options(rootfs=config)

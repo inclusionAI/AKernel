@@ -157,6 +157,7 @@ def build_options(
     storage_mb: int | None,
     network_policy: NetworkPolicy | None,
     extra_config: Mapping[str, object],
+    elastic_resources: bool = False,
 ) -> Any:
     """Translate the stable SDK configuration to openYuanrong options."""
 
@@ -171,6 +172,10 @@ def build_options(
     if mem_limit and mem_limit < memory:
         raise ValueError("mem_limit must be 0 or greater than or equal to memory")
     normalized_xpu = normalize_xpu(xpu)
+    if not isinstance(elastic_resources, bool):
+        raise TypeError("elastic_resources must be a bool")
+    if elastic_resources and runtime != "runsc":
+        raise ValueError("elastic_resources is currently supported only by runsc")
     validate_storage_mb(storage_mb)
 
     options = yr.InvokeOptions()
@@ -184,6 +189,8 @@ def build_options(
     options.cpu_limit = cpu_limit
     options.mem_limit = mem_limit
     options.namespace = _NAMESPACE
+    if elastic_resources:
+        options.custom_extensions["scheduler_elastic_resources"] = "true"
 
     rootfs_json = _rootfs_json(image=image, rootfs=rootfs, runtime=runtime)
     if rootfs_json is not None:

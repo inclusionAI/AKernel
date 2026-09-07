@@ -330,6 +330,7 @@ class OpenYuanRongSdkBackend:
             storage_mb=spec.storage_mb,
             network_policy=spec.network_policy,
             extra_config=spec.extra_config,
+            elastic_resources=spec.elastic_resources,
         )
         try:
             instance = _impl.create_instance(

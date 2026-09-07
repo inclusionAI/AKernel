@@ -123,6 +123,23 @@ class SandboxTest(unittest.TestCase):
         self.session.terminate.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
+    def test_elastic_resources_keep_initial_and_ceiling_separate(self):
+        sandbox = Sandbox(
+            cpu=500, memory=512, cpu_limit=8000, mem_limit=8192, elastic_resources=True
+        )
+        spec = self.backend.create.call_args.args[0]
+        self.assertTrue(spec.elastic_resources)
+        self.assertEqual((spec.cpu, spec.memory), (500, 512))
+        self.assertEqual((spec.cpu_limit, spec.mem_limit), (8000, 8192))
+        sandbox.kill()
+
+    def test_elastic_resources_reject_invalid_mode_before_creation(self):
+        with self.assertRaisesRegex(TypeError, "elastic_resources"):
+            Sandbox(elastic_resources="false")
+        with self.assertRaisesRegex(ValueError, "runsc"):
+            Sandbox(elastic_resources=True, runtime="kata")
+        self.backend.create.assert_not_called()
+
     def test_detached_sandbox_is_not_terminated_by_kill(self):
         sandbox = Sandbox(name="worker", detached=True)
         sandbox.kill()
