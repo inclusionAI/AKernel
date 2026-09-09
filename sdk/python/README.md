@@ -105,6 +105,7 @@ Sandbox(
     detached: bool = False,
     node_id: str | None = None,
     *,
+    failover: bool = False,
     xpu: str | None = None,
     storage_mb: int | None = None,
     network_policy: NetworkPolicy | None = None,
@@ -435,11 +436,44 @@ public gateway.
 
 `Sandbox(failover=True)` opts into same-node recovery of the same logical
 sandbox after its physical runtime fails. `sandbox.reload()` requests the same
-rollback explicitly. It returns `False` whenever the rollback is not completed,
-including when no usable local anonymous checkpoint exists, the sandbox is
-already closed, or the backend reports an operational failure. A successful
-reload preserves `sandbox.id` and the existing commands, filesystem, and PTY
-facades.
+recovery explicitly. Recovery first queries the latest valid local anonymous
+checkpoint. If one exists, the replacement runtime restores it. If the node
+authoritatively reports that no anonymous checkpoint exists, the same
+FunctionProxy and FunctionAgent cold-start a replacement from the sandbox's
+original creation parameters. Query, authorization, metadata, download,
+validation, and restore failures are errors; they never silently downgrade to
+a cold start.
+
+Both successful paths preserve the logical `sandbox.id` and the existing
+commands, filesystem, and PTY facade objects. They create a new physical
+runtime, so callers must not cache a runtime ID or route address across reload.
+Snapshot recovery restores the checkpointed process and writable-filesystem
+state. Cold start does not preserve memory, running processes, or writable
+files from the old runtime; only declarative creation inputs such as runtime,
+rootfs, mounts, resources, environment, network policy, ports, and placement
+are reused.
+
+`sandbox.reload()` intentionally keeps its public `bool` result. Internally,
+the frontend and native Sandbox SDK propagate an optional `snapshot` or
+`cold-start` mode to the AKernel backend. On `cold-start`, all tracked command
+handles created before the recovery boundary fail locally before native
+`wait`, `kill`, or `send_stdin` can target a reused PID. Completed
+`CommandResult` objects remain ordinary immutable values. New commands receive
+the new generation and work normally. Raw integer PID operations also fail
+closed after an authoritative cold start because an integer carries no
+generation identity. Snapshot recovery keeps old handles available. With an
+older server or native SDK that omits the recovery mode, AKernel retains
+conservative compatibility: an old handle remains usable only until a native
+operation proves that its process was not restored. When the server explicitly
+reports `snapshot`, a transient native operation error remains that operation's
+error and does not poison the handle generation as though a cold start had
+occurred.
+
+Reload returns `False` when recovery cannot start or complete, including a
+closed sandbox, an in-flight command operation, an unsupported backend, or an
+operational failure. A source-stop failure is not reported as cold-start
+success. The actor-based `openyuanrong-sdk` backend does not support failover
+or reload.
 
 Recovery points are local and follow the source sandbox lifecycle. They are
 created by sandbox workloads through RRT's internal `POST /checkpoint`
@@ -459,8 +493,7 @@ AKERNEL_TEST_RUNTIME=runsc python examples/failover_reload.py
 ```
 
 See [`examples/failover_reload.py`](./examples/failover_reload.py) for the
-internal trigger used during integration. The actor-based
-`openyuanrong-sdk` backend does not support failover or reload.
+internal checkpoint trigger used during integration.
 
 ## Reverse tunnels
 
