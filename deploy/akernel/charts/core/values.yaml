@@ -494,6 +494,12 @@ node:
         firecracker="/usr/local/bin/firecracker"
         # AKERNEL_RUNTIME_RUNC
 
+        [plugin.runtime.firecracker]
+        virtiofs_enabled=true
+        virtiofsd_path="/usr/local/bin/virtiofsd"
+        writable_io_engine="AsyncDirect"
+        writable_cache_type="Writeback"
+
         [plugin.runtime.kata]
         config_path="/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-dragonball.toml"
         kvm_device="/dev/kvm"

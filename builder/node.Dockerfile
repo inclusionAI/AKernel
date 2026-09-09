@@ -33,6 +33,9 @@ ARG FIRECRACKER_BUILD_IMAGE=ubuntu:24.04
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
+ARG VIRTIOFSD_BUILD_IMAGE=rust:1.90.0-bookworm
+# virtiofsd v1.14.0, including the release Cargo.lock.
+ARG VIRTIOFSD_REVISION=c2540f8db14caba81c1e37fba23fc7bf2cd7f0dd
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
 ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_amd64.tar.gz
 ARG AKERNEL_VERSION=unknown
@@ -114,6 +117,19 @@ WORKDIR /src/sandboxd
 COPY ./src/sandboxd/ ./
 RUN make release
 
+FROM ${VIRTIOFSD_BUILD_IMAGE} AS virtiofsd-builder
+ARG VIRTIOFSD_REVISION
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates git libcap-ng-dev libseccomp-dev pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /src/virtiofsd
+RUN git init && \
+    git fetch --depth=1 https://gitlab.com/virtio-fs/virtiofsd.git "${VIRTIOFSD_REVISION}" && \
+    git checkout --detach FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "${VIRTIOFSD_REVISION}" && \
+    cargo build --release --locked
+
 FROM ${FIRECRACKER_BUILD_IMAGE} AS firecracker-runtime-true
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
@@ -154,6 +170,9 @@ RUN set -eux; \
       /firecracker/opt/firecracker/; \
     cp -a "${bundle}/licenses/." /firecracker/opt/firecracker/licenses/
 
+COPY --from=virtiofsd-builder /src/virtiofsd/target/release/virtiofsd /firecracker/usr/local/bin/virtiofsd
+COPY --from=virtiofsd-builder /src/virtiofsd/LICENSE-APACHE /firecracker/opt/firecracker/licenses/virtiofsd-LICENSE-APACHE
+COPY --from=virtiofsd-builder /src/virtiofsd/LICENSE-BSD-3-Clause /firecracker/opt/firecracker/licenses/virtiofsd-LICENSE-BSD-3-Clause
 COPY --from=sandboxd-builder /src/sandboxd/output/firecracker-agent /initrd/init
 RUN set -eux; \
     chmod 0755 /initrd/init; \
@@ -247,7 +266,9 @@ RUN apt-get update && \
         iptables \
         jq \
         kmod \
+        libcap-ng0 \
         libgcc-s1 \
+        libseccomp2 \
         logrotate \
         mount \
         openssl \

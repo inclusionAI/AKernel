@@ -136,6 +136,12 @@ artifacts; installs the Firecracker VMM and guest kernel; and constructs the
 matching guest-agent initrd. Runc remains build-time optional, and
 `AKERNEL_ENABLE_FIRECRACKER=false` excludes the Firecracker payload.
 
+AKernel builds virtiofsd 1.14.0 from the pinned source commit and release
+Cargo.lock in `builder/node.Dockerfile`. Keep its shared-library dependencies
+and licenses packaged with the Firecracker payload. Both standalone and Helm
+enable read-only virtio-fs by default; disabling the Firecracker image payload
+also excludes virtiofsd.
+
 The sandboxd submodule's runtime manifest is the source of truth for the
 gVisor and Firecracker releases used by both sandboxd E2E and AKernel
 packaging. Test an unreleased runtime by checking out the sandboxd commit that
@@ -199,16 +205,23 @@ scheduling with a no-resource error when no eligible node exists. Do not treat
 a configured runtime as an advertised runtime.
 
 Firecracker supports commands, files, PTYs, network policies, published ports,
-reverse tunnels, read-only EROFS image roots and mounts, explicit `storage_mb`
-quotas, and recovery across sandboxd restarts. Its root and filesystem image
-mounts must be local or image-provider-backed regular EROFS files. It rejects
-OCI/Nydus directory roots, directory mounts, writable live host binds, NVIDIA
-GPUs, and nested KVM rather than weakening their semantics.
+reverse tunnels, EROFS roots and mounts, OCI/Nydus directory roots and read-only
+host directory mounts through virtio-fs, explicit `storage_mb` quotas, and
+recovery across sandboxd restarts. OCI image mounts, writable live host binds,
+NVIDIA GPUs, and nested KVM remain unsupported.
 
 Do not add Firecracker-specific directory conversion, image caching, or
-artifact reference counting to sandboxd or its image manager. Build EROFS
-before sandbox creation and distribute it through the existing local or S3
-imagefile paths. The bundled default runtime root already follows this model.
+artifact reference counting to sandboxd or its image manager. Consume OCI/Nydus
+directories directly from the image manager through read-only virtio-fs.
+Explicit local/S3 imagefile roots and mounts must already be EROFS. The bundled
+default runtime root also remains EROFS; sandbox writes use a private ext4 disk.
+
+The bundled Firecracker writable disk policy is `AsyncDirect` with `Writeback`.
+Validate io_uring and `STATX_DIOALIGN` on the target host and filestore; use an
+explicit `Async` or `Sync` policy on incompatible hosts, never silent fallback.
+Keep standalone and Helm defaults synchronized. Drain before upgrading the
+runtime stack: checkpoint compatibility includes VMM, kernel, initrd, and
+virtiofsd digests, and restores retain the saved writable I/O engine.
 
 Runc is excluded from default image builds and from the default advertised
 runtime set. Guided cloud profiles use `make config ENABLE_RUNC=true`; this
@@ -536,6 +549,13 @@ python sdk/python/benchmarks/sandbox_pressure.py \
 python sdk/python/benchmarks/sandbox_pressure.py \
   --xpu gpu:a10:1 --storage-mb 256 --processes 1 --threads 1
 ```
+
+Set `AKERNEL_TEST_IMAGE=ubuntu:24.04` with `AKERNEL_TEST_RUNTIME=firecracker`
+to run integration and reload coverage against an OCI/Nydus image root. This
+also verifies that two sandboxes using the same image have private writes.
+Test both an ordinary OCI image and a Nydus image resolved through the deployed
+image manager. The pinned distill-fs supports RAFS v5; use
+`nydusify convert --fs-version 5` when preparing Nydus test images.
 
 ## Maintenance Rules
 

@@ -18,6 +18,14 @@ Containers and Firecracker. Both `Sandbox(runtime="kata")` and
 virtualization on the Docker host. Nodes without KVM remain usable with runsc
 and do not advertise either VM runtime to the scheduler.
 
+Firecracker enables read-only virtio-fs by default, so
+`Sandbox(runtime="firecracker", image="ubuntu:24.04")` can use OCI or Nydus
+roots directly. The image includes a pinned virtiofsd and matching VMM,
+kernel, and guest agent. Its private writable disk uses `AsyncDirect` and
+`Writeback`; the host must support io_uring and `STATX_DIOALIGN` on the
+filestore filesystem. See the [deployment guide](../README.md) for older-host
+configuration and checkpoint compatibility when upgrading the runtime stack.
+
 See the maintained
 [runtime selection example](../../sdk/python/examples/sandbox_runtime.py) for
 client usage.

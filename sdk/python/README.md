@@ -289,8 +289,10 @@ prerequisites are available.
 Kata and Firecracker require at least one cluster node whose sandboxd instance
 successfully initialized the requested runtime with a usable `/dev/kvm`
 device. Nodes without KVM remain available for runsc workloads and do not
-advertise either VM runtime. Firecracker accepts EROFS image roots and mounts
-and rejects OCI/Nydus directories, directory mounts, GPUs, and nested KVM.
+advertise either VM runtime. The bundled Firecracker configuration enables
+read-only virtio-fs for OCI/Nydus image roots and read-only host directories,
+while retaining EROFS image roots and mounts. OCI image mounts, writable host
+binds, GPUs, and nested KVM remain unsupported.
 
 The all-in-one image can optionally package a native Linux `runc` backend.
 Operators build it with `AKERNEL_ENABLE_RUNC=true` and enable it explicitly
@@ -561,9 +563,18 @@ runtime inside an S3 object. When neither source is supplied, AKernel sends
 only the selected isolation runtime and openYuanRong overlays it onto the
 rootfs configured by the deployed service.
 
-For Firecracker, the deployed default or an explicit `rootfs` object must be a
-raw EROFS image. `image="ubuntu:24.04"` produces an OCI/Nydus directory and is
-therefore supported by runsc, runc, and Kata but rejected by Firecracker.
+Firecracker supports `Sandbox(runtime="firecracker", image="ubuntu:24.04")`
+with the bundled virtio-fs configuration. Both OCI and Nydus roots use the
+image manager's directory directly, without conversion to EROFS. The shared
+root stays read-only; sandbox writes use its private ext4 overlay. The deployed
+default and explicit `rootfs` S3 objects continue to use raw EROFS images.
+The bundled distill-fs supports Nydus RAFS v5. When preparing Nydus images with
+`nydusify convert`, select `--fs-version 5` explicitly.
+Custom deployments must enable `plugin.runtime.firecracker.virtiofs_enabled`
+and install the matching Firecracker stack and virtiofsd.
+
+Run `python sdk/python/examples/custom_image.py --runtime firecracker` on a
+KVM-capable deployment, or add `--image` to select another image.
 
 The same `S3Config` type can be used as a read-only mount source:
 
@@ -701,6 +712,14 @@ export AKERNEL_RUN_INTEGRATION=1
 PYTHONPATH=sdk/python \
   python -m unittest discover -s sdk/python/tests/integration -t sdk/python -v
 ```
+
+Set `AKERNEL_TEST_RUNTIME=firecracker` and `AKERNEL_TEST_IMAGE=ubuntu:24.04`
+to exercise the same suite, including checkpoint/reload, against a virtio-fs
+image root. `AKERNEL_TEST_IMAGE` also accepts a Nydus image reference and
+enables a check that writes stay private to each sandbox sharing the image.
+The test image must provide an Ubuntu/Debian userspace with `apt-get` for the
+checkpoint test's curl and CA certificate installation. Omit
+`AKERNEL_TEST_IMAGE` to test the deployed default EROFS root.
 
 Load and transfer benchmarks live under [`benchmarks/`](./benchmarks) and are
 not part of the default test suite.

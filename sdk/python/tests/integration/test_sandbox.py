@@ -27,10 +27,12 @@ _ENABLED = (
     and bool(os.environ.get("AKERNEL_TOKEN"))
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
+_IMAGE = os.environ.get("AKERNEL_TEST_IMAGE") or None
 
 _INSTALL_CURL_COMMAND = (
     "apt-get update && "
-    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl"
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "
+    "curl ca-certificates"
 )
 
 _CHECKPOINT_COMMAND = (
@@ -69,7 +71,7 @@ class _ReverseTunnelHandler(http.server.BaseHTTPRequestHandler):
 class SandboxIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.sandbox = Sandbox(cpu=1000, memory=2048, runtime=_RUNTIME)
+        cls.sandbox = Sandbox(cpu=1000, memory=2048, runtime=_RUNTIME, image=_IMAGE)
 
     @classmethod
     def tearDownClass(cls):
@@ -95,6 +97,21 @@ class SandboxIntegrationTest(unittest.TestCase):
             "filesystem-ok",
         )
         self.assertTrue(self.sandbox.files.exists("/tmp/akernel-integration.txt"))
+
+    @unittest.skipUnless(_IMAGE, "set AKERNEL_TEST_IMAGE to test an OCI/Nydus root")
+    def test_image_writes_are_private(self):
+        original = self.sandbox.files.read("/etc/os-release")
+        try:
+            self.sandbox.files.write("/etc/os-release", "AKERNEL_PRIVATE_ROOT\n")
+            with Sandbox(
+                cpu=1000, memory=2048, runtime=_RUNTIME, image=_IMAGE
+            ) as other:
+                self.assertEqual(other.files.read("/etc/os-release"), original)
+            self.assertEqual(
+                self.sandbox.files.read("/etc/os-release"), "AKERNEL_PRIVATE_ROOT\n"
+            )
+        finally:
+            self.sandbox.files.write("/etc/os-release", original)
 
     def test_pty(self):
         output = bytearray()
@@ -179,6 +196,7 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
                 memory=2048,
                 storage_mb=256,
                 runtime=_RUNTIME,
+                image=_IMAGE,
                 reverse_tunnel=tunnel,
                 failover=True,
             )

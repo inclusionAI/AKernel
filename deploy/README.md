@@ -32,10 +32,30 @@ and do not advertise either VM runtime. If no eligible node advertises a
 requested runtime, `Sandbox(runtime="kata")` or
 `Sandbox(runtime="firecracker")` fails scheduling with a no-resource error.
 
-The bundled Firecracker payload is selected by sandboxd's shared runtime
-manifest. Set `AKERNEL_ENABLE_FIRECRACKER=false` while building to exclude it.
-For supported operations and filesystem constraints, see the
-[sandbox runtime comparison](https://github.com/inclusionAI/sandboxd/blob/1918fadb03b59bc6f540196e14b90a91bdf31b7d/doc/runtime.md).
+The bundled Firecracker VMM and guest kernel are selected by sandboxd's shared
+runtime manifest, and its guest-agent initrd is built from that same sandboxd
+revision. AKernel also builds pinned virtiofsd 1.14.0 with its release lockfile
+and enables read-only virtio-fs in standalone and Helm. OCI/Nydus image roots
+use the directory provided by the image manager directly, without EROFS
+conversion. The sandbox's writable layer remains a private ext4 image;
+writable host sharing and OCI image mounts are unsupported. EROFS roots and
+mounts remain supported. Set `AKERNEL_ENABLE_FIRECRACKER=false` while building
+to exclude the VMM, kernel, virtiofsd, and initrd.
+
+The default writable disk policy is `AsyncDirect` with `Writeback`. Hosts must
+provide usable `io_uring` and filesystem alignment queries through
+`statx(STATX_DIOALIGN)` (normally ext4/XFS on Linux 6.1 or newer). Capability
+checks, rather than the kernel version alone, determine compatibility. There
+is no automatic buffered fallback. For older hosts, explicitly configure
+`writable_io_engine="Async"`, or `"Sync"` without io_uring, under
+`[plugin.runtime.firecracker]` in the standalone config or Helm's
+`node.config.sandboxd.config`. Keep `writable_cache_type="Writeback"`.
+
+Drain sandboxes before replacing the Firecracker stack. Checkpoints record
+VMM, kernel, initrd, and, when used, virtiofsd digests; mismatched stacks are
+rejected on restore. Changing the writable I/O default does not convert the
+engine saved in an existing checkpoint. For the full contract, see the
+[sandbox runtime comparison](https://github.com/inclusionAI/sandboxd/blob/b8f4656c57432bce1b50111e766bcd21510ee482/doc/runtime.md).
 
 The native Linux runc backend is opt-in because it uses the host kernel. For a
 guided cloud profile, `make config ENABLE_RUNC=true` records both sides of the
