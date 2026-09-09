@@ -573,9 +573,6 @@ The bundled distill-fs supports Nydus RAFS v5. When preparing Nydus images with
 Custom deployments must enable `plugin.runtime.firecracker.virtiofs_enabled`
 and install the matching Firecracker stack and virtiofsd.
 
-Run `python sdk/python/examples/custom_image.py --runtime firecracker` on a
-KVM-capable deployment, or add `--image` to select another image.
-
 The same `S3Config` type can be used as a read-only mount source:
 
 ```python

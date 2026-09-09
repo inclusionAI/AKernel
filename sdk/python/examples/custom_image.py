@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Launch an OCI image; use --runtime firecracker on a KVM-capable node."""
-
-import argparse
+"""Launch a sandbox from a public OCI image."""
 
 from akernel_sdk import Sandbox
 
@@ -22,13 +20,7 @@ IMAGE = "ubuntu:24.04"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runtime", default="runsc")
-    parser.add_argument("--image", default=IMAGE)
-    args = parser.parse_args()
-    with Sandbox(
-        image=args.image, runtime=args.runtime, cpu=1000, memory=2048
-    ) as sandbox:
+    with Sandbox(image=IMAGE, cpu=1000, memory=2048) as sandbox:
         result = sandbox.commands.run(". /etc/os-release && printf $PRETTY_NAME")
         assert result.exit_code == 0, result.stderr
         print(f"Sandbox {sandbox.id}: {result.stdout}")
