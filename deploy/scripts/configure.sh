@@ -31,6 +31,7 @@ image_tag_override=""
 install_monitor_override=""
 install_dragonfly_override=""
 enable_runc_override=""
+enable_ascend_override=""
 grafana_public_access_override=""
 grafana_admin_password_override=""
 iam_seed_hex_override=""
@@ -119,6 +120,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --enable-runc)
       enable_runc_override="$2"
+      shift 2
+      ;;
+    --enable-ascend)
+      enable_ascend_override="$2"
       shift 2
       ;;
     --grafana-public-access)
@@ -221,6 +226,7 @@ set_or_prompt image_tag "All-in-one image tag" "${default_tag}" "${image_tag_ove
 set_or_prompt install_monitor "Install monitor chart (true/false)" "true" "${install_monitor_override}"
 set_or_prompt install_dragonfly "Install Dragonfly and dedicated node pools (true/false)" "false" "${install_dragonfly_override}"
 set_or_prompt enable_runc "Enable the optional runc runtime (true/false)" "false" "${enable_runc_override}"
+set_or_prompt enable_ascend "Enable Ascend 310P3 or 910 A2/A3 NPUs (true/false)" "false" "${enable_ascend_override}"
 set_or_prompt grafana_public_access "Expose Grafana LoadBalancer (true/false)" "true" "${grafana_public_access_override}"
 set_or_prompt grafana_admin_password \
   "Grafana admin password (empty to generate)" "" \
@@ -231,6 +237,10 @@ fi
 install_monitor="$(normalize_bool "${install_monitor}")"
 install_dragonfly="$(normalize_bool "${install_dragonfly}")"
 enable_runc="$(normalize_bool "${enable_runc}")"
+enable_ascend="$(normalize_bool "${enable_ascend}")"
+if [[ "${enable_ascend}" == "true" && "${enable_runc}" != "true" ]]; then
+  die "Ascend NPU support requires enable_runc=true"
+fi
 grafana_public_access="$(normalize_bool "${grafana_public_access}")"
 
 dir="$(state_dir "${env_name}")"
@@ -352,6 +362,7 @@ grafana_admin_password = "${grafana_admin_password}"
 
 install_dragonfly = ${install_dragonfly}
 enable_runc       = ${enable_runc}
+enable_ascend     = ${enable_ascend}
 EOF
     ;;
   huaweicloud)
@@ -406,6 +417,7 @@ grafana_admin_password = "${grafana_admin_password}"
 
 install_dragonfly = ${install_dragonfly}
 enable_runc       = ${enable_runc}
+enable_ascend     = ${enable_ascend}
 EOF
     ;;
 esac
@@ -427,6 +439,7 @@ CORE_NAMESPACE=akernel
 MONITOR_NAMESPACE=akernel-monitor
 INSTALL_DRAGONFLY=${install_dragonfly}
 AKERNEL_ENABLE_RUNC=${enable_runc}
+AKERNEL_ENABLE_ASCEND=${enable_ascend}
 EOF
 
 chmod 600 "${tfvars_file}" "${config_file}"
