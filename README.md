@@ -187,7 +187,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 - **Sandbox runtimes**: gVisor by default; Kata Containers and Firecracker on
   KVM-capable nodes; and an explicitly enabled native Linux runc backend
 - **sandboxd**: Sandbox lifecycle daemon with pluggable sandbox runtime integration
-- **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication
+- **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication; packaged from a static GitHub Release with its version and checksum pinned in AKernel
 
 **Cluster-Wide Services**
 - **Distributed Scheduler**: Workload-aware placement and scaling

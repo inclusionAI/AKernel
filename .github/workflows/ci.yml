@@ -102,7 +102,7 @@ jobs:
 
       - name: Initialize build submodules
         run: |
-          git submodule update --init src/sandboxd src/distill-fs
+          git submodule update --init src/sandboxd
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0

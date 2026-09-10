@@ -9,7 +9,6 @@ ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
-ARG DISTILL_FS_BUILD_IMAGE=rust:1.85.0-bookworm
 ARG OPEN_YR_VERSION=0.10.2rc2
 ARG OPEN_YR_CORE_WHEEL_URL=
 ARG OPEN_YR_CORE_WHEEL_SHA256=
@@ -214,23 +213,17 @@ RUN mkdir -p /runc/usr/local/bin
 
 FROM runc-runtime-${AKERNEL_ENABLE_RUNC} AS runc-runtime
 
-FROM ${DISTILL_FS_BUILD_IMAGE} AS distill-fs-builder
-ENV DEBIAN_FRONTEND=noninteractive \
-    CARGO_NET_GIT_FETCH_WITH_CLI=true
+FROM ubuntu:24.04 AS distill-fs-runtime
+ARG TARGETARCH
+ARG DISTILL_FS_RELEASE
+ARG DISTILL_FS_AMD64_URL
+ARG DISTILL_FS_AMD64_SHA256
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        cmake \
-        g++ \
-        gcc \
-        git \
-        make \
-        perl \
-        pkg-config && \
+    apt-get install -y --no-install-recommends ca-certificates curl jq binutils && \
     rm -rf /var/lib/apt/lists/*
-WORKDIR /src/distill-fs
-COPY ./src/distill-fs/ ./
-RUN cargo build --locked --release --bin distill_fs
+COPY ./builder/scripts/install-distill-fs.sh /install-distill-fs.sh
+RUN sh /install-distill-fs.sh "$DISTILL_FS_RELEASE" \
+    "$DISTILL_FS_AMD64_URL" "$DISTILL_FS_AMD64_SHA256" /distill-fs
 
 FROM ${AKERNEL_NODE_BASE_IMAGE}
 # Let PID 1 systemd avoid remounting shared host filesystems during shutdown.
@@ -371,7 +364,8 @@ COPY --from=gvisor-runtime /gvisor/runsc /usr/local/bin/runsc
 COPY --from=sandboxd-builder /src/sandboxd/output/sandboxd /usr/local/bin/sandboxd
 COPY --from=sandboxd-builder /src/sandboxd/output/sbox /usr/local/bin/sbox
 COPY --from=sandboxd-builder /src/sandboxd/output/sandbox-logger /usr/local/bin/sandbox-logger
-COPY --from=distill-fs-builder /src/distill-fs/target/release/distill_fs /usr/local/bin/distill_fs
+COPY --from=distill-fs-runtime /distill-fs/bin/distill_fs /usr/local/bin/distill_fs
+COPY --from=distill-fs-runtime /distill-fs/share/distill-fs/ /usr/local/share/distill-fs/
 COPY --from=kata-runtime /kata/opt/kata /opt/kata
 COPY --from=runc-runtime /runc/usr/local/bin/ /usr/local/bin/
 COPY --from=firecracker-runtime /firecracker/ /

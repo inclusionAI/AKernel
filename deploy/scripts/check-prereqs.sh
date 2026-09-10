@@ -32,10 +32,18 @@ info "required tools are available"
 for source_file in \
   "${AKERNEL_REPO_ROOT}/src/sandboxd/go.mod" \
   "${AKERNEL_REPO_ROOT}/src/sandboxd/version/VERSION" \
-  "${AKERNEL_REPO_ROOT}/src/distill-fs/Cargo.toml"; do
+  "${AKERNEL_REPO_ROOT}/src/sandboxd/third_party/runtime-versions.env"; do
   if [[ ! -f "${source_file}" ]]; then
-    die "missing submodule source ${source_file}; run git submodule update --init --recursive"
+    die "missing submodule source ${source_file}; run git submodule update --init src/sandboxd"
   fi
 done
 
-info "runtime source submodules are available"
+for source_file in \
+  "${AKERNEL_REPO_ROOT}/builder/distill-fs-versions.env" \
+  "${AKERNEL_REPO_ROOT}/builder/scripts/install-distill-fs.sh"; do
+  if [[ ! -f "${source_file}" ]]; then
+    die "missing distill-fs release build input ${source_file}; restore it from the AKernel checkout"
+  fi
+done
+
+info "runtime sources and release build inputs are available"

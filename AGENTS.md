@@ -48,8 +48,11 @@ tunnels. The project overview and deployment quick start are in
 The open-source AKernel repository contains the SDK, deployment configuration,
 build tooling, and examples. Node runtime components such as `sandboxd` and
 `distill-fs` are maintained in their own upstream repositories and pinned as
-Git submodules. The all-in-one build compiles those revisions and packages the
-runtime payloads described in the Build section below.
+Git submodules. The all-in-one build compiles sandboxd and downloads the
+checksum-pinned static distill-fs release recorded in
+`builder/distill-fs-versions.env`. The distill-fs submodule is an optional
+source reference, not a build input. See the Build section below for runtime
+payloads.
 
 ## Common Commands
 
@@ -129,9 +132,9 @@ actor backend is deprecated and retained only for compatibility with existing
 applications. Keep it on its explicitly pinned legacy version; do not advance
 it with the default `openyuanrong-sandbox` backend or use it for new features.
 
-Initialize submodules with `git submodule update --init --recursive` before
+Initialize sandboxd with `git submodule update --init src/sandboxd` before
 building. The all-in-one image builds the sandboxd binaries, including
-`firecracker-agent`, and `distill_fs`; installs checksum-pinned gVisor and Kata
+`firecracker-agent`; installs checksum-pinned static distill-fs, gVisor, and Kata
 artifacts; installs the Firecracker VMM and guest kernel; and constructs the
 matching guest-agent initrd. Runc remains build-time optional, and
 `AKERNEL_ENABLE_FIRECRACKER=false` excludes the Firecracker payload.
@@ -149,14 +152,24 @@ pins it rather than overriding manifest fields from the AKernel build. Keep
 sandboxd's pooled-TAP contract and the matching gVisor compatibility patches
 validated together when upgrading.
 
-The submodule gitlinks are the single source of truth for the sandboxd and
-distill-fs revisions included in a clean release. `make build` always compiles
-the local submodule worktrees, so developers may check out a different commit
-or edit either directory and rebuild without pushing first. Each component
-maintains and embeds its own semantic version: sandboxd uses
-`version/VERSION`, while distill-fs uses the package version in `Cargo.toml`.
-AKernel does not inject parent-repository version metadata into component
-compilation.
+The sandboxd gitlink fixes the source revision compiled by `make build`.
+AKernel's `builder/distill-fs-versions.env` fixes the distill-fs release URL
+and SHA-256. `make build` compiles the local sandboxd worktree and consumes the
+static distill-fs release through `builder/scripts/install-distill-fs.sh`; editing
+`src/distill-fs` no longer affects the image. The installer verifies the archive,
+provenance, version, binary hash, and static ELF contract, and packages its
+licenses and manifest under `/usr/local/share/distill-fs`.
+
+Publish and verify a distill-fs release before updating the AKernel manifest
+pin. This dependency does not require a sandboxd source or gitlink change.
+Never use a guessed checksum or silently fall back to a source build.
+Missing or invalid release pins prevent builds. `make versions` reports the
+release tag and archive digest without requiring the distill-fs submodule.
+
+Each component embeds its own semantic version: sandboxd uses
+`version/VERSION`, while distill-fs uses its release package version in
+`Cargo.toml`. AKernel does not inject parent-repository version metadata into
+component compilation.
 
 To test an unreleased openYuanRong core wheel without rebuilding YuanRong,
 provide both `OPEN_YR_CORE_WHEEL_URL` and `OPEN_YR_CORE_WHEEL_SHA256` to
@@ -175,7 +188,8 @@ make versions
 
 The final image uses standard OCI labels for the AKernel version and revision.
 Component semantic versions are reported by their binaries, and their exact
-source revisions are traceable through the AKernel commit's submodule gitlinks.
+source revisions are traceable through the sandboxd gitlink and the pinned
+distill-fs release's packaged manifest.
 
 ## Deploy
 

@@ -1,6 +1,6 @@
 # Git metadata is not part of the image build. Component versions come from
-# their source manifests, and exact revisions remain traceable through the
-# parent repository's submodule gitlinks.
+# source manifests or pinned releases; revisions remain traceable through
+# submodule gitlinks and packaged release provenance.
 .git
 **/.git
 
@@ -20,9 +20,9 @@ deploy/standalone/data/
 deploy/standalone/logs/
 deploy/standalone/output/
 
-# Local component build outputs. The image build compiles these components in
-# dedicated Docker stages.
-src/distill-fs/target/
+# Local source build outputs.
+# distill-fs is consumed as a release artifact, not from this checkout.
+src/distill-fs/
 src/sandboxd/output/
 src/yuanrong/
 

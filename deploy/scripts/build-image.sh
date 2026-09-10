@@ -21,6 +21,12 @@ if [[ ! -f "${runtime_versions_file}" ]]; then
 fi
 # shellcheck source=/dev/null
 source "${runtime_versions_file}"
+distill_fs_versions_file="${ROOT}/builder/distill-fs-versions.env"
+if [[ ! -f "${distill_fs_versions_file}" ]]; then
+  die "missing distill-fs version manifest: ${distill_fs_versions_file}"
+fi
+# shellcheck source=/dev/null
+source "${distill_fs_versions_file}"
 gvisor_release="${GVISOR_RELEASE:-}"
 gvisor_amd64_sha512="${GVISOR_AMD64_SHA512:-}"
 gvisor_amd64_url="${GVISOR_AMD64_URL:-}"
@@ -57,20 +63,6 @@ component_version() {
     version+=".dirty"
   fi
   printf '%s\n' "${version}"
-}
-
-package_version() {
-  local manifest="$1"
-  awk '
-    /^\[package\]$/ { in_package = 1; next }
-    /^\[/ { in_package = 0 }
-    in_package && $1 == "version" {
-      value = $3
-      gsub(/^"|"$/, "", value)
-      print value
-      exit
-    }
-  ' "${manifest}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -158,29 +150,31 @@ all_in_one_image="${repository}:${tag}"
 cd "${AKERNEL_REPO_ROOT}"
 
 sandboxd_source="${AKERNEL_REPO_ROOT}/src/sandboxd"
-distill_fs_source="${AKERNEL_REPO_ROOT}/src/distill-fs"
 akernel_version="$(component_version "${AKERNEL_REPO_ROOT}")"
 akernel_revision="$(component_revision "${AKERNEL_REPO_ROOT}" akernel)"
 sandboxd_version="$(sed -n '1p' "${sandboxd_source}/version/VERSION")"
 sandboxd_revision="$(component_revision "${sandboxd_source}" sandboxd)"
-distill_fs_version="$(package_version "${distill_fs_source}/Cargo.toml")"
-distill_fs_revision="$(component_revision "${distill_fs_source}" distill-fs)"
+distill_fs_version="${DISTILL_FS_RELEASE:-unpublished}"
+distill_fs_revision="sha256:${DISTILL_FS_AMD64_SHA256:-pending-publication}"
 
 if [[ -z "${sandboxd_version}" ]]; then
   die "failed to read sandboxd version from ${sandboxd_source}/version/VERSION"
-fi
-if [[ -z "${distill_fs_version}" ]]; then
-  die "failed to read distill-fs package version from ${distill_fs_source}/Cargo.toml"
 fi
 
 info "component versions: akernel=${akernel_version} sandboxd=${sandboxd_version} distill-fs=${distill_fs_version}"
 
 if [[ "${print_component_versions}" == "1" ]]; then
-  printf '%-12s %-24s %s\n' COMPONENT VERSION REVISION
+  printf '%-12s %-24s %s\n' COMPONENT VERSION REVISION_OR_DIGEST
   printf '%-12s %-24s %s\n' akernel "${akernel_version}" "${akernel_revision}"
   printf '%-12s %-24s %s\n' sandboxd "${sandboxd_version}" "${sandboxd_revision}"
   printf '%-12s %-24s %s\n' distill-fs "${distill_fs_version}" "${distill_fs_revision}"
   exit 0
+fi
+
+# Fail before building either image if the release has not been published/pinned.
+if [[ -z "${DISTILL_FS_RELEASE:-}" || -z "${DISTILL_FS_AMD64_URL:-}" ||
+      ! "${DISTILL_FS_AMD64_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
+  die "publish and pin DISTILL_FS_RELEASE, DISTILL_FS_AMD64_URL, and DISTILL_FS_AMD64_SHA256 in ${distill_fs_versions_file} before building"
 fi
 
 runtime_build_args=()
@@ -204,6 +198,9 @@ docker build \
 
 info "building ${all_in_one_image}"
 node_build_args=(
+  --build-arg "DISTILL_FS_RELEASE=${DISTILL_FS_RELEASE}"
+  --build-arg "DISTILL_FS_AMD64_URL=${DISTILL_FS_AMD64_URL}"
+  --build-arg "DISTILL_FS_AMD64_SHA256=${DISTILL_FS_AMD64_SHA256}"
   --build-arg "AKERNEL_RUNTIME_IMAGE=${runtime_image}"
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
   --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA:-true}"

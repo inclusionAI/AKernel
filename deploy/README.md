@@ -367,3 +367,11 @@ deploy/
 ├── terraform/      # multi-cloud provisioning (aliyun, huaweicloud, shared)
 └── scripts/        # deployment and image helper scripts
 ```
+
+### distill-fs release dependency
+
+The all-in-one image downloads the static Linux/amd64 distill-fs release pinned in `builder/distill-fs-versions.env`. It does not compile `src/distill-fs`; that checkout is optional source reference. `make versions` reports the release tag and archive SHA-256. The AKernel installer at `builder/scripts/install-distill-fs.sh` checks the archive, package provenance, CLI version, and static ELF linkage, and retains licenses and provenance in `/usr/local/share/distill-fs`.
+
+Publish and verify the distill-fs release before updating the AKernel version, URL, and checksum pin together. Missing or invalid pins stop `make build` before either image is built. There is no source-build fallback.
+
+Validate installation against a downloaded candidate or release with `python3 builder/scripts/test-install-distill-fs.py /path/to/distill-fs-vX.Y.Z-linux-amd64.tar.gz` on Linux/amd64 with curl, jq, and binutils. This checks normal installation and rejects missing/invalid pins, corrupted archives, version/architecture mismatch, binary hash mismatch, and dynamically linked executables. The sandboxd pipeline and gitlink are independent of this dependency.
