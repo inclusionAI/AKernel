@@ -210,6 +210,18 @@ jobs:
             echo "=== akernel-node: service journal ==="
             docker exec akernel-node journalctl --no-pager -n 500 \
               -u sandboxd.service -u yuanrong.service || true
+            docker exec akernel-node bash -c '
+              shopt -s nullglob
+              for logfile in \
+                /home/akernel/logs/sandboxd/sandboxd*.log \
+                /home/yuanrong/logs/*function_master*.log \
+                /home/yuanrong/logs/*function_proxy*.log \
+                /home/yuanrong/logs/*function_agent*.log \
+                /home/akernel/sandboxd/image_manager/daemons/*/daemon.log; do
+                echo "=== ${logfile} ==="
+                tail -n 300 "${logfile}"
+              done
+            ' || true
           fi
 
       - name: Stop standalone AKernel
