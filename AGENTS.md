@@ -534,6 +534,12 @@ entirely. Do not publish per-commit SHA tags or other historical image tags.
 The job checks the image contains runsc and excludes Kata, Firecracker,
 virtiofsd, and runc before starting standalone E2E.
 
+CI runs examples with unbuffered Python output. Ordinary examples have a
+120-second limit; `dockerfile_launch.py` gets 600 seconds for its package
+installation RUN (which allows 300 seconds) and remaining launch sections.
+Keep its outer limit longer than that RUN timeout so the SDK can report
+installation failures instead of being killed first by the CI wrapper.
+
 Configure the repository Actions variable `DOCKERHUB_USERNAME` and secret
 `DOCKERHUB_TOKEN` with Docker Hub credentials that can push to
 `akerneldev/all-in-one`. Keep credentials out of source and logs. Main CI runs

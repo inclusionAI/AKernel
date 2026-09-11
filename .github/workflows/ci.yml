@@ -228,7 +228,13 @@ jobs:
           )
           for example in "${examples[@]}"; do
             echo "=== Running ${example} ==="
-            timeout 120s python "sdk/python/examples/${example}"
+            example_timeout=120
+            if [[ "${example}" == "dockerfile_launch.py" ]]; then
+              # Its apt RUN allows 300s, followed by eight more sections.
+              example_timeout=600
+            fi
+            timeout --kill-after=30s "${example_timeout}s" \
+              python -u "sdk/python/examples/${example}"
           done
 
       - name: Run runsc checkpoint reload E2E
