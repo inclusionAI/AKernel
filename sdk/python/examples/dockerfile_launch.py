@@ -19,6 +19,9 @@ Each section builds a separate local context and creates a fresh sandbox. The
 sets runtime state. RUN/COPY/ADD execute for every launch, without a snapshot
 or build cache.
 
+The core startup script uses the base image's shell, so exercising Dockerfile
+semantics does not require installing packages from an external apt mirror.
+
 Sections:
     1. Core path, ignore filtering, wildcard COPY, modes, and empty directories
     2. Root cwd plus ENTRYPOINT + CMD exec-form combination
@@ -35,7 +38,12 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from akernel_sdk import DockerfileLaunch, LocalDockerContext, Sandbox, check_direct_launch
+from akernel_sdk import (
+    DockerfileLaunch,
+    LocalDockerContext,
+    Sandbox,
+    check_direct_launch,
+)
 
 
 def _precheck(context: LocalDockerContext) -> None:
@@ -60,11 +68,9 @@ def section_core_path() -> None:
         docs.mkdir()
         (docs / "README.md").write_text("visible\n", encoding="utf-8")
         (docs / "private.txt").write_text("hidden\n", encoding="utf-8")
-        (context_dir / "app.py").write_text(
-            "import os\n"
-            "open('/tmp/app.started', 'w').write(\n"
-            "    f\"whoami={os.environ['WHOAMI']} cwd={os.getcwd()}\"\n"
-            ")\n",
+        (context_dir / "app.sh").write_text(
+            "#!/bin/sh\n"
+            "printf 'whoami=%s cwd=%s' \"$WHOAMI\" \"$(pwd)\" > /tmp/app.started\n",
             encoding="utf-8",
         )
         executable = context_dir / "entrypoint.sh"
@@ -82,7 +88,6 @@ def section_core_path() -> None:
         dockerfile = build / "custom.Dockerfile"
         dockerfile.write_text(
             """FROM ubuntu:22.04
-RUN apt-get update && apt-get install -y --no-install-recommends python3
 RUN useradd -m app
 ENV WHOAMI=app
 WORKDIR /srv
@@ -96,7 +101,7 @@ COPY . /srv/core/
 COPY wild/* /srv/wild/
 COPY docs /srv/reincluded-literal/
 COPY doc* /srv/reincluded-wildcard/
-CMD ["python3", "/srv/core/app.py"]
+CMD ["/bin/sh", "/srv/core/app.sh"]
 """,
             encoding="utf-8",
         )
@@ -131,7 +136,9 @@ CMD ["python3", "/srv/core/app.py"]
                 "/srv/core/tree/nested-empty /srv/core/literal-empty"
             )
             assert modes.exit_code == 0, modes.stderr
-            assert modes.stdout.splitlines() == ["755", "711", "750", "755"], modes.stdout
+            assert modes.stdout.splitlines() == ["755", "711", "750", "755"], (
+                modes.stdout
+            )
             wildcard = sandbox.commands.run(
                 "test -f /srv/wild/dir2/foo && test ! -e /srv/wild/dir1"
             )
@@ -264,7 +271,9 @@ def section_auto_start_disabled() -> None:
         )
         _precheck(context)
 
-        with Sandbox(dockerfile=DockerfileLaunch(context, auto_start_cmd=False)) as sandbox:
+        with Sandbox(
+            dockerfile=DockerfileLaunch(context, auto_start_cmd=False)
+        ) as sandbox:
             assert sandbox.startup_command is None
             absent = sandbox.commands.run("test ! -e /tmp/disabled-start.out")
             assert absent.exit_code == 0, absent.stderr

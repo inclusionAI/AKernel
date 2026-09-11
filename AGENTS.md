@@ -535,10 +535,10 @@ The job checks the image contains runsc and excludes Kata, Firecracker,
 virtiofsd, and runc before starting standalone E2E.
 
 CI runs examples with unbuffered Python output. Ordinary examples have a
-120-second limit; `dockerfile_launch.py` gets 600 seconds for its package
-installation RUN (which allows 300 seconds) and remaining launch sections.
-Keep its outer limit longer than that RUN timeout so the SDK can report
-installation failures instead of being killed first by the CI wrapper.
+120-second limit; `dockerfile_launch.py` gets 600 seconds for its nine
+sections. Its core startup script uses the Ubuntu base image's shell and
+does not install packages. Keep its RUN, context-transfer, and startup checks
+independent of external package mirrors.
 
 Configure the repository Actions variable `DOCKERHUB_USERNAME` and secret
 `DOCKERHUB_TOKEN` with Docker Hub credentials that can push to

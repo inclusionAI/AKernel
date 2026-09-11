@@ -230,7 +230,7 @@ jobs:
             echo "=== Running ${example} ==="
             example_timeout=120
             if [[ "${example}" == "dockerfile_launch.py" ]]; then
-              # Its apt RUN allows 300s, followed by eight more sections.
+              # This example creates fresh sandboxes across nine sections.
               example_timeout=600
             fi
             timeout --kill-after=30s "${example_timeout}s" \

@@ -43,6 +43,8 @@ with Sandbox(dockerfile=DockerfileLaunch(context, run_timeout=300)) as sandbox:
 
 See the maintained end-to-end
 [`examples/dockerfile_launch.py`](../examples/dockerfile_launch.py).
+It exercises context transfer and startup with the base image's shell, so
+running the example does not require downloading additional packages.
 
 ## Precheck and DockerfileLaunch configuration
 
