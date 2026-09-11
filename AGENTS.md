@@ -520,6 +520,29 @@ are not part of the default test suite.
 
 ## Release
 
+The CI workflow builds the public Linux/amd64 all-in-one image with only
+gVisor runsc and the `rrt` runtime profile. It explicitly sets
+`AKERNEL_ENABLE_KATA=false`, `AKERNEL_ENABLE_FIRECRACKER=false`, and
+`AKERNEL_ENABLE_RUNC=false`, excluding VM payloads and virtiofsd. Source-build
+defaults still include Kata and Firecracker for operators who need them.
+After SDK checks, distribution validation, deployment syntax checks, and
+standalone runsc E2E pass, pushes to `main` in `inclusionAI/AKernel` publish
+that tested image only as `akerneldev/all-in-one:latest`. PRs and forks never
+publish. Check that the commit is still the current `main` head before any
+push; superseded commits and reruns of older commits skip publication
+entirely. Do not publish per-commit SHA tags or other historical image tags.
+The job checks the image contains runsc and excludes Kata, Firecracker,
+virtiofsd, and runc before starting standalone E2E.
+
+Configure the repository Actions variable `DOCKERHUB_USERNAME` and secret
+`DOCKERHUB_TOKEN` with Docker Hub credentials that can push to
+`akerneldev/all-in-one`. Keep credentials out of source and logs. Main CI runs
+are not canceled by subsequent pushes. The standalone job serializes builds,
+tests, and publication using `queue: max` (up to 100 pending jobs), so a slow
+or rerun job cannot overwrite a newer published `latest`. Do not remove the
+main-head check or the publication lock. A failed check or push leaves the
+run failed and can be retried using GitHub Actions' rerun controls.
+
 Python SDK releases use stable `vX.Y.Z` tags or release-candidate
 `vX.Y.ZrcN` tags. The tag version must match the version in
 `sdk/python/pyproject.toml`, and the tagged commit must be part of `main`.

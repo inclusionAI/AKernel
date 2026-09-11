@@ -25,8 +25,12 @@ make print-env
 make e2e
 ```
 
-Kata Containers and Firecracker are enabled in the default AKernel image and
-runtime configuration. Both require `/dev/kvm` to be available to the node
+The CI-published `akerneldev/all-in-one:latest` image contains only gVisor
+runsc with the `rrt` runtime profile. CI updates only `latest` and does not
+publish per-commit image tags. The image excludes Kata, Firecracker,
+virtiofsd, and runc. Build from source to use VM runtimes:
+Kata Containers and Firecracker are enabled by default in source builds and
+the runtime configuration. Both require `/dev/kvm` to be available to the node
 container. Nodes without a usable KVM device remain ready for runsc workloads
 and do not advertise either VM runtime. If no eligible node advertises a
 requested runtime, `Sandbox(runtime="kata")` or

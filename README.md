@@ -83,6 +83,13 @@ export ALICLOUD_REGION="cn-hangzhou"
 
 Use the public AKernel image from Docker Hub:
 
+CI publishes `akerneldev/all-in-one:latest` from the current `main` commit
+after all checks pass. This Linux/amd64 image includes only gVisor runsc with
+the `rrt` runtime profile; Kata, Firecracker, and runc are excluded. Only
+`latest` is published; superseded commits skip publication, and no
+per-commit image tags are created. Build from source to include Kata or
+Firecracker.
+
 ```bash
 make config VENDOR=aliyun \
   IMAGE_REPOSITORY=akerneldev/all-in-one \

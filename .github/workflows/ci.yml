@@ -10,8 +10,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Supersede PR checks, but keep a build for every push to main.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sdk-unit-tests:
@@ -112,8 +113,19 @@ jobs:
 
   standalone-e2e:
     name: Standalone E2E
+    needs:
+      - sdk-unit-tests
+      - sdk-quality
+      - sdk-distributions
+      - deployment-script-syntax
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 60
+    # Keep testing and publishing the same local image. Serialize main jobs
+    # through the latest push, including reruns, without replacing queued jobs.
+    concurrency:
+      group: ci-standalone-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+      queue: max
 
     steps:
       - name: Check out repository
@@ -146,18 +158,36 @@ jobs:
           sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
 
       - name: Build all-in-one image
+        env:
+          AKERNEL_ENABLE_KATA: "false"
+          AKERNEL_ENABLE_FIRECRACKER: "false"
+          AKERNEL_ENABLE_RUNC: "false"
         run: |
-          AKERNEL_ENABLE_KATA=false \
-            make build \
-              IMAGE_REPOSITORY=akernel-ci/all-in-one \
-              IMAGE_TAG="${GITHUB_SHA}" \
-              RUNTIME_PROFILE=rrt
+          make build \
+            IMAGE_REPOSITORY=akernel-ci/all-in-one \
+            IMAGE_TAG="${GITHUB_SHA}" \
+            RUNTIME_PROFILE=rrt
 
       - name: Verify systemd container identity in the image
         run: |
           docker image inspect "akernel-ci/all-in-one:${GITHUB_SHA}" \
             --format '{{json .Config.Env}}' | \
             python -c 'import json, sys; assert "container=oci" in json.load(sys.stdin)'
+
+      - name: Verify gVisor-only runtime payload
+        run: |
+          docker run --rm --entrypoint /bin/bash \
+            "akernel-ci/all-in-one:${GITHUB_SHA}" -euc '
+              test -x /usr/local/bin/runsc
+              test ! -e /usr/local/bin/containerd-shim-kata-v2
+              test ! -e /opt/kata/runtime-rs/bin/containerd-shim-kata-v2
+              test ! -e /usr/local/bin/firecracker
+              test ! -e /usr/local/bin/virtiofsd
+              test ! -e /opt/firecracker/vmlinux
+              test ! -e /opt/firecracker/initrd.img
+              test ! -e /usr/local/bin/runc
+              test ! -e /usr/local/bin/runc-shim
+            '
 
       - name: Start standalone AKernel
         run: |
@@ -253,3 +283,36 @@ jobs:
           else
             docker rm -f akernel-traefik akernel-node >/dev/null 2>&1 || true
           fi
+
+      - name: Log in to Docker Hub
+        if: >-
+          github.repository == 'inclusionAI/AKernel' &&
+          github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Publish tested all-in-one image
+        if: >-
+          github.repository == 'inclusionAI/AKernel' &&
+          github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_REPOSITORY: akerneldev/all-in-one
+        run: |
+          # Jobs can queue out of commit order, and old runs can be rerun.
+          # Check main before any push while holding the job lock. Publish
+          # only latest; superseded commits must not create registry tags.
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          if [[ "${main_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Skipped latest: main has advanced to ${main_sha}." \
+              >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          source_image="akernel-ci/all-in-one:${GITHUB_SHA}"
+          docker tag "${source_image}" "${IMAGE_REPOSITORY}:latest"
+          docker push "${IMAGE_REPOSITORY}:latest"
+          echo "Published ${IMAGE_REPOSITORY}:latest from ${GITHUB_SHA}" \
+            >> "${GITHUB_STEP_SUMMARY}"
