@@ -543,11 +543,21 @@ independent of external package mirrors.
 Configure the repository Actions variable `DOCKERHUB_USERNAME` and secret
 `DOCKERHUB_TOKEN` with Docker Hub credentials that can push to
 `akerneldev/all-in-one`. Keep credentials out of source and logs. Main CI runs
-are not canceled by subsequent pushes. The standalone job serializes builds,
-tests, and publication using `queue: max` (up to 100 pending jobs), so a slow
-or rerun job cannot overwrite a newer published `latest`. Do not remove the
-main-head check or the publication lock. A failed check or push leaves the
-run failed and can be retried using GitHub Actions' rerun controls.
+are not canceled by subsequent pushes. After E2E and teardown succeed on
+upstream main, the standalone job exports the tested image as a compressed
+Actions artifact retained for one day. The separate `publish-dockerhub` job
+downloads that exact artifact by ID, loads it, and verifies its image ID
+against the E2E job output before publishing. PRs and forks skip image
+transfer and publication. Do not rebuild the image in the publishing job.
+
+The publishing job serializes publication using `queue: max` (up to 100
+pending jobs), so a slow or rerun job cannot overwrite a newer published
+`latest`. Keep its existing lock key to coordinate with older workflow runs.
+Check main before downloading and again immediately before pushing while
+holding this lock. Do not remove the main-head check or the publication lock.
+A failed check or push leaves the run failed. Rerun the failed publishing job
+while the artifact is available; after it expires, rerun all jobs to rebuild
+and retest the image.
 
 Python SDK releases use stable `vX.Y.Z` tags or release-candidate
 `vX.Y.ZrcN` tags. The tag version must match the version in
