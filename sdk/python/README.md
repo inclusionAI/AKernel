@@ -657,6 +657,14 @@ sandbox.kill()             # closes local clients; remote sandbox remains
 Sandbox.delete("worker")   # terminates the named remote sandbox
 ```
 
+Context-manager exit and `kill()` perform cleanup synchronously. If a sandbox
+is garbage-collected without explicit cleanup, the SDK queues best-effort
+cleanup on a daemon worker instead of making network calls inside the
+destructor. This avoids re-entering HTTP connection-pool locks during garbage
+collection. Fallback cleanup is asynchronous and is not guaranteed to finish
+at interpreter exit; use `with Sandbox(...)` or `try/finally: sandbox.kill()`
+when cleanup must complete. Detached sandboxes still require `Sandbox.delete()`.
+
 `sandbox.id` is the physical ID shown by `ak list`. `get_info()` returns a
 `SandboxInfo` containing `id`, state, requested CPU, memory, XPU and storage,
 and the OCI image when one was configured.

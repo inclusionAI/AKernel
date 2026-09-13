@@ -28,6 +28,7 @@ from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_e
 from ._backends.base import BackendSession, SandboxSpec
 from ._backends.registry import load_backend
 from ._dockerfile_launch import DockerfileLaunch
+from ._sandbox_cleanup import defer_cleanup, start_cleanup_worker
 from ._sandbox_resources import normalize_xpu, validate_storage_mb
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
@@ -343,6 +344,7 @@ class Sandbox:
             if not isinstance(image, str) or not image.strip():
                 raise ValueError("Dockerfile base image must be a non-empty string")
 
+        start_cleanup_worker()
         self._session: BackendSession | None = None
         self._startup_command: CommandHandle | None = None
         self._pty: Pty | None = None
@@ -666,6 +668,11 @@ class Sandbox:
 
     def __del__(self) -> None:
         try:
-            self.kill()
+            if getattr(self, "_closed", True) and getattr(self, "_terminated", True):
+                return
+            # GC may interrupt a request while its HTTP pool lock is held.
+            # Never perform network I/O (or start a thread) on that same stack.
+            defer_cleanup(self.kill)
         except Exception:
+            # Partial initialization and interpreter shutdown are best-effort.
             pass
