@@ -91,7 +91,10 @@ locals {
     sandboxd_nat_backend = var.sandboxd_nat_backend
     max_user_namespaces  = var.node_pool_max_user_namespaces
   })
-  node_pool_bootstrap_user_data = local.node_pool_bootstrap_base
+  node_pool_bootstrap_user_data = join("\n", [
+    local.node_pool_bootstrap_base,
+    templatefile("${path.module}/../shared/node-pid-budget.sh.tftpl", {}),
+  ])
   dragonfly_seed_user_data = var.dragonfly_seed_node_pool.mount_local_nvme ? join("\n", [
     local.node_pool_bootstrap_base,
     templatefile("${path.module}/../shared/local-nvme-mount.sh.tftpl", {

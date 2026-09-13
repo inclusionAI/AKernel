@@ -1,0 +1,20 @@
+# Copyright (c) 2026 Ant Group Corporation.
+# SPDX-License-Identifier: Apache-2.0
+
+# Applied only to the default AKernel node pool, after node-bootstrap creates
+# the sysctl override. ACK reapplies this file after its own settings on boot;
+# CCE hosts load it through sysctl.d. Preserve unrelated settings and larger
+# thread budgets. These ceilings do not reserve memory.
+threads=$(sysctl -n kernel.threads-max)
+if (( threads < 4194304 )); then threads=4194304; fi
+sed -i '/^[[:space:]]*kernel\.\(pid_max\|threads-max\)[[:space:]]*=/d' /etc/sysctl.d/99-user-customized.conf
+printf 'kernel.pid_max=4194304\nkernel.threads-max=%s\n' "$threads" >> /etc/sysctl.d/99-user-customized.conf
+sysctl -w kernel.pid_max=4194304 "kernel.threads-max=$threads"
+
+# Do not let systemd's implicit per-scope limit undercut kubelet's Pod budget.
+# Cover both Kubernetes container engines without changing service defaults.
+for runtime in cri-containerd docker; do
+  install -d -m 0755 "/etc/systemd/system/$runtime-.scope.d"
+  printf '[Scope]\nTasksMax=infinity\n' > "/etc/systemd/system/$runtime-.scope.d/50-akernel-pids.conf"
+done
+systemctl daemon-reload

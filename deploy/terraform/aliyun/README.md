@@ -21,6 +21,14 @@ memory pressure. Existing clusters require separate kubelet configuration.
 Review rollout impact before applying, then verify actual Pod and ancestor
 `pids.max` values: a kubelet config update alone may leave existing Pods stale.
 
+The default AKernel node pool also sets host `kernel.pid_max=4194304`, raises
+`kernel.threads-max` to at least `4194304`, and removes implicit systemd limits
+on container scopes. Settings persist through ACK's customized sysctl file
+and systemd drop-ins; Pod and sandbox limits remain in force. Extra and
+Dragonfly pools are unchanged. Existing hosts need a separately reviewed
+migration, including kubelet restart if its node-wide PID capacity is stale;
+changing user data only updates future nodes. Verify every Pod ancestor limit.
+
 ## Prerequisites
 - Terraform >= 1.5
 - Alibaba Cloud account permissions for VPC/VSwitch/ACK/RAM resources

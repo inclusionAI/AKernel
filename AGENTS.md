@@ -206,6 +206,9 @@ for deployment implications.
 
 Aliyun's aggregate Pod PID budget is configurable independently of the
 per-sandbox limit; see `deploy/terraform/aliyun/README.md#pod-pid-budget`.
+Aliyun and Huawei default AKernel node pools also configure host PID/thread
+ceilings and container scope TasksMax. Keep this separate from extra and
+Dragonfly pools, and verify running Pod ancestors after existing-node migration.
 
 For guided cloud deployment:
 

@@ -13,6 +13,14 @@ so no ACK-specific override is applied. For customized pools, verify actual
 Pod and ancestor PID limits and adjust via CCE node pool configuration if
 needed. The per-sandbox limit remains 4096.
 
+The default AKernel node pool additionally persists `kernel.pid_max=4194304`,
+raises `kernel.threads-max` to at least `4194304`, and removes implicit systemd
+limits on containerd/Docker scopes. Extra and Dragonfly pools are unchanged.
+Existing CCE pools ignore `postinstall` updates: migrate existing hosts and
+future-node initialization separately after review, and restart kubelet if
+its node-wide PID capacity is stale. Verify all Pod ancestor limits; a high
+kernel ceiling alone does not remove a smaller container or Pod limit.
+
 ## Prerequisites
 
 - Terraform 1.5 or later

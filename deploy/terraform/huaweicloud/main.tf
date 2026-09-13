@@ -472,7 +472,10 @@ resource "huaweicloud_cce_node_pool" "default" {
     }
   }
 
-  postinstall = local.node_pool_bootstrap_script
+  postinstall = join("\n", [
+    local.node_pool_bootstrap_script,
+    templatefile("${path.module}/../shared/node-pid-budget.sh.tftpl", {}),
+  ])
 }
 
 resource "huaweicloud_cce_node_pool" "extra" {
