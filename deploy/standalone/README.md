@@ -45,8 +45,8 @@ Clients then select it with `Sandbox(runtime="runc")`. A sandbox may request
 the configured KVM character device with
 `extra_config={"enableKVM": True}` when the host exposes `/dev/kvm`.
 
-Experimental NVIDIA GPU sandboxes use gVisor nvproxy. The host must provide a
-compatible NVIDIA driver and NVIDIA Container Toolkit. Enable GPU access to
+Experimental NVIDIA GPU sandboxes support gVisor nvproxy and native runc. The
+host must provide a compatible NVIDIA driver and NVIDIA Container Toolkit. Enable GPU access to
 the node container with:
 
 ```bash
@@ -56,6 +56,27 @@ AKERNEL_ENABLE_GPU=true ./start.sh
 The all-in-one image contains `nvidia-container-cli`, but not the host driver.
 Use `AKERNEL_GPU_DEVICES` to override Docker's `--gpus` value when only a
 device subset should be assigned.
+
+To use the same GPU with the native runc sandbox backend, build and launch the
+node with both `AKERNEL_ENABLE_RUNC=true` and `AKERNEL_ENABLE_GPU=true`, then
+select `Sandbox(runtime="runc", xpu="gpu:<model>:1")`.
+
+Ascend 310P3 or 910 A2/A3 requires an image built with both optional payloads and a
+host with the standard driver paths:
+
+```bash
+AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true make build \
+  IMAGE_REPOSITORY=akernel-ascend IMAGE_TAG=local
+IMAGE=akernel-ascend:local \
+  AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true ./start.sh
+```
+
+`start.sh` verifies and mounts `/usr/local/Ascend/driver`,
+`/usr/local/dcmi`, and `/usr/local/bin/npu-smi` into the node container.
+When FlowGW has created `/var/queue_schedule`, `start.sh` also mounts that
+directory read-only; its absence does not prevent an Ascend standalone node
+from starting. Sandboxd then applies a narrower, versioned mount profile to
+each leased runc sandbox.
 
 Explicit sandbox storage quotas for runsc and Firecracker use the bounded ext4
 filestore mounted at `/home/akernel/filestore`. The standalone data directory

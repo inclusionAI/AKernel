@@ -18,8 +18,7 @@ enabled by an operator.
 Creation-time network policies and atomic runtime replacement support
 unrestricted networking, blocking new flows except the YuanRong control and
 published sandbox-port routes, or denying exact and leading-wildcard DNS names.
-Experimental whole-device NVIDIA GPU requests require runsc. Configurable
-writable-storage requests are supported by runsc and Firecracker.
+Experimental whole-device NVIDIA GPU requests support runsc or explicitly enabled runc. Physical Ascend 310P and 910 A2/A3 requests require explicitly enabled runc and Ascend payloads. Accelerator model tokens match normalized driver-reported inventory; Ascend has no per-SKU allowlist. The optional FlowGW `/var/queue_schedule` mount is detected in standalone mode and opt-in with Helm `node.config.sandboxd.mountAscendQueueSchedule`. Configurable writable-storage requests are supported by runsc and Firecracker.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse

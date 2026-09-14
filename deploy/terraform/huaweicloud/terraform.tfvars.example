@@ -93,6 +93,10 @@ node_image_tag            = "<release-tag>"
 # matching AKERNEL_ENABLE_RUNC=true profile setting.
 enable_runc = false
 
+# Optional Ascend 310P3 or 910 A2/A3 support. Requires enable_runc=true and an image
+# built with AKERNEL_ENABLE_ASCEND=true; use only for NPU node pools.
+enable_ascend = false
+
 # Enable the /internal-stats endpoint sidecar on Traefik.
 # traefik_internal_stats_enabled = true
 # traefik_internal_stats_image   = "my-registry.example.com/busybox:1.37.0-musl"
