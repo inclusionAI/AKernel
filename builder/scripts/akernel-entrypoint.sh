@@ -8,12 +8,8 @@ set -euo pipefail
 role="${AKERNEL_ROLE:-}"
 
 if [ -z "${role}" ] && [ "$#" -gt 0 ]; then
-    case "$1" in
-        master|frontend|node|standalone)
-            role="$1"
-            shift
-            ;;
-    esac
+    role="$1"
+    shift
 fi
 
 if [ -z "${role}" ]; then
@@ -24,6 +20,16 @@ if [ -z "${role}" ]; then
         exit 1
     fi
 fi
+
+case "${role}" in
+    master|frontend|node|standalone)
+        ;;
+    *)
+        echo "unsupported AKERNEL_ROLE: ${role}; expected master, frontend, node, or standalone" >&2
+        exit 1
+        ;;
+esac
+export AKERNEL_ROLE="${role}"
 
 case "${role}" in
     master|frontend)
@@ -37,9 +43,5 @@ case "${role}" in
     standalone)
         /usr/local/bin/ensure-component-cert
         exec /usr/sbin/init "$@"
-        ;;
-    *)
-        echo "unsupported AKERNEL_ROLE: ${role}" >&2
-        exit 1
         ;;
 esac

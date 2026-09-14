@@ -271,6 +271,7 @@ RUN apt-get update && \
         procps \
         python3 \
         python3-pip \
+        python3-venv \
         systemd \
         systemd-sysv \
         tzdata \
@@ -313,6 +314,10 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 
 ENV YR_INSTALLATION_DIR=/home/yuanrong
+ENV PATH=/opt/openyuanrong/bin:${PATH}
+
+COPY ./builder/config/yr/config.toml.jinja /etc/yuanrong/config.toml.jinja
+COPY ./builder/config/openyuanrong-core-0.10.2rc2.constraints.txt /tmp/openyuanrong-core.constraints.txt
 
 # Install the complete, language-runtime-free openYuanRong control plane from
 # its checksum-pinned core wheel. A URL and checksum pair may override the
@@ -342,21 +347,30 @@ RUN set -eux; \
       test -z "${OPEN_YR_CORE_WHEEL_SHA256}"; \
     fi; \
     wheel="/tmp/${wheel_name}"; \
-    target=/tmp/openyuanrong-core; \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
       "${wheel_url}" -o "${wheel}"; \
     echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
-    python3 -m pip install \
-      --break-system-packages \
+    python3 -m venv /opt/openyuanrong; \
+    /opt/openyuanrong/bin/python -m pip install \
       --no-cache-dir \
-      --no-deps \
-      --target "${target}" \
+      --index-url "${PIP_INDEX_URL}" \
+      --constraint /tmp/openyuanrong-core.constraints.txt \
       "${wheel}"; \
-    test -x "${target}/yr/functionsystem/bin/yr"; \
-    mkdir -p "${YR_INSTALLATION_DIR}"; \
-    cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
-    rm -rf "${target}" "${wheel}"; \
-    ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
+    site_packages="$(/opt/openyuanrong/bin/python -c 'import site; print(site.getsitepackages()[0])')"; \
+    base_py="${site_packages}/yr/cli/component/base.py"; \
+    launcher_py="${site_packages}/yr/cli/system_launcher.py"; \
+    grep -Fq 'logger.info(f"Environment: {full_env}")' "${base_py}"; \
+    sed -i \
+      's/logger.info(f"Environment: {full_env}")/logger.info(f"Environment keys: {sorted(full_env)}")/' \
+      "${base_py}"; \
+    grep -Fq 'logger.info(f"Environment keys: {sorted(full_env)}")' "${base_py}"; \
+    ! grep -Fq 'logger.info(f"Environment: {full_env}")' "${base_py}"; \
+    grep -Fq '"env_vars": comp.env_vars,' "${launcher_py}"; \
+    sed -i 's/"env_vars": comp.env_vars,/"env_vars": {},/' "${launcher_py}"; \
+    grep -Fq '"env_vars": {},' "${launcher_py}"; \
+    ! grep -Fq '"env_vars": comp.env_vars,' "${launcher_py}"; \
+    test -x /opt/openyuanrong/bin/yr; \
+    rm -f "${wheel}" /tmp/openyuanrong-core.constraints.txt
 
 COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img
 
@@ -376,6 +390,7 @@ RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
 COPY ./builder/scripts/akernel-entrypoint.sh /usr/local/bin/akernel-entrypoint
 COPY ./builder/scripts/ensure-component-cert.sh /usr/local/bin/ensure-component-cert
 COPY ./builder/scripts/sandboxd_network_prepare.sh /usr/local/bin/sandboxd-network-prepare
+COPY ./builder/scripts/sandboxd_network_ready.sh /usr/local/bin/sandboxd-network-ready
 RUN chmod 0755 \
         /usr/local/bin/runsc \
         /usr/local/bin/sandboxd \
@@ -384,7 +399,8 @@ RUN chmod 0755 \
         /usr/local/bin/distill_fs \
         /usr/local/bin/akernel-entrypoint \
         /usr/local/bin/ensure-component-cert \
-        /usr/local/bin/sandboxd-network-prepare
+        /usr/local/bin/sandboxd-network-prepare \
+        /usr/local/bin/sandboxd-network-ready
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then chmod 0755 /usr/local/bin/containerd-shim-kata-v2; fi
 RUN if [ "${AKERNEL_ENABLE_RUNC}" = "true" ]; then \
       chmod 0755 /usr/local/bin/runc /usr/local/bin/runc-shim; \

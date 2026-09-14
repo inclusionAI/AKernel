@@ -4,7 +4,7 @@ After=network-online.target
 Before=yuanrong.service
 
 [Service]
-PIDFile=/var/run/sandboxd.pid
+Type=simple
 PassEnvironment=NODE_NAME KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT
 
 Environment=GOGC=300
@@ -17,6 +17,7 @@ ExecStart=/bin/bash -ce "exec /usr/local/bin/sandboxd \
   -log-level debug \
   -log-file /home/akernel/logs/sandboxd/sandboxd.log \
   -config /home/akernel/sandboxd/config.toml"
+ExecStartPost=/usr/local/bin/sandboxd-network-ready
 
 KillMode=process
 Restart=always

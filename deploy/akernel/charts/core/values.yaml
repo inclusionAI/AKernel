@@ -123,6 +123,11 @@ frontend:
     iamServerAddress: ""
 
 node:
+  # sandboxd allocates sandbox addresses from this CIDR.
+  sandboxIPRange: "10.88.0.1/16"
+  etcd:
+    host: ""
+    port: "2379"
   secret:
     create: true
     oss_auths: {}
@@ -459,7 +464,7 @@ node:
         stream_server_port=""
 
         [plugin.network]
-        ip_range="10.88.0.1/16"
+        ip_range="{{ .Values.node.sandboxIPRange }}"
         nat_backend="iptables"
         enable_network_acl=true
 
