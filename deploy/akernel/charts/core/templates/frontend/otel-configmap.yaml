@@ -1,0 +1,14 @@
+{{- $frontendLokiEndpoint := get (.Values.frontend.monitoring | default dict) "lokiEndpoint" | default .Values.monitoring.lokiEndpoint }}
+{{- if and .Values.frontend.enabled (or .Values.monitoring.prometheusEndpoint $frontendLokiEndpoint .Values.monitoring.tempoEndpoint) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: akernel-frontend-otel-collector-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: akernel
+    component: otel-collector
+data:
+  otel_config.yaml: |
+{{ include "core.otelCollectorConfig" (dict "root" . "role" "frontend") | indent 4 }}
+{{- end }}

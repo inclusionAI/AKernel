@@ -1,0 +1,12 @@
+{{- if and .Values.frontend.enabled .Values.dataPlane.enabled .Values.dataPlane.edge.grafanaURL }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: akernel-edge-proxy-routes
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "core.labels" . | nindent 4 }}
+data:
+  proxy-routes.json: |
+    {{- list (dict "name" "internal-stats" "path_prefix" "/internal-stats" "upstream" "http://127.0.0.1:18081" "strip_prefix" false) (dict "name" "grafana" "path_prefix" "/grafana" "upstream" .Values.dataPlane.edge.grafanaURL "strip_prefix" false) | toJson | nindent 4 }}
+{{- end }}

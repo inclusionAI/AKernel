@@ -431,6 +431,7 @@ class OpenYuanRongSandboxBackend:
         os.environ["YR_TLS"] = "1" if config.api_endpoint.use_tls else "0"
         os.environ["YR_GATEWAY_ADDRESS"] = config.gateway_endpoint.authority()
         os.environ["YR_GATEWAY_TLS"] = "1" if config.gateway_endpoint.use_tls else "0"
+        os.environ.setdefault("YR_TUNNEL_SSL_VERIFY", "0")
         os.environ["YR_TOKEN"] = config.token
 
     def _validate(self, spec: SandboxSpec) -> None:

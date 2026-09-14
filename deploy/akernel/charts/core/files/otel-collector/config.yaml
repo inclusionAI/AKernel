@@ -333,6 +333,89 @@ receivers:
         from: attributes.body
         to: body
 
+  # Edge application and access/audit files share the Rust tracing format.
+  filelog/edge:
+    include:
+      - ${env:YR_LOG_PATH}/edge-frontend.log
+      - ${env:YR_LOG_PATH}/edge-frontend-access.log
+    start_at: end
+    include_file_name: true
+    multiline:
+      line_start_pattern: '^\d{4}-\d{2}-\d{2}T'
+    operators:
+      - type: regex_parser
+        regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(?P<severity>\w+)\s+(?P<target>[^\s]+):\s*(?P<body>[\s\S]*)'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout_type: gotime
+          layout: '2006-01-02T15:04:05.999999999Z07:00'
+        severity:
+          parse_from: attributes.severity
+          mapping:
+            trace: TRACE
+            debug: DEBUG
+            info: INFO
+            warn: WARN
+            error: ERROR
+      - type: add
+        field: resource["service.name"]
+        value: "yuanrong-edge-frontend"
+      - type: move
+        from: attributes.target
+        to: resource["module.name"]
+      - type: remove
+        field: attributes.timestamp
+      - type: move
+        from: attributes.body
+        to: body
+
+  # Node Proxy uses the same tracing format, with per-node identity.
+  filelog/nodeproxy:
+    include:
+      - ${env:YR_LOG_PATH}/node-proxy.log
+    start_at: end
+    include_file_name: true
+    multiline:
+      line_start_pattern: '^\d{4}-\d{2}-\d{2}T'
+    operators:
+      - type: regex_parser
+        regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(?P<severity>\w+)\s+(?P<target>[^\s]+):\s*(?P<body>[\s\S]*)'
+        timestamp:
+          parse_from: attributes.timestamp
+          layout_type: gotime
+          layout: '2006-01-02T15:04:05.999999999Z07:00'
+        severity:
+          parse_from: attributes.severity
+          mapping:
+            trace: TRACE
+            debug: DEBUG
+            info: INFO
+            warn: WARN
+            error: ERROR
+      - type: add
+        field: resource["service.name"]
+        value: "yuanrong-node-proxy"
+      - type: add
+        field: resource["k8s.pod.name"]
+        value: ${env:POD_NAME:-unknown}
+      - type: add
+        field: resource["k8s.namespace.name"]
+        value: ${env:POD_NAMESPACE:-unknown}
+      - type: add
+        field: resource["k8s.node.name"]
+        value: ${env:NODE_NAME:-unknown}
+      - type: add
+        field: resource["service.instance.id"]
+        value: ${env:HOSTNAME:-unknown}
+      - type: move
+        from: attributes.target
+        to: resource["module.name"]
+      - type: remove
+        field: attributes.timestamp
+      - type: move
+        from: attributes.body
+        to: body
+
   # ─────────────────────────────────────────────────────────────────────
   # filelog/stdlogs: stdout unstructured logs
   # ─────────────────────────────────────────────────────────────────────
@@ -342,6 +425,8 @@ receivers:
       - ${env:YR_LOG_PATH}/*.out
       - ${env:YR_LOG_PATH}/*.err
     exclude:
+      - ${env:YR_LOG_PATH}/*-edge-frontend_std.log
+      - ${env:YR_LOG_PATH}/*-node-proxy_std.log
       - ${env:YR_LOG_PATH}/*.log.gz
     start_at: end
     operators:
@@ -402,7 +487,7 @@ service:
 
   pipelines:
     logs:
-      receivers: [filelog/spdlog, filelog/faasfrontend, filelog/faasscheduler, filelog/metaservice, filelog/distillfs, filelog/sandboxd, filelog/runsc, filelog/stdlogs, otlp]
+      receivers: [filelog/spdlog, filelog/faasfrontend, filelog/faasscheduler, filelog/metaservice, filelog/distillfs, filelog/sandboxd, filelog/runsc, filelog/edge, filelog/nodeproxy, filelog/stdlogs, otlp]
       processors: [memory_limiter, resource, batch]
       exporters: [otlphttp/loki]
     traces:

@@ -200,7 +200,7 @@ prometheusServer:
       namespaces:
         - "akernel"
       labelSelector: ""
-      targetContainerRegex: "akernel-master|akernel-frontend|etcd|traefik|manager|scheduler|seed-client|mysql|redis"
+      targetContainerRegex: "akernel-master|akernel-frontend|etcd|manager|scheduler|seed-client|mysql|redis"
       targetPortNameRegex: "http|client|dashboard|mysql|redis"
       targetPortNumberRegex: "8000|4002|3306|6379"
       kubelet:

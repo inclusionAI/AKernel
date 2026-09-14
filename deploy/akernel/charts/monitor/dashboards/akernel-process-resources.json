@@ -1,0 +1,794 @@
+{
+  "id": null,
+  "uid": "akernel-process-resources",
+  "title": "AKernel Process Resources",
+  "description": "Aggregate trends and a current snapshot for the selected scope. Use filters to inspect a component, node or Pod.",
+  "tags": [
+    "akernel",
+    "operations"
+  ],
+  "schemaVersion": 42,
+  "version": 2,
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "15s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "links": [
+    {
+      "title": "Node Resources",
+      "type": "link",
+      "url": "/grafana/d/akernel-node-resources",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Data Plane",
+      "type": "link",
+      "url": "/grafana/d/akernel-data-plane",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Process Resources",
+      "type": "link",
+      "url": "/grafana/d/akernel-process-resources",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Pod / PVC",
+      "type": "link",
+      "url": "/grafana/d/akernel-control-plane-pods",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "akernel_env",
+        "label": "akernel_env",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_open_file_descriptors, akernel_env)",
+        "query": {
+          "query": "label_values(process_open_file_descriptors, akernel_env)",
+          "refId": "var-environment"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": [],
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\"}, k8s_namespace_name)",
+        "query": {
+          "query": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\"}, k8s_namespace_name)",
+          "refId": "var-namespace"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": [],
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\"}, k8s_node_name)",
+        "query": {
+          "query": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\"}, k8s_node_name)",
+          "refId": "var-node"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": [],
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "component",
+        "label": "Component",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\"}, component_name)",
+        "query": {
+          "query": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\"}, component_name)",
+          "refId": "var-component"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": [],
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "pod",
+        "label": "Pod",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",component_name=~\"$component\"}, k8s_pod_name)",
+        "query": {
+          "query": "label_values(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",component_name=~\"$component\"}, k8s_pod_name)",
+          "refId": "var-pod"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": [],
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "filters": [],
+        "hide": 0,
+        "label": "Ad-hoc filters",
+        "name": "filters",
+        "type": "adhoc"
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "User + system CPU seconds per second. 1.0 means one logical core; this is not node CPU utilization.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "unit": "none",
+          "min": 0,
+          "noValue": "N/A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum((sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (rate(process_cpu_time_seconds_total{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\",state=~\"user|system\"}[$__rate_interval])) and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "usage",
+          "range": true
+        }
+      ],
+      "title": "CPU \u2014 cluster total (cores)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Resident memory of fresh process samples. Virtual address space is reported separately in the snapshot.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "bytes",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "N/A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 9
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum((process_memory_usage_bytes{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "RSS",
+          "range": true
+        }
+      ],
+      "title": "Memory \u2014 cluster total (bytes)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Compare the same load before and after churn. No process FD limit is collected, so no FD usage percentage is inferred.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "unit": "none",
+          "min": 0,
+          "noValue": "N/A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum((process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "open FDs",
+          "range": true
+        }
+      ],
+      "title": "Open file descriptors \u2014 cluster total",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Includes samples updated within 45 seconds, assuming 15-second process collection. Exited PID samples age out of resource totals.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "unit": "none",
+          "min": 0,
+          "noValue": "N/A"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum((process_threads{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "threads",
+          "range": true
+        }
+      ],
+      "title": "Threads \u2014 cluster total",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Expand a Pod row to inspect its processes. Node and Namespace identify placement; Component and PID identify each process. Only fresh process samples are shown.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "none",
+          "noValue": "N/A"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU (cores)",
+              "scope": "nested"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RSS",
+              "scope": "nested"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "FDs",
+              "scope": "nested"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Threads",
+              "scope": "nested"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Uptime",
+              "scope": "nested"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Virtual memory",
+              "scope": "nested"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pod"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 400
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 12
+      },
+      "id": 20,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Pod",
+            "desc": false
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (rate(process_cpu_time_seconds_total{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\",state=~\"user|system\"}[$__rate_interval])) and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "__auto",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_memory_usage_bytes{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "__auto",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "__auto",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_threads{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "__auto",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_uptime_seconds{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "__auto",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_memory_virtual_bytes{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (akernel_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{akernel_env=~\"$akernel_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "legendFormat": "__auto",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "title": "Processes by Pod",
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "akernel_env",
+                "k8s_namespace_name",
+                "k8s_node_name",
+                "k8s_pod_name",
+                "component_name",
+                "process_pid",
+                "Value #A",
+                "Value #B",
+                "Value #C",
+                "Value #D",
+                "Value #E",
+                "Value #F"
+              ]
+            }
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {
+              "k8s_pod_name": 0,
+              "k8s_node_name": 1,
+              "k8s_namespace_name": 2,
+              "akernel_env": 3,
+              "component_name": 4,
+              "process_pid": 5,
+              "Value #A": 6,
+              "Value #B": 7,
+              "Value #C": 8,
+              "Value #D": 9,
+              "Value #E": 10,
+              "Value #F": 11
+            },
+            "renameByName": {
+              "component_name": "Component",
+              "k8s_pod_name": "Pod",
+              "process_pid": "PID",
+              "Value #A": "CPU (cores)",
+              "Value #B": "RSS",
+              "Value #C": "FDs",
+              "Value #D": "Threads",
+              "Value #E": "Uptime",
+              "Value #F": "Virtual memory",
+              "k8s_node_name": "Node",
+              "k8s_namespace_name": "Namespace",
+              "akernel_env": "Environment"
+            }
+          }
+        },
+        {
+          "id": "groupToNestedTable",
+          "options": {
+            "fields": {
+              "Pod": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Node": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Namespace": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Environment": {
+                "aggregations": [],
+                "operation": "groupby"
+              }
+            },
+            "showSubframeHeaders": true,
+            "expandAllRows": false
+          }
+        }
+      ],
+      "type": "table"
+    }
+  ]
+}

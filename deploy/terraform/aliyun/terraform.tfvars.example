@@ -97,8 +97,6 @@ core_namespace = "akernel"
 # master_image_tag         = "<release-tag>"
 # node_image_repository    = "my-registry.com/akernel/all-in-one"
 # node_image_tag           = "<release-tag>"
-# traefik_image_repository = "my-registry.com/traefik"
-# traefik_image_tag        = "v3.6.8"
 
 # Optional mirror registry for Grafana, Prometheus, Loki, Tempo, and BusyBox.
 # Leave empty to use the projects' official public images.
@@ -139,28 +137,13 @@ core_namespace = "akernel"
 # Optional: master replicas (for HA when frontend is enabled).
 # master_replicas = 1
 
-# Frontend Deployment. Traefik routes API traffic to akernel-frontend when it is enabled.
+# Frontend Deployment. Edge runs alongside akernel-frontend when it is enabled.
 frontend_enabled  = true
 frontend_replicas = 1
 frontend_cpu      = "1"
 frontend_memory   = "2Gi"
 
-# Traefik ingress controller (deployed via core chart).
-traefik_enabled               = true
-install_traefik               = true
-traefik_service_type          = "LoadBalancer"
-traefik_enable_web_entrypoint = true
-traefik_websecure_port        = 443
-traefik_web_port              = 80
-# traefik_replicas = 1
-# Optional: mount a custom default certificate. The websecure router still
-# serves TLS when this is false, using Traefik's default certificate.
-traefik_tls_enabled       = false
-traefik_tls_create_secret = false
-# traefik_tls_cert        = "<PEM certificate>"
-# traefik_tls_key         = "<PEM private key>"
-# traefik_internal_stats_enabled = true
-# traefik_internal_stats_image   = "registry-vpc.cn-hangzhou.aliyuncs.com/my-namespace/busybox:1.37.0-musl"
+# Edge ingress is deployed by the core chart (HTTP 80 and HTTPS 443).
 
 # Install prerequisite components (OpenKruise) before AKernel charts.
 install_prereqs             = false
@@ -266,3 +249,9 @@ dragonfly_server_node_pool = {
 # Example for using existing cluster instead of creating ACK:
 # create_cluster  = false
 # kubeconfig_path = "/abs/path/to/kubeconfig"
+
+# Edge ingress and Node Proxy are enabled by default.
+edge_service_type = "LoadBalancer"
+# edge_tls_secret_name = "edge-tls"
+# node_proxy_allowed_edge_cidrs = "10.0.0.0/8"
+# node_proxy_allowed_target_cidrs = "172.16.0.0/12"

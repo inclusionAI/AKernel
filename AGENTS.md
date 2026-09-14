@@ -126,6 +126,12 @@ runtimes and `openyuanrong_sdk`. `builder/node.Dockerfile` then compiles the
 node components and produces the AKernel all-in-one image using the selected
 runtime image and its matching service configuration.
 
+The image installs Edge, Node Proxy and the forwarding helper from the
+checksum-pinned data-plane wheel under `data_plane/bin` for the Go CLI.
+Core, data plane, RRT and the sandbox SDK use YuanRong release `0.10.3rc1`.
+The Core package includes Node Proxy address registration and Edge process
+scripts; the data-plane wheel supplies their matching executables.
+
 The control-plane and RRT release version is independent of the optional
 actor-based `openyuanrong_sdk` installed in the Python runtime profile. This
 actor backend is deprecated and retained only for compatibility with existing
@@ -195,7 +201,17 @@ distill-fs release's packaged manifest.
 
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point.
 AKernel supports standalone, existing Kubernetes clusters via Helm, and
-Terraform-based cloud provisioning.
+Terraform-based cloud provisioning. The core chart enables Edge and Node Proxy
+by default with an image containing the data-plane binaries and Go CLI support;
+configure its TLS Secret and Edge source CIDRs. Node Proxy derives target CIDRs
+from the final sandboxd `plugin.network.ip_range`; Terraform derives Edge CIDRs
+for managed Pod networks. Imported networks and direct Helm installs require
+explicit Edge source CIDRs.
+See `deploy/README.md` for ingress migration and SDK endpoint configuration.
+The monitor chart provisions data-plane and process-resource dashboards. See
+`deploy/akernel/charts/monitor/README.md` for metric prerequisites, Grafana access
+through Edge, and metric interpretation. The image startup helper must respect
+an explicit `YR_DATA_PLANE_EDGE_FRONTEND_PROXY_ROUTES_FILE` mounted by Helm.
 
 The all-in-one image and node launchers declare lowercase `container=oci`
 for PID 1 systemd. Preserve this in the final image, Helm node environment,
@@ -417,13 +433,13 @@ export AKERNEL_SERVER_ADDRESS="<server_address>"
 export AKERNEL_TOKEN="<your_token>"
 ```
 
-When the public Traefik dual-entrypoint mode is enabled, a host/IP-only
+With the default Edge ingress, a host/IP-only
 `AKERNEL_SERVER_ADDRESS` uses HTTPS/WSS on 443 for the frontend API and exec
 websocket, and HTTP on 80 for sandbox port URLs. For standalone deployments,
-use the Traefik container IP printed by `deploy/standalone/start.sh`:
+use the AKernel container IP printed by `deploy/standalone/start.sh`:
 
 ```bash
-export AKERNEL_SERVER_ADDRESS=<traefik-container-ip>
+export AKERNEL_SERVER_ADDRESS=<akernel-container-ip>
 ```
 
 No separate `AKERNEL_GATEWAY_ADDRESS` is required for the default standalone

@@ -187,28 +187,22 @@ image registry settings before applying the plan.
 ## Public endpoint model
 
 The default cloud deployment uses a split frontend plus a two-entrypoint
-Traefik LoadBalancer:
+Edge LoadBalancer:
 
 - `websecure:443` routes frontend API and exec websocket traffic over TLS.
 - `web:80` routes function port-forwarding traffic over plain HTTP/WS.
 
-Use the Traefik LoadBalancer host or IP directly with the SDK:
+Use the Edge LoadBalancer host or IP directly with the SDK:
 
 ```bash
-export AKERNEL_SERVER_ADDRESS=<traefik-load-balancer-ip>
+export AKERNEL_SERVER_ADDRESS=<edge-load-balancer-ip>
 ```
 
-`traefik_tls_enabled` is only for mounting a custom default certificate. It is
-not required for the `websecure` router on port 443; Traefik serves its default
-certificate when the variable is `false`.
-
-To use the legacy single-entrypoint mode, set
-`traefik_enable_web_entrypoint=false` and configure `traefik_tcp_port`. In that
-mode SDK clients must include the port explicitly:
-
-```bash
-export AKERNEL_SERVER_ADDRESS=<traefik-load-balancer-ip>:<port>
-```
+Edge uses the chart's component certificate by default. Set
+`edge_tls_secret_name` for a dedicated TLS Secret, or also set
+`edge_tls_create_secret`, `edge_tls_cert`, and `edge_tls_key` to create it.
+Customize public ports with `edge_http_port` and `edge_https_port`; configure
+the SDK API and gateway addresses explicitly when using custom ports.
 
 Enable OSS auth injection for AKernel node secret:
 

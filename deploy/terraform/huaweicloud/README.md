@@ -3,7 +3,7 @@
 This Terraform module creates a Huawei Cloud CCE cluster and installs the
 AKernel core and optional monitor charts. It follows the same deployment
 contract as the Aliyun module: one all-in-one AKernel image, a generated IAM
-seed, dual-entrypoint Traefik, optional public Grafana, and local state under
+seed, Edge ingress and Node Proxy, optional public Grafana, and local state under
 `.akernel/<env>/`.
 
 ## Pod PID budget
@@ -73,15 +73,15 @@ login is required. The two settings are mutually exclusive.
 
 The generated profile enables the public CCE API endpoint and node-subnet SNAT
 so Terraform can reach the cluster and worker nodes can pull public images.
-Traefik is exposed through a public ELB with two entrypoints:
+Edge is exposed through a public ELB with two entrypoints:
 
 - `websecure:443` serves the authenticated frontend API and exec websocket.
 - `web:80` serves sandbox port-forwarding traffic.
 
-The SDK therefore needs only the Traefik ELB address:
+The SDK therefore needs only the Edge ELB address:
 
 ```bash
-export AKERNEL_SERVER_ADDRESS=<traefik-elb-address>
+export AKERNEL_SERVER_ADDRESS=<edge-elb-address>
 ```
 
 Grafana uses a separate public ELB when monitoring and public Grafana access
@@ -91,7 +91,7 @@ are enabled. Its generated administrator password is stored at
 ## Images
 
 Master, frontend, and node use the same configured AKernel all-in-one image.
-etcd, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox use pinned official
+etcd, Grafana, Prometheus, Loki, Tempo, and BusyBox use pinned official
 public images by default. Use the component image variables or
 `monitor_image_registry` only when the cluster requires private mirrors.
 

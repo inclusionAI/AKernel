@@ -9,12 +9,15 @@ ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
-ARG OPEN_YR_VERSION=0.10.2rc4
+ARG OPEN_YR_VERSION=0.10.3rc1
 ARG OPEN_YR_CORE_WHEEL_URL=
 ARG OPEN_YR_CORE_WHEEL_SHA256=
 ARG OPEN_YR_RELEASE_BASE_URL=https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release
-ARG OPEN_YR_CORE_AMD64_SHA256=94d44bd0def2bb18f87ae15cc4c054baf6685b2d5618049bcd1e6228bdbae028
-ARG OPEN_YR_CORE_ARM64_SHA256=51847a27825d6aa7e9a37e96c7ec7d3b7baf58eb5749d6db95b713d4d89d6f59
+ARG OPEN_YR_CORE_AMD64_SHA256=75c266092a70201609f5f0510eba8339965cf92fd9dd833842d64ca02438ac6f
+ARG OPEN_YR_CORE_ARM64_SHA256=b7e2664a6d3760e495dd13b7dbb00851c1120b8f8c40a68d8b469a59454a2eb3
+ARG OPEN_YR_DATA_PLANE_RELEASE_BASE_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download
+ARG OPEN_YR_DATA_PLANE_AMD64_SHA256=b3b6f099554bb0539ef51227efc40268430805c3dbe388b1c9de83f95a65a409
+ARG OPEN_YR_DATA_PLANE_ARM64_SHA256=1a5a4c8585be46c12e90377e775f0535aa621ed47597691328cf7235a045f0b3
 ARG GVISOR_DOWNLOAD_IMAGE=ubuntu:24.04
 ARG GVISOR_RELEASE
 ARG GVISOR_AMD64_URL
@@ -241,6 +244,9 @@ ARG OPEN_YR_CORE_WHEEL_SHA256
 ARG OPEN_YR_RELEASE_BASE_URL
 ARG OPEN_YR_CORE_AMD64_SHA256
 ARG OPEN_YR_CORE_ARM64_SHA256
+ARG OPEN_YR_DATA_PLANE_RELEASE_BASE_URL
+ARG OPEN_YR_DATA_PLANE_AMD64_SHA256
+ARG OPEN_YR_DATA_PLANE_ARM64_SHA256
 ARG GVISOR_RELEASE
 ARG RUNC_VERSION
 ARG FIRECRACKER_RELEASE
@@ -357,6 +363,27 @@ RUN set -eux; \
     cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
     rm -rf "${target}" "${wheel}"; \
     ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
+
+# Install the matching data-plane release, including Edge, Node Proxy and Forward.
+RUN set -eux; \
+    case "${TARGETARCH:-$(uname -m)}" in \
+      amd64|x86_64) wheel_arch=x86_64; wheel_sha="${OPEN_YR_DATA_PLANE_AMD64_SHA256}" ;; \
+      arm64|aarch64) wheel_arch=aarch64; wheel_sha="${OPEN_YR_DATA_PLANE_ARM64_SHA256}" ;; \
+      *) echo "unsupported data-plane target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    wheel_name="openyuanrong_data_plane-${OPEN_YR_VERSION}-py3-none-manylinux_2_17_${wheel_arch}.whl"; \
+    wheel="/tmp/${wheel_name}"; \
+    target=/tmp/openyuanrong-data-plane; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "${OPEN_YR_DATA_PLANE_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/${wheel_name}" -o "${wheel}"; \
+    echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
+    python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
+      --target "${target}" "${wheel}"; \
+    for binary in yr-edge-frontend yr-node-proxy yr-data-plane-forward; do \
+      test -x "${target}/yr/data_plane/bin/${binary}"; \
+    done; \
+    cp -a "${target}/yr/data_plane" "${YR_INSTALLATION_DIR}/"; \
+    rm -rf "${target}" "${wheel}"
 
 COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img
 

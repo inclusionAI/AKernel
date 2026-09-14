@@ -1,3 +1,4 @@
+{{- $nodeLokiEndpoint := get (.Values.node.monitoring | default dict) "lokiEndpoint" | default .Values.monitoring.lokiEndpoint }}
 {{- if .Values.kruise.enabled }}
 apiVersion: apps.kruise.io/v1alpha1
 {{- else }}
@@ -21,11 +22,11 @@ spec:
     {{- if .Values.kruise.enabled }}
     rollingUpdate:
       rollingUpdateType: Standard
-      maxUnavailable: 200
+      maxUnavailable: 1
       partition: 0
     {{- else }}
     rollingUpdate:
-      maxUnavailable: 200
+      maxUnavailable: 1
     {{- end }}
     type: RollingUpdate
   selector:
@@ -40,7 +41,7 @@ spec:
         {{- end }}
       annotations:
         checksum/node-config: {{ include (print $.Template.BasePath "/node/configmap.yaml") . | sha256sum }}
-        checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
+        checksum/otel-collector-config: {{ include (print $.Template.BasePath "/node/otel-configmap.yaml") . | sha256sum }}
         {{- with .Values.node.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -65,6 +66,15 @@ spec:
         imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.node.image) }}
         command:
         - /usr/local/bin/akernel-entrypoint
+        {{- if .Values.dataPlane.enabled }}
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: {{ .Values.dataPlane.nodeProxy.healthPort }}
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+        {{- end }}
         lifecycle:
           postStart:
             exec:
@@ -72,10 +82,27 @@ spec:
               - bash
               - -c
               - |
-                cp /etc/resolv.conf /etc/resolv_akernel.conf && sed -i 's/127.0.0.1/10.88.0.1/g' /etc/resolv_akernel.conf
+                sandbox_resolver_ip={{ first (splitList "/" (.Values.node.sandboxIPRange | default "10.88.0.1/16")) | quote }}
+                awk -v resolver="${sandbox_resolver_ip}" '
+                  $1 == "nameserver" && $2 ~ /^127\./ { $2 = resolver }
+                  { print }
+                ' /etc/resolv.conf > /etc/resolv_akernel.conf
         resources:
           {{- toYaml .Values.node.resources | nindent 10 }}
         env:
+        {{- if .Values.dataPlane.enabled }}
+        - name: ENABLE_NODE_PROXY
+          value: "true"
+        - name: NODE_PROXY_PORT
+          value: {{ .Values.dataPlane.nodeProxy.port | quote }}
+        - name: NODE_PROXY_HEALTH_PORT
+          value: {{ .Values.dataPlane.nodeProxy.healthPort | quote }}
+        - name: NODE_PROXY_ALLOWED_TARGET_CIDRS
+          value: {{ .Values.dataPlane.nodeProxy.allowedTargetCIDRs | default "" | quote }}
+        - name: NODE_PROXY_ALLOWED_EDGE_CIDRS
+          value: {{ required "dataPlane.nodeProxy.allowedEdgeCIDRs is required" .Values.dataPlane.nodeProxy.allowedEdgeCIDRs | quote }}
+        {{- end }}
+
         # Required for systemd shutdown safety, including with older images.
         - name: container
           value: "oci"
@@ -115,9 +142,9 @@ spec:
         - name: PROMETHEUS_ENDPOINT
           value: {{ .Values.monitoring.prometheusEndpoint | quote }}
         {{- end }}
-        {{- if .Values.monitoring.lokiEndpoint }}
+        {{- if $nodeLokiEndpoint }}
         - name: LOKI_ENDPOINT
-          value: {{ .Values.monitoring.lokiEndpoint | quote }}
+          value: {{ $nodeLokiEndpoint | quote }}
         {{- end }}
         {{- if .Values.monitoring.tempoEndpoint }}
         - name: TEMPO_ENDPOINT
@@ -129,12 +156,6 @@ spec:
           value: {{ ne (.Values.monitoring.prometheusEndpoint | default "") "" | ternary "true" "false" | quote }}
         - name: ENABLE_TRACE
           value: {{ ne (.Values.monitoring.tempoEndpoint | default "") "" | ternary "true" "false" | quote }}
-        - name: TRAEFIK_MODE
-          value: {{ .Values.traefik.mode | default "http" | quote }}
-        - name: TRAEFIK_ENABLE_TLS
-          value: {{ .Values.traefik.enableWebEntrypoint | default false | ternary false (.Values.traefik.enableTLS | default false) | quote }}
-        - name: TRAEFIK_HTTP_ENTRYPOINT
-          value: {{ .Values.traefik.enableWebEntrypoint | default false | ternary "web" "websecure" | quote }}
         securityContext:
           privileged: true
         volumeMounts:
@@ -180,7 +201,7 @@ spec:
           {{- if not .Values.node.homeDisk.useEphemeralPVC }}
           mountPropagation: HostToContainer
           {{- end }}
-        {{- if or $.Values.monitoring.prometheusEndpoint $.Values.monitoring.lokiEndpoint $.Values.monitoring.tempoEndpoint }}
+        {{- if or $.Values.monitoring.prometheusEndpoint $nodeLokiEndpoint $.Values.monitoring.tempoEndpoint }}
         - mountPath: /etc/otel-collector
           name: otel-collector-config
           readOnly: true
@@ -231,8 +252,8 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: 500Mi
-      {{- if or .Values.monitoring.prometheusEndpoint .Values.monitoring.lokiEndpoint .Values.monitoring.tempoEndpoint }}
+      {{- if or .Values.monitoring.prometheusEndpoint $nodeLokiEndpoint .Values.monitoring.tempoEndpoint }}
       - name: otel-collector-config
         configMap:
-          name: akernel-otel-collector-config
+          name: akernel-node-otel-collector-config
       {{- end }}

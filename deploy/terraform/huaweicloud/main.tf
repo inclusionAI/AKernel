@@ -9,6 +9,11 @@ provider "huaweicloud" {
 resource "null_resource" "input_validation" {
   lifecycle {
     precondition {
+      condition     = trimspace(local.node_proxy_edge_cidrs) != ""
+      error_message = "Set node_proxy_allowed_edge_cidrs to the actual Edge source CIDRs when using an existing cluster or imported Pod networks."
+    }
+
+    precondition {
       condition     = var.create_cluster || length(var.kubeconfig_path) > 0
       error_message = "kubeconfig_path must be set when create_cluster=false."
     }
@@ -26,6 +31,10 @@ resource "null_resource" "input_validation" {
 data "huaweicloud_availability_zones" "this" {}
 
 locals {
+  # Derive only from networks managed here; imported networks need their real CIDRs.
+  derived_edge_cidrs    = var.create_cluster ? (var.container_network_type == "eni" ? var.eni_subnet_cidr : var.pod_cidr) : ""
+  node_proxy_edge_cidrs = trimspace(var.node_proxy_allowed_edge_cidrs) != "" ? var.node_proxy_allowed_edge_cidrs : local.derived_edge_cidrs
+
   selected_az = var.availability_zone != "" ? var.availability_zone : data.huaweicloud_availability_zones.this.names[0]
   kubeconfig_path = var.create_cluster ? (
     length(var.kubeconfig_output_path) > 0 ? var.kubeconfig_output_path : "${path.module}/.kubeconfig"
@@ -55,11 +64,11 @@ locals {
       eip_type             = var.master_elb_eip_type
     })
   } : {}
-  huaweicloud_traefik_elb_annotations = var.traefik_public_access ? {
+  huaweicloud_edge_elb_annotations = var.edge_public_access ? {
     "kubernetes.io/elb.class" = "union"
     "kubernetes.io/elb.autocreate" = jsonencode({
       type                 = "public"
-      bandwidth_name       = "${var.cluster_name}-traefik-elb"
+      bandwidth_name       = "${var.cluster_name}-edge-elb"
       bandwidth_chargemode = var.master_elb_bandwidth_charge_mode
       bandwidth_size       = var.master_elb_bandwidth_size
       bandwidth_sharetype  = "PER"
@@ -104,8 +113,6 @@ locals {
     master_image_tag               = var.master_image_tag
     node_image_repository          = var.node_image_repository
     node_image_tag                 = var.node_image_tag
-    traefik_image_repository       = var.traefik_image_repository
-    traefik_image_tag              = var.traefik_image_tag
     iam_litebus_data_key           = var.iam_litebus_data_key
     enable_kruise                  = var.install_prereqs
     master_service_type            = var.master_public_access_8888 ? var.master_service_type : "ClusterIP"
@@ -146,23 +153,21 @@ locals {
     frontend_cpu      = var.frontend_cpu
     frontend_memory   = var.frontend_memory
 
-    install_traefik                 = var.install_traefik
-    traefik_replicas                = var.traefik_replicas
-    traefik_tcp_port                = var.traefik_tcp_port
-    traefik_enable_web_entrypoint   = var.traefik_enable_web_entrypoint
-    traefik_web_port                = var.traefik_web_port
-    traefik_websecure_port          = var.traefik_websecure_port
-    traefik_service_type            = var.traefik_service_type
-    traefik_service_annotations     = local.huaweicloud_traefik_elb_annotations
-    traefik_service_loadbalancer_ip = ""
-    traefik_tls_enabled             = var.traefik_tls_enabled
-    traefik_tls_create_secret       = var.traefik_tls_create_secret
-    traefik_tls_cert                = var.traefik_tls_cert
-    traefik_tls_key                 = var.traefik_tls_key
-    traefik_internal_stats          = var.traefik_internal_stats_enabled
-    traefik_internal_stats_image    = var.traefik_internal_stats_image
-    traefik_grafana_enabled         = var.install_monitor
-    traefik_grafana_url             = var.install_monitor ? "http://grafana.${var.monitor_namespace}.svc:3000" : ""
+    edge_service_name               = var.edge_service_name
+    edge_service_type               = var.edge_service_type
+    edge_service_loadbalancer_ip    = var.edge_service_loadbalancer_ip
+    edge_http_port                  = var.edge_http_port
+    edge_https_port                 = var.edge_https_port
+    edge_tls_secret_name            = var.edge_tls_secret_name
+    edge_tls_create_secret          = var.edge_tls_create_secret
+    edge_tls_cert                   = var.edge_tls_cert
+    edge_tls_key                    = var.edge_tls_key
+    edge_allowed_client_cidrs       = var.edge_allowed_client_cidrs
+    node_proxy_allowed_target_cidrs = var.node_proxy_allowed_target_cidrs
+    node_proxy_allowed_edge_cidrs   = local.node_proxy_edge_cidrs
+    edge_service_annotations        = merge(local.huaweicloud_edge_elb_annotations, var.edge_service_annotations)
+    edge_grafana_url                = var.install_monitor && !var.grafana_public_access ? "http://grafana.${var.monitor_namespace}.svc:3000" : ""
+
   })
 
   monitor_values = templatefile("${path.module}/values-monitor.yaml.tmpl", {

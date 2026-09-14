@@ -227,42 +227,23 @@ node:
         provider="kubernetes"
         sock_path="/var/run/resource.sock"
 
-traefik:
-  enabled: ${install_traefik}
-  replicas: ${traefik_replicas}
-  enableWebEntrypoint: ${traefik_enable_web_entrypoint}
-  image:
-    repository: "${traefik_image_repository}"
-    tag: "${traefik_image_tag}"
-  ports:
-%{ if traefik_enable_web_entrypoint ~}
-    web: ${traefik_web_port}
-    websecure: ${traefik_websecure_port}
-%{ else ~}
-    tcp: ${traefik_tcp_port}
-%{ endif ~}
-  service:
-    type: "${traefik_service_type}"
-%{ if length(traefik_service_annotations) > 0 ~}
-    annotations:
-%{ for k, v in traefik_service_annotations ~}
-      ${k}: "${v}"
-%{ endfor ~}
-%{ endif ~}
-  tls:
-    enabled: ${traefik_tls_enabled}
-    createSecret: ${traefik_tls_create_secret}
-%{ if traefik_tls_cert != "" ~}
-    moduleCrt: ${jsonencode(traefik_tls_cert)}
-%{ endif ~}
-%{ if traefik_tls_key != "" ~}
-    moduleKey: ${jsonencode(traefik_tls_key)}
-%{ endif ~}
-  internalStats:
-    enabled: ${traefik_internal_stats}
-    image: "${traefik_internal_stats_image}"
-  grafana:
-    enabled: ${traefik_grafana_enabled}
-%{ if traefik_grafana_url != "" ~}
-    url: "${traefik_grafana_url}"
-%{ endif ~}
+dataPlane:
+  enabled: true
+  edge:
+    tlsSecretName: "${edge_tls_secret_name}"
+    tls:
+      createSecret: ${edge_tls_create_secret}
+      cert: ${jsonencode(edge_tls_cert)}
+      key: ${jsonencode(edge_tls_key)}
+    allowedClientCIDRs: "${edge_allowed_client_cidrs}"
+    grafanaURL: "${edge_grafana_url}"
+    service:
+      name: "${edge_service_name}"
+      type: "${edge_service_type}"
+      annotations: ${jsonencode(edge_service_annotations)}
+      loadBalancerIP: "${edge_service_loadbalancer_ip}"
+      httpPort: ${edge_http_port}
+      httpsPort: ${edge_https_port}
+  nodeProxy:
+    allowedTargetCIDRs: "${node_proxy_allowed_target_cidrs}"
+    allowedEdgeCIDRs: "${node_proxy_allowed_edge_cidrs}"

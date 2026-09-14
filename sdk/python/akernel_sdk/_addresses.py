@@ -121,7 +121,7 @@ def gateway_endpoint_from_env() -> Endpoint:
     """Return the public port-forwarding gateway endpoint.
 
     An explicit gateway override is parsed as plain HTTP by default because
-    standalone exposes Traefik's web entrypoint without TLS.  Without an
+    standalone exposes Edge's HTTP listener without TLS.  Without an
     explicit gateway, host-only server addresses use public 80, while
     host:port server addresses reuse the API port with plain HTTP.
     """

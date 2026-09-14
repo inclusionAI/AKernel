@@ -66,7 +66,7 @@ data:
           regex: Running
         - source_labels: [__meta_kubernetes_pod_container_name]
           action: keep
-          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|traefik|manager|scheduler|seed-client|mysql|redis" | quote }}
+          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|manager|scheduler|seed-client|mysql|redis" | quote }}
         - source_labels: [__meta_kubernetes_pod_container_port_name, __meta_kubernetes_pod_container_port_number]
           action: keep
           regex: {{ printf "(%s);.*|;(%s)" ($controlPlanePods.targetPortNameRegex | default "http|client|dashboard|mysql|redis") ($controlPlanePods.targetPortNumberRegex | default "8000|4002|3306|6379") | quote }}
@@ -103,7 +103,7 @@ data:
           target_label: component
           replacement: frontend
         - source_labels: [__meta_kubernetes_pod_label_app]
-          regex: (etcd|traefik)
+          regex: (etcd)
           action: replace
           target_label: component
           replacement: $1
@@ -168,7 +168,7 @@ data:
           regex: Running
         - source_labels: [__meta_kubernetes_pod_container_name]
           action: keep
-          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|traefik|manager|scheduler|seed-client|mysql|redis" | quote }}
+          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|manager|scheduler|seed-client|mysql|redis" | quote }}
         - source_labels: [__meta_kubernetes_pod_container_port_name, __meta_kubernetes_pod_container_port_number]
           action: keep
           regex: {{ printf "(%s);.*|;(%s)" ($controlPlanePods.targetPortNameRegex | default "http|client|dashboard|mysql|redis") ($controlPlanePods.targetPortNumberRegex | default "8000|4002|3306|6379") | quote }}
@@ -205,7 +205,7 @@ data:
           target_label: component
           replacement: frontend
         - source_labels: [__meta_kubernetes_pod_label_app]
-          regex: (etcd|traefik)
+          regex: (etcd)
           action: replace
           target_label: component
           replacement: $1

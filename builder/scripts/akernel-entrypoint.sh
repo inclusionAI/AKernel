@@ -28,7 +28,36 @@ fi
 case "${role}" in
     master|frontend)
         /usr/local/bin/ensure-component-cert
-        exec /bin/bash /home/yuanrong/entrypoint.sh "$@"
+        # The shared image uses systemd's stop signal for node/standalone.
+        # Translate it for the CLI and keep PID 1 alive until cleanup finishes.
+        child_pid=""
+        stop_requested=false
+        stop_control_plane() {
+            stop_requested=true
+            if [ -n "$child_pid" ]; then
+                kill -TERM "$child_pid" 2>/dev/null || true
+            fi
+        }
+        trap stop_control_plane TERM INT RTMIN+3
+        /bin/bash /home/yuanrong/entrypoint.sh "$@" &
+        child_pid=$!
+        if [ "$stop_requested" = true ]; then
+            stop_control_plane
+        fi
+        # A trapped signal interrupts wait before the child has exited.
+        status=0
+        while true; do
+            if wait "$child_pid"; then
+                status=0
+                break
+            else
+                status=$?
+            fi
+            if ! kill -0 "$child_pid" 2>/dev/null; then
+                break
+            fi
+        done
+        exit "$status"
         ;;
     node)
         /bin/bash /root/prepare_node.sh

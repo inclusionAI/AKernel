@@ -40,19 +40,90 @@ resolve_node_ip() {
     printf '%s\n' "${node_ip}"
 }
 
+# Read the same final TOML file as sandboxd, including mounted overrides.
+resolve_node_proxy_target_cidrs() {
+    python3 - <<'PY'
+import ipaddress
+import os
+import sys
+import tomllib
+
+try:
+    value = os.environ.get("NODE_PROXY_ALLOWED_TARGET_CIDRS", "").strip()
+    if not value:
+        path = os.environ.get("SANDBOXD_CONFIG_PATH", "/home/akernel/sandboxd/config.toml")
+        with open(path, "rb") as config_file:
+            value = tomllib.load(config_file)["plugin"]["network"]["ip_range"]
+    networks = [str(ipaddress.ip_network(part.strip(), strict=False)) for part in value.split(",")]
+    print(",".join(networks))
+except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+    print(f"Cannot resolve Node Proxy target CIDRs: {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 YR_NODE_IP="$(resolve_node_ip)"
 echo "Using ${YR_NODE_IP} as the YuanRong node address"
 CHECKPOINT_DIR="/home/akernel/checkpoints"
 mkdir -p "${CHECKPOINT_DIR}"
 
-# Select the legacy etcd registry or the FunctionMaster HTTP provider.
-if [ "${TRAEFIK_MODE:-etcd}" = "etcd" ]; then
-    ENABLE_TRAEFIK_REGISTRY=${ENABLE_TRAEFIK_REGISTRY:-true}
-    ENABLE_TRAEFIK_PROVIDER=false
-else
-    ENABLE_TRAEFIK_REGISTRY=false
-    ENABLE_TRAEFIK_PROVIDER=true
+. /root/edge-config.sh
+configure_edge || exit 1
+
+NODE_PROXY_ARGS=()
+if [ "${ENABLE_NODE_PROXY:-false}" = "true" ]; then
+    NODE_PROXY_TARGET_CIDRS="$(resolve_node_proxy_target_cidrs)" || exit 1
+    if [ -z "${NODE_PROXY_ALLOWED_EDGE_CIDRS:-}" ] && [ "${AKS_LOCAL_MODE:-false}" = true ]; then
+        # Standalone Edge shares this network namespace and connects locally.
+        NODE_PROXY_ALLOWED_EDGE_CIDRS="127.0.0.1/32,${YR_NODE_IP}/32"
+    fi
+    NODE_PROXY_ARGS=(
+        --enable_node_proxy true
+        --node_proxy_bind "0.0.0.0:${NODE_PROXY_PORT:-9443}"
+        --node_proxy_advertise_address "${YR_NODE_IP}:${NODE_PROXY_PORT:-9443}"
+        --node_proxy_health_bind "0.0.0.0:${NODE_PROXY_HEALTH_PORT:-18443}"
+        --node_proxy_security_mode network
+        --node_proxy_allowed_target_cidrs "${NODE_PROXY_TARGET_CIDRS}"
+        --node_proxy_allowed_edge_cidrs "${NODE_PROXY_ALLOWED_EDGE_CIDRS:?required for Node Proxy}"
+        --data_plane_log_dir "${DATA_PLANE_LOG_DIR:-${YR_LOG_PATH:-/home/yuanrong/logs}}"
+        --data_plane_log_stdout true
+    )
 fi
+
+run_yuanrong() {
+    local child_pid=""
+    local stop_requested=false
+    local status=0
+    stop_yuanrong() {
+        if [ "$stop_requested" = false ]; then
+            stop_requested=true
+            if [ -n "$child_pid" ]; then
+                kill -TERM "$child_pid" 2>/dev/null || true
+            fi
+        fi
+    }
+    trap stop_yuanrong TERM INT
+    "$@" &
+    child_pid=$!
+    if [ "$stop_requested" = true ]; then
+        kill -TERM "$child_pid" 2>/dev/null || true
+    fi
+    # A signal interrupts wait; keep the service MainPID alive until the CLI
+    # has finished its ordered shutdown, including sandbox cleanup.
+    while true; do
+        if wait "$child_pid"; then
+            status=0
+            break
+        else
+            status=$?
+        fi
+        if ! kill -0 "$child_pid" 2>/dev/null; then
+            break
+        fi
+    done
+    trap - TERM INT
+    return "$status"
+}
 
 if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
     if [ -z "${LITEBUS_DATA_KEY:-}" ] && [ -r /home/akernel/iam-seed ]; then
@@ -63,7 +134,7 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         echo "LITEBUS_DATA_KEY is required in standalone mode" >&2
         exit 1
     fi
-    /usr/bin/yr start --master \
+    run_yuanrong /usr/bin/yr start --master "${NODE_PROXY_ARGS[@]}" "${EDGE_ARGS[@]}" \
         --ip_address "${YR_NODE_IP}" \
         --port_policy FIX \
         --enable_function_scheduler=false \
@@ -72,7 +143,7 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --enable_iam_server=true \
         --iam_token_expired_time_span 604800 \
         --ssl_base_path=/home/yuanrong/.cert/ \
-        --frontend_ssl_enable=true \
+        --frontend_ssl_enable="${FRONTEND_SSL_ENABLE:-true}" \
         --frontend_client_auth_type NoClientCert \
         --enable_function_token_auth true \
         --ds_node_timeout_s 30 \
@@ -87,13 +158,8 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --npu_collection_mode off \
         --enable_distributed_master false \
         --metrics_collector_type external \
-        --enable_traefik_registry=${ENABLE_TRAEFIK_REGISTRY} \
-        --enable_traefik_provider=${ENABLE_TRAEFIK_PROVIDER} \
-        --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \
-        --traefik_etcd_prefix=traefik \
-        --traefik_lease_ttl=300000 \
-        --traefik_http_entrypoint=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
-        --traefik_http_entry_point=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
+        --enable_traefik_registry=false \
+        --enable_traefik_provider=false \
         --enable_metrics ${ENABLE_METRICS} \
         --metrics_config_file "/home/yuanrong/metrics/metrics_config.json" \
         --enable_trace ${ENABLE_TRACE} \
@@ -102,7 +168,7 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --function_proxy_merge_process_enable true \
         --fc_agent_mgr_retry_times 30 \
         --fc_agent_mgr_retry_cycle 60000 \
-        --iam_ssl_enable true \
+        --iam_ssl_enable "${IAM_SSL_ENABLE:-true}" \
         --ssl_root_file ca.crt \
         --ssl_cert_file module.crt \
         --ssl_key_file module.key \
@@ -115,7 +181,7 @@ if [  "x${AKS_LOCAL_MODE}" == "xtrue" ]; then
         --enable_sandbox_router true \
         --enable_direct_routing false
 else
-    /usr/bin/yr start \
+    run_yuanrong /usr/bin/yr start "${NODE_PROXY_ARGS[@]}" "${EDGE_ARGS[@]}" \
         --ip_address "${YR_NODE_IP}" \
         --port_policy FIX \
         --ds_node_timeout_s 30 \
@@ -136,11 +202,7 @@ else
         --enable_trace ${ENABLE_TRACE} \
         --trace_config "$(cat /home/yuanrong/trace/trace_config.json)" \
         -n ${HOSTNAME} \
-        --enable_traefik_registry=${ENABLE_TRAEFIK_REGISTRY} \
-        --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \
-        --traefik_etcd_prefix=traefik \
-        --traefik_lease_ttl=300000 \
-        --traefik_http_entrypoint=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
+        --enable_traefik_registry=false \
         --log_root "${YR_LOG_PATH}" \
         --fc_agent_mgr_retry_times 30 \
         --fc_agent_mgr_retry_cycle 60000 \

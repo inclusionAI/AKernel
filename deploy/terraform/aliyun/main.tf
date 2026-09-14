@@ -9,6 +9,11 @@ provider "alicloud" {
 resource "null_resource" "input_validation" {
   lifecycle {
     precondition {
+      condition     = trimspace(local.node_proxy_edge_cidrs) != ""
+      error_message = "Set node_proxy_allowed_edge_cidrs to the actual Edge source CIDRs when using an existing cluster or imported Pod networks."
+    }
+
+    precondition {
       condition     = var.create_cluster || length(var.kubeconfig_path) > 0
       error_message = "kubeconfig_path must be set when create_cluster=false."
     }
@@ -50,6 +55,10 @@ resource "null_resource" "input_validation" {
 }
 
 locals {
+  # Derive only from networks managed here; imported networks need their real CIDRs.
+  derived_edge_cidrs    = var.create_cluster ? (local.use_terway_network ? (length(var.pod_vswitch_ids) == 0 && length(var.existing_vswitch_ids) == 0 ? join(",", distinct(var.vswitch_cidrs)) : "") : var.pod_cidr) : ""
+  node_proxy_edge_cidrs = trimspace(var.node_proxy_allowed_edge_cidrs) != "" ? var.node_proxy_allowed_edge_cidrs : local.derived_edge_cidrs
+
   oos_lifecycle_role_name   = "AliyunOOSLifecycleHook4CSRole"
   oos_lifecycle_policy_name = "AliyunOOSLifecycleHook4CSRolePolicy"
   use_terway_network        = var.network_addon != "flannel"
@@ -105,7 +114,7 @@ locals {
   slb_security_group_annotations = length(var.security_group_id) > 0 ? {
     "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-security-group-ids" = var.security_group_id
   } : {}
-  effective_traefik_service_annotations = merge(local.slb_security_group_annotations, var.traefik_service_annotations)
+  effective_edge_service_annotations = merge(local.slb_security_group_annotations, var.edge_service_annotations)
 
   effective_storage_class           = var.storage_class
   effective_monitor_storage_class   = length(var.monitor_storage_class) > 0 ? var.monitor_storage_class : local.effective_storage_class
@@ -131,11 +140,9 @@ locals {
     auths = { for host, cred in var.registry_auths : host => { auth = base64encode("${cred.username}:${cred.password}") } }
   }
 
-  etcd_image_repo              = length(var.etcd_image_repository) > 0 ? var.etcd_image_repository : "public.ecr.aws/bitnami/etcd"
-  master_image_repo            = length(var.master_image_repository) > 0 ? var.master_image_repository : "${local.acr_registry}/all-in-one"
-  node_image_repo              = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
-  traefik_image_repo           = length(var.traefik_image_repository) > 0 ? var.traefik_image_repository : "traefik"
-  traefik_internal_stats_image = length(var.traefik_internal_stats_image) > 0 ? var.traefik_internal_stats_image : "${local.acr_registry}/busybox:1.37.0-musl"
+  etcd_image_repo   = length(var.etcd_image_repository) > 0 ? var.etcd_image_repository : "public.ecr.aws/bitnami/etcd"
+  master_image_repo = length(var.master_image_repository) > 0 ? var.master_image_repository : "${local.acr_registry}/all-in-one"
+  node_image_repo   = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
     acr_registry                = local.acr_registry
@@ -149,12 +156,9 @@ locals {
     master_image_tag            = var.master_image_tag
     node_image_repository       = local.node_image_repo
     node_image_tag              = var.node_image_tag
-    traefik_image_repository    = local.traefik_image_repo
-    traefik_image_tag           = var.traefik_image_tag
     iam_litebus_data_key        = var.iam_litebus_data_key
     enable_kruise               = var.install_prereqs
-    master_service_type         = (var.master_public_access_8888 && !var.traefik_enabled) ? var.master_service_type : "ClusterIP"
-    traefik_enabled             = var.traefik_enabled
+    master_service_type         = var.master_public_access_8888 ? var.master_service_type : "ClusterIP"
     sandboxd_nat_backend        = var.sandboxd_nat_backend
     enable_runc                 = var.enable_runc
     node_secret_create          = var.node_secret_create
@@ -192,23 +196,20 @@ locals {
     frontend_cpu      = var.frontend_cpu
     frontend_memory   = var.frontend_memory
 
-    install_traefik               = var.install_traefik
-    traefik_replicas              = var.traefik_replicas
-    traefik_tcp_port              = var.traefik_tcp_port
-    traefik_enable_web_entrypoint = var.traefik_enable_web_entrypoint
-    traefik_web_port              = var.traefik_web_port
-    traefik_websecure_port        = var.traefik_websecure_port
-    traefik_service_type          = var.traefik_service_type
-    traefik_service_annotations   = local.effective_traefik_service_annotations
-    traefik_tls_enabled           = var.traefik_tls_enabled
-    traefik_tls_create_secret     = var.traefik_tls_create_secret
-    traefik_tls_cert              = var.traefik_tls_cert
-    traefik_tls_key               = var.traefik_tls_key
-    traefik_internal_stats        = var.traefik_internal_stats_enabled
-    traefik_internal_stats_image  = local.traefik_internal_stats_image
-    traefik_grafana_enabled       = var.install_monitor
-    traefik_grafana_url           = var.install_monitor ? "http://grafana.${var.monitor_namespace}.svc:3000" : ""
-
+    edge_service_name               = var.edge_service_name
+    edge_service_type               = var.edge_service_type
+    edge_service_loadbalancer_ip    = var.edge_service_loadbalancer_ip
+    edge_http_port                  = var.edge_http_port
+    edge_https_port                 = var.edge_https_port
+    edge_tls_secret_name            = var.edge_tls_secret_name
+    edge_tls_create_secret          = var.edge_tls_create_secret
+    edge_tls_cert                   = var.edge_tls_cert
+    edge_tls_key                    = var.edge_tls_key
+    edge_allowed_client_cidrs       = var.edge_allowed_client_cidrs
+    node_proxy_allowed_target_cidrs = var.node_proxy_allowed_target_cidrs
+    node_proxy_allowed_edge_cidrs   = local.node_proxy_edge_cidrs
+    edge_service_annotations        = local.effective_edge_service_annotations
+    edge_grafana_url                = var.install_monitor && !var.grafana_public_access ? "http://grafana.${var.monitor_namespace}.svc:3000" : ""
   })
 
   monitor_image_registry = var.monitor_image_registry

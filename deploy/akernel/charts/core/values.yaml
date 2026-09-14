@@ -17,6 +17,12 @@ monitoring:
   prometheusEndpoint: ""
   lokiEndpoint: ""
   tempoEndpoint: ""
+  processMetrics:
+    enabled: false
+    interval: "15s"
+  dataPlaneMetrics:
+    enabled: false
+    interval: "5s"
 
 image:
   repository: registry.example.com/akernel/all-in-one
@@ -98,6 +104,9 @@ master:
     port: "2379"
 
 frontend:
+  # Optional Frontend-only log collection endpoint; inherits monitoring.lokiEndpoint.
+  monitoring:
+    lokiEndpoint: ""
   enabled: true
   replicas: 2
   service:
@@ -123,6 +132,9 @@ frontend:
     iamServerAddress: ""
 
 node:
+  # Optional Node-only log collection endpoint; inherits monitoring.lokiEndpoint.
+  monitoring:
+    lokiEndpoint: ""
   secret:
     create: true
     oss_auths: {}
@@ -531,47 +543,33 @@ node:
         provider="kubernetes"
         sock_path="/var/run/resource.sock"
 
-traefik:
-  enabled: false
-  mode: "http"
-  enableTLS: false
-  # When enabled, creates a separate "web" entrypoint (no TLS) on its own port
-  # for port forwarding traffic, while frontend API stays on "websecure" with TLS.
-  enableWebEntrypoint: true
-  # Transport options for the frontend (akernel-master) backend.
-  frontendTransport:
-    # Force HTTP/1.1 to the frontend backend. The HTTP provider reloads the
-    # full config every 1s, and the per-sandbox routes churn constantly; each
-    # reload drains Traefik's backend connections. An HTTP/2 backend uses a
-    # single multiplexed connection, so a reload stalls all in-flight requests
-    # for 7-10s. An HTTP/1.1 connection pool avoids this. Keep true unless the
-    # frontend backend requires HTTP/2 (e.g. gRPC over :8888).
-    disableHTTP2: true
-  replicas: 1
-  image:
-    repository: traefik
-    tag: v3.6.8
-    pullPolicy: IfNotPresent
-  service:
-    type: LoadBalancer
-    clusterIP: ""
-    annotations: {}
-    loadBalancerIP: ""
-  ports:
-    tcp: 8888
-    websecure: 443
-    web: 80
-    dashboard: 9990
-  tls:
-    enabled: false
-    createSecret: false
-    secretName: "traefik-tls"
-    moduleCrt: ""
-    moduleKey: ""
-  internalStats:
-    enabled: false
-    image: busybox:1.37.0-musl
-    port: 8079
-  grafana:
-    enabled: false
-    url: "http://grafana.akernel-monitor.svc:3000"
+# Edge handles API, direct, tunnel and published-port ingress. It is started
+# with Frontend by the Go CLI; Node Proxy runs in each node network namespace.
+dataPlane:
+  enabled: true
+  edge:
+    tlsPort: 443
+    plainPort: 80
+    healthPort: 18080
+    tlsSecretName: ""
+    tls:
+      createSecret: false
+      cert: ""
+      key: ""
+    grafanaURL: ""
+    allowedClientCIDRs: "0.0.0.0/0"
+    service:
+      name: akernel-edge
+      type: LoadBalancer
+      annotations: {}
+      clusterIP: ""
+      loadBalancerIP: ""
+      httpsPort: 443
+      httpPort: 80
+  nodeProxy:
+    port: 9443
+    healthPort: 18443
+    # Empty reads plugin.network.ip_range from the final sandboxd TOML at startup.
+    allowedTargetCIDRs: ""
+    # Terraform derives this for managed clusters; direct Helm installs must set it.
+    allowedEdgeCIDRs: ""

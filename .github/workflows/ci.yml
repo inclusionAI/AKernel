@@ -204,7 +204,7 @@ jobs:
         run: |
           gateway_ip="$(docker inspect \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
-            akernel-traefik)"
+            akernel-node)"
           test -n "${gateway_ip}"
           token="$(cat deploy/standalone/data/token)"
           export AKERNEL_TOKEN="${token}"
@@ -238,7 +238,7 @@ jobs:
         run: |
           gateway_ip="$(docker inspect \
             --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
-            akernel-traefik)"
+            akernel-node)"
           test -n "${gateway_ip}"
           token="$(cat deploy/standalone/data/token)"
           export AKERNEL_TOKEN="${token}"
@@ -254,7 +254,7 @@ jobs:
         if: failure()
         run: |
           docker ps -a
-          for container in akernel-node akernel-traefik; do
+          for container in akernel-node; do
             if docker container inspect "${container}" >/dev/null 2>&1; then
               echo "=== ${container}: docker logs ==="
               docker logs --tail 500 "${container}" 2>&1 || true
@@ -284,7 +284,7 @@ jobs:
           if [[ -x ./deploy/standalone/stop.sh ]]; then
             ./deploy/standalone/stop.sh
           else
-            docker rm -f akernel-traefik akernel-node >/dev/null 2>&1 || true
+            docker rm -f akernel-node >/dev/null 2>&1 || true
           fi
 
       - name: Export tested all-in-one image

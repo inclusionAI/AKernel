@@ -150,7 +150,13 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(os.environ["YR_TLS"], "1")
         self.assertEqual(os.environ["YR_GATEWAY_ADDRESS"], "gateway.example:80")
         self.assertEqual(os.environ["YR_GATEWAY_TLS"], "0")
+        self.assertEqual(os.environ["YR_TUNNEL_SSL_VERIFY"], "0")
         self.assertEqual(os.environ["YR_TOKEN"], "secret")
+
+    def test_explicit_tunnel_certificate_verification_is_preserved(self):
+        os.environ["YR_TUNNEL_SSL_VERIFY"] = "1"
+        openyuanrong_sandbox.OpenYuanRongSandboxBackend(self.config)
+        self.assertEqual(os.environ["YR_TUNNEL_SSL_VERIFY"], "1")
 
     def test_runtime_identifier_without_explicit_rootfs_is_forwarded(self):
         native = MagicMock()

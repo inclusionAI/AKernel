@@ -40,7 +40,7 @@ from .types import (
     SandboxInfo,
 )
 
-_traefik_internal_ip_cache: str | None = None
+_gateway_internal_address_cache: dict[tuple[str, Endpoint], tuple[str, int]] = {}
 logger = logging.getLogger(__name__)
 
 
@@ -141,14 +141,14 @@ def _validate_integer(
         raise ValueError(f"{name} must be greater than or equal to {minimum}")
 
 
-def _get_traefik_internal_ip(gateway: Endpoint) -> tuple[str, int]:
-    """Resolve Traefik's direct address for ``internal=True`` URLs."""
-
-    global _traefik_internal_ip_cache
-    if _traefik_internal_ip_cache is not None:
-        return _traefik_internal_ip_cache, gateway.port
+def _get_gateway_internal_address(gateway: Endpoint) -> tuple[str, int]:
+    """Resolve the gateway's direct address for ``internal=True`` URLs."""
 
     server = api_endpoint_from_env()
+    cache_key = (server.base_url(), gateway)
+    if cache_key in _gateway_internal_address_cache:
+        return _gateway_internal_address_cache[cache_key]
+
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
@@ -161,8 +161,13 @@ def _get_traefik_internal_ip(gateway: Endpoint) -> tuple[str, int]:
     pod_ip = payload.get("pod_ip")
     if not isinstance(pod_ip, str) or not pod_ip:
         raise RuntimeError("/internal-stats response does not contain pod_ip")
-    _traefik_internal_ip_cache = pod_ip
-    return pod_ip, gateway.port
+    port_key = "https_port" if gateway.use_tls else "http_port"
+    port = payload.get(port_key, gateway.port)
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise RuntimeError(f"/internal-stats response contains invalid {port_key}")
+    address = (pod_ip, port)
+    _gateway_internal_address_cache[cache_key] = address
+    return address
 
 
 class Sandbox:
@@ -538,7 +543,7 @@ class Sandbox:
 
         Args:
             port: Port included in ``port_forwardings`` at sandbox creation.
-            internal: Resolve Traefik's directly reachable address instead of
+            internal: Resolve the gateway's directly reachable address instead of
                 the public gateway address.
 
         Raises:
@@ -554,7 +559,7 @@ class Sandbox:
 
         gateway = gateway_endpoint_from_env()
         if internal:
-            pod_ip, gateway_port = _get_traefik_internal_ip(gateway)
+            pod_ip, gateway_port = _get_gateway_internal_address(gateway)
             direct = Endpoint(
                 host=pod_ip,
                 port=gateway_port,

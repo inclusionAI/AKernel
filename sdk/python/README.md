@@ -430,7 +430,7 @@ with Sandbox(port_forwardings=[8080]) as sandbox:
 ```
 
 `get_port_url()` rejects undeclared ports. Pass `internal=True` only when a
-deployment operator explicitly wants the direct Traefik address instead of the
+deployment operator explicitly wants the direct Edge address instead of the
 public gateway.
 
 ## Local failover and reload
@@ -485,10 +485,16 @@ with Sandbox(reverse_tunnel=tunnel) as sandbox:
     )
 ```
 
-`reverse_port` carries the WebSocket tunnel through Traefik. `listen_port` is
+`reverse_port` carries the WebSocket tunnel through Edge. `listen_port` is
 the loopback HTTP listener used inside the sandbox. Consequently,
 `sandbox.reverse_tunnel.url` is always
 `http://127.0.0.1:<listen_port>`, even when `target` uses HTTPS.
+
+WSS gateway connections skip server certificate verification by default,
+including standalone's self-signed certificate. Set `YR_TUNNEL_SSL_VERIFY=1`
+to enable verification; `YR_TUNNEL_CA_BUNDLE=/path/to/ca.crt` selects a custom
+CA bundle. The gateway address must match the certificate when verification
+is enabled.
 
 For an HTTPS target, the SDK-side tunnel client performs the TLS handshake and
 certificate verification. The sandbox application talks only to its loopback

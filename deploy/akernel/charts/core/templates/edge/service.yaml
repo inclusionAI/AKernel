@@ -1,0 +1,33 @@
+{{- if .Values.dataPlane.enabled }}
+{{- if not .Values.frontend.enabled }}
+{{- fail "dataPlane.enabled requires frontend.enabled" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.dataPlane.edge.service.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: edge
+  {{- with .Values.dataPlane.edge.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.dataPlane.edge.service.type }}
+  {{- with .Values.dataPlane.edge.service.clusterIP }}
+  clusterIP: {{ . }}
+  {{- end }}
+  {{- with .Values.dataPlane.edge.service.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  ports:
+    - name: websecure
+      port: {{ .Values.dataPlane.edge.service.httpsPort }}
+      targetPort: websecure
+    - name: web
+      port: {{ .Values.dataPlane.edge.service.httpPort }}
+      targetPort: web
+  selector:
+    app: akernel-frontend
+{{- end }}

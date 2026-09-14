@@ -11,13 +11,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${SCRIPT_DIR}/config"
 DATA_DIR="${SCRIPT_DIR}/data"
-FRONTEND_PORT="8888"
 ETCD_PORT="${ETCD_PORT:-2379}"
 ETCD_PEER_PORT="${ETCD_PEER_PORT:-2378}"
-NODE_CONTAINER_NAME="akernel-node"
-TRAEFIK_CONTAINER_NAME="akernel-traefik"
+NODE_CONTAINER_NAME="${NODE_CONTAINER_NAME:-akernel-node}"
 IMAGE="${IMAGE:-akerneldev/all-in-one:latest}"
-TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.6.8}"
 IAM_SEED_FILE="${DATA_DIR}/iam-seed"
 TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
@@ -162,7 +159,7 @@ configure_auth() {
 # Stop and remove existing container
 cleanup_existing() {
     local container
-    for container in "${NODE_CONTAINER_NAME}" "${TRAEFIK_CONTAINER_NAME}"; do
+    for container in "${NODE_CONTAINER_NAME}"; do
         if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} container inspect "${container}" &> /dev/null; then
             log_warn "Existing container '${container}' found; run stop.sh first"
             exit 1
@@ -349,12 +346,9 @@ prepare_host_network_modules() {
     log_info "Loaded host filter, bridge, conntrack, and ipset modules for the iptables ACL backend"
 }
 
-# Start the AKernel all-in-one container. Traefik runs separately so traffic
-# from the gateway enters this network namespace through PREROUTING.
+# Start the all-in-one container with Edge and Node Proxy supervised by Go CLI.
 start_node_container() {
     log_info "Starting container: ${NODE_CONTAINER_NAME}"
-    # FunctionMaster's HTTP provider publishes the per-sandbox routes required
-    # by reverse tunnels; the legacy etcd mode cannot publish those routes.
 
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
         --name "${NODE_CONTAINER_NAME}" \
@@ -365,9 +359,11 @@ start_node_container() {
         -e AKS_LOCAL_MODE="true" \
         -e YR_RRT_CONTROL_SOCKET_PATH="/run/akernel" \
         -e YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG}" \
-        -e TRAEFIK_MODE="http" \
-        -e TRAEFIK_HTTP_ENTRYPOINT="web" \
-        -e TRAEFIK_ENABLE_TLS="false" \
+        -e ENABLE_EDGE_FRONTEND=true \
+        -e EDGE_GRAFANA_URL="${EDGE_GRAFANA_URL:-}" \
+        -e ENABLE_NODE_PROXY=true \
+        -e NODE_PROXY_ALLOWED_EDGE_CIDRS="${NODE_PROXY_ALLOWED_EDGE_CIDRS:-}" \
+        -e NODE_PROXY_ALLOWED_TARGET_CIDRS="${NODE_PROXY_ALLOWED_TARGET_CIDRS:-}" \
         -e ETCD_PORT="${ETCD_PORT}" \
         -e ETCD_PEER_PORT="${ETCD_PEER_PORT}" \
         -e NODE_NAME="$(hostname)" \
@@ -416,86 +412,28 @@ container_ip() {
         --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"
 }
 
-write_traefik_config() {
-    local node_ip="$1"
-    local traefik_dir="${DATA_DIR}/traefik"
-    mkdir -p "${traefik_dir}"
-
-    cat > "${traefik_dir}/dynamic.yml" <<EOF
-http:
-  routers:
-    akernel-frontend:
-      entryPoints:
-        - websecure
-      rule: "PathPrefix(\`/terminal\`) || PathPrefix(\`/api/instances\`) || PathPrefix(\`/api/jobs\`) || PathPrefix(\`/functions\`) || PathPrefix(\`/api-docs\`) || PathPrefix(\`/admin/v1/functions\`) || PathPrefix(\`/serverless/v1/functions\`) || PathPrefix(\`/serverless/v1/stream\`) || PathPrefix(\`/serverless/v1/componentshealth\`) || PathPrefix(\`/serverless/v1/posix\`) || PathPrefix(\`/serverless/v2\`) || PathPrefix(\`/frontend/v1/instance\`) || PathPrefix(\`/datasystem/v1\`) || PathPrefix(\`/app/v1\`) || PathPrefix(\`/client/v1/lease\`) || PathPrefix(\`/invocations\`) || PathPrefix(\`/global-scheduler\`) || Path(\`/healthz\`)"
-      service: akernel-frontend
-      tls: {}
-    sandbox-router:
-      entryPoints:
-        - websecure
-      rule: "PathPrefix(\`/api/sandbox\`) || PathPrefix(\`/direct/\`) || Path(\`/direct\`)"
-      priority: 100
-      service: akernel-frontend
-      tls: {}
-
-  services:
-    akernel-frontend:
-      loadBalancer:
-        serversTransport: akernel-frontend
-        servers:
-          - url: "https://${node_ip}:${FRONTEND_PORT}"
-
-  serversTransports:
-    akernel-frontend:
-      insecureSkipVerify: true
-      disableHTTP2: true
-EOF
-}
-
-start_traefik_container() {
-    local provider_endpoint="$1"
-    local dynamic_config="${DATA_DIR}/traefik/dynamic.yml"
-
-    log_info "Starting container: ${TRAEFIK_CONTAINER_NAME}"
-    "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
-        --name "${TRAEFIK_CONTAINER_NAME}" \
-        --net bridge \
-        --restart always \
-        -v "${dynamic_config}:/etc/traefik/dynamic.yml:ro" \
-        "${TRAEFIK_IMAGE}" \
-        --entryPoints.web.address=:80 \
-        --entryPoints.websecure.address=:443 \
-        --providers.file.filename=/etc/traefik/dynamic.yml \
-        --providers.http.endpoint="${provider_endpoint}" \
-        --providers.http.pollInterval=1s \
-        --log.level=INFO \
-        --accessLog=true \
-        --accessLog.format=json \
-        --accessLog.fields.names.RequestPath=drop
-}
-
 wait_for_gateway() {
-    local traefik_ip="$1"
+    local gateway_ip="$1"
     local retries=60
     local delay=2
 
-    log_info "Waiting for Traefik at ${traefik_ip}"
+    log_info "Waiting for Edge at ${gateway_ip}"
     for i in $(seq 1 ${retries}); do
-        if curl --noproxy '*' -fkSs "https://${traefik_ip}/healthz" > /dev/null; then
-            log_info "Traefik gateway is ready"
+        if curl --noproxy '*' -fkSs "https://${gateway_ip}/healthz" > /dev/null; then
+            log_info "Edge gateway is ready"
             return 0
         fi
 
         if ! "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} inspect \
-            --format '{{.State.Running}}' "${TRAEFIK_CONTAINER_NAME}" 2> /dev/null \
+            --format '{{.State.Running}}' "${NODE_CONTAINER_NAME}" 2> /dev/null \
             | grep -q true; then
-            log_error "Traefik exited during startup"
-            "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} logs "${TRAEFIK_CONTAINER_NAME}" || true
+            log_error "Edge exited during startup"
+            "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} logs "${NODE_CONTAINER_NAME}" || true
             return 1
         fi
 
         if [[ ${i} -eq ${retries} ]]; then
-            log_error "Traefik gateway did not become ready"
+            log_error "Edge gateway did not become ready"
             return 1
         fi
         sleep ${delay}
@@ -505,21 +443,17 @@ wait_for_gateway() {
 # Show status
 show_status() {
     local node_ip="$1"
-    local traefik_ip="$2"
 
     echo ""
     log_info "Container status:"
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} ps -a \
-        --filter "name=${NODE_CONTAINER_NAME}" \
-        --filter "name=${TRAEFIK_CONTAINER_NAME}"
+        --filter "name=${NODE_CONTAINER_NAME}"
 
     echo ""
     log_info "Useful commands:"
     echo "  AKernel logs:  ${DOCKER_CMD} logs -f ${NODE_CONTAINER_NAME}"
-    echo "  Traefik logs:  ${DOCKER_CMD} logs -f ${TRAEFIK_CONTAINER_NAME}"
     echo "  Enter AKernel: ${DOCKER_CMD} exec -it ${NODE_CONTAINER_NAME} bash"
     echo "  AKernel IP:    ${node_ip}"
-    echo "  Traefik IP:    ${traefik_ip}"
     echo "  SDK token:     ${TOKEN_FILE}"
 }
 
@@ -528,7 +462,6 @@ check_prerequisites
 cleanup_existing
 configure_auth
 ensure_image "${IMAGE}"
-ensure_image "${TRAEFIK_IMAGE}"
 configure_container_proxy
 configure_gpu
 configure_network
@@ -540,18 +473,9 @@ if [[ -z "${NODE_IP}" ]]; then
     log_error "Could not determine the AKernel container IP"
     exit 1
 fi
-write_traefik_config "${NODE_IP}"
-TRAEFIK_PROVIDER_ENDPOINT="http://${NODE_IP}:22770/global-scheduler/traefik/config"
-log_info "Using FunctionMaster route provider: ${TRAEFIK_PROVIDER_ENDPOINT}"
-start_traefik_container "${TRAEFIK_PROVIDER_ENDPOINT}"
-TRAEFIK_IP="$(container_ip "${TRAEFIK_CONTAINER_NAME}")"
-if [[ -z "${TRAEFIK_IP}" ]]; then
-    log_error "Could not determine the Traefik container IP"
-    exit 1
-fi
-wait_for_gateway "${TRAEFIK_IP}"
-show_status "${NODE_IP}" "${TRAEFIK_IP}"
+wait_for_gateway "${NODE_IP}"
+show_status "${NODE_IP}"
 
 log_info "AKernel started successfully in standalone mode"
-log_info "Set AKERNEL_SERVER_ADDRESS=${TRAEFIK_IP}"
+log_info "Set AKERNEL_SERVER_ADDRESS=${NODE_IP}"
 log_info "Set AKERNEL_TOKEN=\$(cat ${TOKEN_FILE})"

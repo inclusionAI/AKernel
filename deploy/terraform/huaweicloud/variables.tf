@@ -448,18 +448,6 @@ variable "node_image_tag" {
   default     = ""
 }
 
-variable "traefik_image_repository" {
-  type        = string
-  description = "Image repository for Traefik."
-  default     = "traefik"
-}
-
-variable "traefik_image_tag" {
-  type        = string
-  description = "Image tag for Traefik."
-  default     = "v3.6.8"
-}
-
 variable "monitor_image_registry" {
   type        = string
   description = "Optional mirror registry prefix for Grafana, Prometheus, Loki, Tempo, and BusyBox. Empty uses their official public images."
@@ -560,7 +548,11 @@ variable "master_replicas" {
 variable "frontend_enabled" {
   type        = bool
   description = "Whether to enable frontend Deployment (splits from master for independent scaling)."
-  default     = false
+  default     = true
+  validation {
+    condition     = var.frontend_enabled
+    error_message = "Edge ingress requires frontend_enabled=true."
+  }
 }
 
 variable "frontend_replicas" {
@@ -579,92 +571,6 @@ variable "frontend_memory" {
   type        = string
   description = "Memory request/limit for frontend pods."
   default     = "8Gi"
-}
-
-variable "install_traefik" {
-  type        = bool
-  description = "Whether to enable Traefik ingress controller in the core chart."
-  default     = true
-}
-
-variable "traefik_replicas" {
-  type        = number
-  description = "Number of Traefik replicas."
-  default     = 1
-}
-
-variable "traefik_tcp_port" {
-  type        = number
-  description = "TCP port for Traefik websecure entrypoint (legacy single-entrypoint mode; ignored when traefik_enable_web_entrypoint=true)."
-  default     = 8888
-}
-
-variable "traefik_enable_web_entrypoint" {
-  type        = bool
-  description = "Enable dual entrypoints: 'websecure' (TLS, frontend API) on traefik_websecure_port and 'web' (plain HTTP, port forwarding) on traefik_web_port. When false, falls back to legacy single-entrypoint mode using traefik_tcp_port."
-  default     = false
-}
-
-variable "traefik_web_port" {
-  type        = number
-  description = "Port for Traefik 'web' (plain HTTP) entrypoint. Only used when traefik_enable_web_entrypoint=true."
-  default     = 80
-}
-
-variable "traefik_websecure_port" {
-  type        = number
-  description = "Port for Traefik 'websecure' (TLS) entrypoint. Only used when traefik_enable_web_entrypoint=true."
-  default     = 443
-}
-
-variable "traefik_service_type" {
-  type        = string
-  description = "Service type for Traefik. Use 'LoadBalancer' for cloud deployments."
-  default     = "LoadBalancer"
-}
-
-variable "traefik_public_access" {
-  type        = bool
-  description = "Whether Traefik receives a public Huawei Cloud LoadBalancer."
-  default     = true
-}
-
-variable "traefik_tls_enabled" {
-  type        = bool
-  description = "Whether to enable TLS for Traefik."
-  default     = false
-}
-
-variable "traefik_tls_cert" {
-  type        = string
-  description = "TLS certificate content (PEM) for Traefik. Only used when traefik_tls_enabled=true and traefik_tls_create_secret=true."
-  default     = ""
-  sensitive   = true
-}
-
-variable "traefik_tls_key" {
-  type        = string
-  description = "TLS private key content (PEM) for Traefik. Only used when traefik_tls_enabled=true and traefik_tls_create_secret=true."
-  default     = ""
-  sensitive   = true
-}
-
-variable "traefik_tls_create_secret" {
-  type        = bool
-  description = "Whether to create TLS secret from traefik_tls_cert/traefik_tls_key."
-  default     = false
-}
-
-variable "traefik_internal_stats_enabled" {
-  type        = bool
-  description = "Whether to enable the /internal-stats endpoint on Traefik."
-  default     = false
-}
-
-variable "traefik_internal_stats_image" {
-  type        = string
-  description = "BusyBox image for the Traefik /internal-stats sidecar."
-  default     = "busybox:1.37.0-musl"
 }
 
 variable "monitor_namespace" {
@@ -988,4 +894,90 @@ variable "tempo_resources" {
     pvc_size          = optional(string, "10Gi")
   })
   default = {}
+}
+
+variable "edge_service_name" {
+  type        = string
+  description = "Name of the Edge ingress Service. Reuse the existing ingress Service name during migration."
+  default     = "akernel-edge"
+}
+
+variable "edge_service_type" {
+  type        = string
+  description = "Kubernetes Service type for Edge ingress."
+  default     = "LoadBalancer"
+}
+
+variable "edge_service_loadbalancer_ip" {
+  type        = string
+  description = "Optional existing ingress LoadBalancer IP."
+  default     = ""
+}
+
+variable "edge_http_port" {
+  type        = number
+  description = "External HTTP and WS sandbox-port Service port."
+  default     = 80
+}
+
+variable "edge_https_port" {
+  type        = number
+  description = "External HTTPS and WSS API Service port."
+  default     = 443
+}
+
+variable "edge_tls_secret_name" {
+  type        = string
+  description = "TLS Secret containing tls.crt and tls.key. Empty uses the component certificate."
+  default     = ""
+}
+
+variable "edge_tls_create_secret" {
+  type        = bool
+  description = "Create the named TLS Secret from edge_tls_cert and edge_tls_key."
+  default     = false
+}
+
+variable "edge_tls_cert" {
+  type        = string
+  description = "PEM certificate for the Edge TLS Secret."
+  default     = ""
+  sensitive   = true
+}
+
+variable "edge_tls_key" {
+  type        = string
+  description = "PEM private key for the Edge TLS Secret."
+  default     = ""
+  sensitive   = true
+}
+
+variable "edge_allowed_client_cidrs" {
+  type        = string
+  description = "Comma-separated client CIDRs allowed to reach Edge."
+  default     = "0.0.0.0/0"
+}
+
+variable "node_proxy_allowed_target_cidrs" {
+  type        = string
+  description = "Optional sandbox target CIDRs. Empty reads plugin.network.ip_range from the final sandboxd TOML."
+  default     = ""
+}
+
+variable "node_proxy_allowed_edge_cidrs" {
+  type        = string
+  description = "Optional Edge source CIDRs. Empty derives Pod CIDRs for managed networks. Set explicitly for existing clusters or SNAT."
+  default     = ""
+}
+
+variable "edge_service_annotations" {
+  type        = map(string)
+  description = "Additional annotations for the Edge Service."
+  default     = {}
+}
+
+variable "edge_public_access" {
+  type        = bool
+  description = "Create a public Huawei Cloud ELB for Edge."
+  default     = true
 }

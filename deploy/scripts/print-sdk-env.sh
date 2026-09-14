@@ -52,14 +52,29 @@ get_lb_host() {
   printf '%s' "${host}"
 }
 
-traefik_host="$(get_lb_host "${core_ns}" traefik)"
-[[ -n "${traefik_host}" ]] || die "traefik LoadBalancer address is not ready"
+gateway_service="${AKERNEL_GATEWAY_SERVICE:-}"
+if [[ -z "${gateway_service}" ]]; then
+  gateway_service="$(kubectl --kubeconfig "${kubeconfig}" -n "${core_ns}" get svc \
+    -l app.kubernetes.io/component=edge -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+fi
+[[ -n "${gateway_service}" ]] || die "Edge gateway Service not found; set AKERNEL_GATEWAY_SERVICE"
+gateway_host="$(get_lb_host "${core_ns}" "${gateway_service}")"
+[[ -n "${gateway_host}" ]] || die "${gateway_service} LoadBalancer address is not ready"
+
+https_port="$(kubectl --kubeconfig "${kubeconfig}" -n "${core_ns}" get svc "${gateway_service}" -o 'jsonpath={.spec.ports[?(@.name=="websecure")].port}')"
+http_port="$(kubectl --kubeconfig "${kubeconfig}" -n "${core_ns}" get svc "${gateway_service}" -o 'jsonpath={.spec.ports[?(@.name=="web")].port}')"
+[[ -n "${https_port}" && -n "${http_port}" ]] || die "Edge Service must expose websecure and web ports"
 
 token="$("${AKERNEL_REPO_ROOT}/deploy/scripts/generate-token.py" --env "${env_name}" --write-file "${dir}/token")"
 
 sdk_env="${dir}/sdk.env"
 {
-  printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${traefik_host}"
+  if [[ "${https_port}" == 443 && "${http_port}" == 80 ]]; then
+    printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${gateway_host}"
+  else
+    printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "https://${gateway_host}:${https_port}"
+    printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' "http://${gateway_host}:${http_port}"
+  fi
   printf 'export AKERNEL_TOKEN=%q\n' "${token}"
 } > "${sdk_env}"
 chmod 600 "${sdk_env}"

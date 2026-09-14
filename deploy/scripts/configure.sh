@@ -332,16 +332,6 @@ frontend_replicas = 1
 frontend_cpu      = "1"
 frontend_memory   = "2Gi"
 
-traefik_enabled               = true
-install_traefik               = true
-traefik_service_type          = "LoadBalancer"
-traefik_enable_web_entrypoint = true
-traefik_websecure_port        = 443
-traefik_web_port              = 80
-traefik_tls_enabled           = false
-traefik_tls_create_secret     = false
-traefik_internal_stats_enabled = true
-
 install_prereqs = false
 
 install_monitor        = ${install_monitor}
@@ -386,15 +376,6 @@ frontend_enabled  = true
 frontend_replicas = 1
 frontend_cpu      = "1"
 frontend_memory   = "2Gi"
-
-install_traefik                  = true
-traefik_public_access            = true
-traefik_enable_web_entrypoint    = true
-traefik_websecure_port           = 443
-traefik_web_port                 = 80
-traefik_tls_enabled              = false
-traefik_tls_create_secret        = false
-traefik_internal_stats_enabled   = true
 
 install_prereqs = false
 

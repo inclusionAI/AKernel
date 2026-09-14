@@ -1,0 +1,14 @@
+{{- $nodeLokiEndpoint := get (.Values.node.monitoring | default dict) "lokiEndpoint" | default .Values.monitoring.lokiEndpoint }}
+{{- if or .Values.monitoring.prometheusEndpoint $nodeLokiEndpoint .Values.monitoring.tempoEndpoint }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: akernel-node-otel-collector-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: akernel
+    component: otel-collector
+data:
+  otel_config.yaml: |
+{{ include "core.otelCollectorConfig" (dict "root" . "role" "node") | indent 4 }}
+{{- end }}

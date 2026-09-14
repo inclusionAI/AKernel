@@ -1,0 +1,84 @@
+# Optional process telemetry; merged when monitoring.processMetrics.enabled is true.
+receivers:
+  hostmetrics/process:
+    collection_interval: 15s
+    scrapers:
+      process:
+        include:
+          names:
+          - ^(function_(master|proxy)|datasystem_work(er)?|goruntime|meta_service|iam_server|sandboxd|distill_fs|etcd|otelcol-contrib|yr-edge-fronten(d)?|yr-node-proxy)$
+          match_type: regexp
+        scrape_process_delay: 10s
+        mute_process_all_errors: true
+        resource_attributes:
+          process.parent_pid:
+            enabled: false
+          process.executable.path:
+            enabled: false
+          process.command:
+            enabled: false
+          process.command_line:
+            enabled: true
+          process.owner:
+            enabled: false
+        metrics:
+          process.cpu.time:
+            enabled: true
+          process.cpu.utilization:
+            enabled: true
+          process.memory.usage:
+            enabled: true
+          process.memory.virtual:
+            enabled: true
+          process.memory.utilization:
+            enabled: true
+          process.disk.io:
+            enabled: false
+          process.open_file_descriptors:
+            enabled: true
+          process.threads:
+            enabled: true
+          process.uptime:
+            enabled: true
+processors:
+  transform/process_component:
+    error_mode: ignore
+    metric_statements:
+    - set(resource.attributes["component.name"], resource.attributes["process.executable.name"])
+    - set(resource.attributes["component.name"], "ds_worker") where IsMatch(resource.attributes["process.executable.name"],
+      "^datasystem_work(er)?$")
+    - set(resource.attributes["component.name"], "frontend") where resource.attributes["process.executable.name"]
+      == "goruntime" and IsMatch(resource.attributes["process.command_line"], "(^|\\s)-runtimeId=(faas_)?frontend_libruntime(\\s|$)")
+    - set(resource.attributes["component.name"], "scheduler") where resource.attributes["process.executable.name"]
+      == "goruntime" and IsMatch(resource.attributes["process.command_line"], "(^|\\s)-runtimeId=(faas_)?scheduler_libruntime(\\s|$)")
+    - set(resource.attributes["component.name"], "edge_frontend") where IsMatch(resource.attributes["process.executable.name"],
+      "^yr-edge-fronten(d)?$")
+    - set(resource.attributes["component.name"], "node_proxy") where resource.attributes["process.executable.name"]
+      == "yr-node-proxy"
+    - delete_key(resource.attributes, "process.command_line")
+  resource/process_context:
+    attributes:
+    - key: k8s.pod.name
+      value: ${env:POD_NAME:-unknown}
+      action: upsert
+    - key: k8s.namespace.name
+      value: ${env:POD_NAMESPACE:-unknown}
+      action: upsert
+    - key: k8s.node.name
+      value: ${env:NODE_NAME:-unknown}
+      action: upsert
+    - key: process.command_line
+      action: delete
+service:
+  pipelines:
+    metrics/process:
+      receivers:
+      - hostmetrics/process
+      processors:
+      - memory_limiter
+      - transform/process_component
+      - resource/process_context
+      - resource
+      - batch
+      exporters:
+      - prometheusremotewrite

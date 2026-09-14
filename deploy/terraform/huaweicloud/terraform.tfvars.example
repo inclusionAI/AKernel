@@ -82,8 +82,6 @@ master_image_repository   = "swr.cn-north-4.myhuaweicloud.com/akernel/all-in-one
 master_image_tag          = "<release-tag>"
 node_image_repository     = "swr.cn-north-4.myhuaweicloud.com/akernel/all-in-one"
 node_image_tag            = "<release-tag>"
-# traefik_image_repository = "traefik"
-# traefik_image_tag        = "v3.6.8"
 
 # Generate a unique seed for each deployment. Guided `make config` writes this
 # automatically; direct Terraform users can use `openssl rand -hex 32`.
@@ -93,9 +91,6 @@ node_image_tag            = "<release-tag>"
 # matching AKERNEL_ENABLE_RUNC=true profile setting.
 enable_runc = false
 
-# Enable the /internal-stats endpoint sidecar on Traefik.
-# traefik_internal_stats_enabled = true
-# traefik_internal_stats_image   = "my-registry.example.com/busybox:1.37.0-musl"
 
 # Optional mirror registry for Grafana, Prometheus, Loki, Tempo, and BusyBox.
 # Leave empty to use the projects' official public images.
@@ -154,15 +149,12 @@ enable_runc = false
 # Optional: master replicas (for HA when frontend is enabled).
 # master_replicas = 1
 
-# Optional: enable frontend Deployment (splits from master for independent scaling).
-# When enabled, Traefik routes API traffic to akernel-frontend instead of akernel-master.
-# frontend_enabled = false
+# Frontend runs Edge and scales independently from master.
+# frontend_enabled = true
 # frontend_replicas = 2
 # frontend_cpu      = "4"
 # frontend_memory   = "8Gi"
 
-# Optional: traefik replicas.
-# traefik_replicas = 1
 
 # Restrict SSH CIDRs in production.
 allowed_ssh_cidrs = ["0.0.0.0/0"]
@@ -195,3 +187,9 @@ prereq_kruise_chart_version = "1.8.3"
 #     password = "<password>"
 #   }
 # }
+
+# Edge ingress and Node Proxy are enabled by default.
+edge_service_type = "LoadBalancer"
+# edge_tls_secret_name = "edge-tls"
+# node_proxy_allowed_edge_cidrs = "10.0.0.0/8"
+# node_proxy_allowed_target_cidrs = "172.16.0.0/12"

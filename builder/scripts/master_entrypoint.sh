@@ -42,19 +42,12 @@ otel_watchdog() {
 }
 
 export -f otel_watchdog
-if { [ "${ENABLE_METRICS:-false}" = "true" ] || [ "${ENABLE_TRACE:-false}" = "true" ]; } && command -v otelcol-contrib >/dev/null 2>&1; then
+if { [ "${ENABLE_METRICS:-false}" = "true" ] || [ "${ENABLE_TRACE:-false}" = "true" ] || [ -n "${LOKI_ENDPOINT:-}" ]; } && command -v otelcol-contrib >/dev/null 2>&1; then
     nohup bash -c otel_watchdog &
     echo "otelcol watchdog started"
     echo "otel log: ${DEPLOY_PATH}/otelcol.log"
 else
     echo "otelcol watchdog skipped"
-fi
-
-# Set enable_traefik_provider based on TRAEFIK_MODE
-if [ "${TRAEFIK_MODE:-etcd}" = "http" ]; then
-    ENABLE_TRAEFIK_PROVIDER=true
-else
-    ENABLE_TRAEFIK_PROVIDER=false
 fi
 
 if [ -z "${LITEBUS_DATA_KEY:-}" ]; then
@@ -68,7 +61,10 @@ if [ ! -x "${YR_BIN}" ]; then
     exit 1
 fi
 
-exec "${YR_BIN}" start --master --block true \
+. /root/edge-config.sh
+configure_edge || exit 1
+
+exec "${YR_BIN}" start --master --block true "${EDGE_ARGS[@]}" \
     -e -c 0 -m 8000 -s 4096 -n $HOSTNAME \
     -d $DEPLOY_PATH \
     --fs_health_check_retry_interval 1 \
@@ -79,7 +75,7 @@ exec "${YR_BIN}" start --master --block true \
     --enable_iam_server ${ENABLE_IAM_SERVER:-true} \
     --iam_token_expired_time_span 604800 \
     --ssl_base_path=/home/yuanrong/.cert/ \
-    --frontend_ssl_enable=true \
+    --frontend_ssl_enable=${FRONTEND_SSL_ENABLE:-true} \
     --frontend_client_auth_type NoClientCert \
     --enable_function_token_auth ${ENABLE_FUNCTION_TOKEN_AUTH:-true} \
     --enable_inherit_env false \
@@ -98,12 +94,9 @@ exec "${YR_BIN}" start --master --block true \
     --ds_rpc_thread_num 128 \
     --function_proxy_merge_process_enable true \
     --force_low_reliability_instance true \
-    --enable_traefik_provider=${ENABLE_TRAEFIK_PROVIDER} \
-    --traefik_http_entry_point=${TRAEFIK_HTTP_ENTRYPOINT:-websecure} \
-    --traefik_enable_tls=${TRAEFIK_ENABLE_TLS:-false} \
-    --traefik_forward_timeout_ms=3000 \
+    --enable_traefik_provider=false \
     --frontend_lease_bypass true \
-    --iam_ssl_enable true \
+    --iam_ssl_enable ${IAM_SSL_ENABLE:-true} \
     --ssl_root_file ca.crt \
     --ssl_cert_file module.crt \
     --ssl_key_file module.key \

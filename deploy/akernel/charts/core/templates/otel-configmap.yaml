@@ -9,5 +9,5 @@ metadata:
     component: otel-collector
 data:
   otel_config.yaml: |
-{{ .Files.Get "files/otel-collector/config.yaml" | indent 4 }}
+{{ include "core.otelCollectorConfig" (dict "root" . "role" "master") | indent 4 }}
 {{- end }}

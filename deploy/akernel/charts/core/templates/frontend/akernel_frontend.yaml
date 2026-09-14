@@ -1,4 +1,5 @@
 {{- if .Values.frontend.enabled }}
+{{- $frontendLokiEndpoint := get (.Values.frontend.monitoring | default dict) "lokiEndpoint" | default .Values.monitoring.lokiEndpoint }}
 {{- if .Values.kruise.enabled }}
 apiVersion: apps.kruise.io/v1alpha1
 kind: CloneSet
@@ -34,6 +35,10 @@ spec:
     metadata:
       annotations:
         checksum/litebus-secret: {{ include "core.litebusSecretChecksum" . }}
+        checksum/edge-proxy-routes: {{ include (print $.Template.BasePath "/frontend/edge-routes-configmap.yaml") . | sha256sum }}
+        {{- if or .Values.monitoring.prometheusEndpoint $frontendLokiEndpoint .Values.monitoring.tempoEndpoint }}
+        checksum/otel-collector-config: {{ include (print $.Template.BasePath "/frontend/otel-configmap.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.frontend.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -87,6 +92,32 @@ spec:
           command:
             - /usr/local/bin/akernel-entrypoint
           env:
+            {{- if .Values.dataPlane.enabled }}
+            - name: ENABLE_EDGE_FRONTEND
+              value: "true"
+            - name: EDGE_GRAFANA_URL
+              value: {{ .Values.dataPlane.edge.grafanaURL | quote }}
+            {{- if .Values.dataPlane.edge.grafanaURL }}
+            - name: YR_DATA_PLANE_EDGE_FRONTEND_PROXY_ROUTES_FILE
+              value: /etc/akernel-edge/proxy-routes.json
+            {{- end }}
+            - name: INSTANCE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: EDGE_TLS_CERT
+              value: /etc/akernel-edge-tls/tls.crt
+            - name: EDGE_TLS_KEY
+              value: /etc/akernel-edge-tls/tls.key
+            - name: EDGE_TLS_PORT
+              value: {{ .Values.dataPlane.edge.tlsPort | quote }}
+            - name: EDGE_PLAIN_PORT
+              value: {{ .Values.dataPlane.edge.plainPort | quote }}
+            - name: EDGE_HEALTH_PORT
+              value: {{ .Values.dataPlane.edge.healthPort | quote }}
+            - name: EDGE_ALLOWED_CLIENT_CIDRS
+              value: {{ required "dataPlane.edge.allowedClientCIDRs is required" .Values.dataPlane.edge.allowedClientCIDRs | quote }}
+            {{- end }}
             - name: AKERNEL_ROLE
               value: "frontend"
             - name: LITEBUS_DATA_KEY
@@ -114,14 +145,26 @@ spec:
             - name: PROMETHEUS_ENDPOINT
               value: {{ .Values.monitoring.prometheusEndpoint | quote }}
             {{- end }}
-            {{- if .Values.monitoring.lokiEndpoint }}
+            {{- if $frontendLokiEndpoint }}
             - name: LOKI_ENDPOINT
-              value: {{ .Values.monitoring.lokiEndpoint | quote }}
+              value: {{ $frontendLokiEndpoint | quote }}
             {{- end }}
             {{- if .Values.monitoring.tempoEndpoint }}
             - name: TEMPO_ENDPOINT
               value: {{ .Values.monitoring.tempoEndpoint | quote }}
             {{- end }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             - name: AKERNEL_ENV
               value: {{ .Values.monitoring.akernelEnv | default "default" | quote }}
             - name: ENABLE_METRICS
@@ -129,22 +172,30 @@ spec:
             - name: ENABLE_TRACE
               value: {{ ne (.Values.monitoring.tempoEndpoint | default "") "" | ternary "true" "false" | quote }}
           ports:
+            {{- if .Values.dataPlane.enabled }}
+            - name: websecure
+              containerPort: {{ .Values.dataPlane.edge.tlsPort }}
+            - name: web
+              containerPort: {{ .Values.dataPlane.edge.plainPort }}
+            - name: edge-health
+              containerPort: {{ .Values.dataPlane.edge.healthPort }}
+            {{- end }}
             - name: http
               containerPort: 8888
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8888
-              scheme: HTTPS
+              scheme: {{ .Values.dataPlane.enabled | ternary "HTTP" "HTTPS" }}
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /healthz
-              port: 8888
-              scheme: HTTPS
+              path: {{ .Values.dataPlane.enabled | ternary "/readyz" "/healthz" }}
+              port: {{ .Values.dataPlane.enabled | ternary (.Values.dataPlane.edge.healthPort | int) 8888 }}
+              scheme: {{ .Values.dataPlane.enabled | ternary "HTTP" "HTTPS" }}
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
@@ -152,22 +203,50 @@ spec:
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
           volumeMounts:
+            {{- if .Values.dataPlane.enabled }}
+            {{- if .Values.dataPlane.edge.grafanaURL }}
+            - name: edge-proxy-routes
+              mountPath: /etc/akernel-edge
+              readOnly: true
+            {{- end }}
+            - name: edge-tls
+              mountPath: /etc/akernel-edge-tls
+              readOnly: true
+            {{- end }}
             - name: component-tls
               mountPath: /home/yuanrong/.cert
               readOnly: true
-          {{- if or .Values.monitoring.prometheusEndpoint .Values.monitoring.lokiEndpoint .Values.monitoring.tempoEndpoint }}
+          {{- if or .Values.monitoring.prometheusEndpoint $frontendLokiEndpoint .Values.monitoring.tempoEndpoint }}
             - name: otel-collector-config
               mountPath: /etc/otel-collector
               readOnly: true
           {{- end }}
       volumes:
+        {{- if .Values.dataPlane.enabled }}
+        {{- if .Values.dataPlane.edge.grafanaURL }}
+        - name: edge-proxy-routes
+          configMap:
+            name: akernel-edge-proxy-routes
+        {{- end }}
+        - name: edge-tls
+          secret:
+            secretName: {{ .Values.dataPlane.edge.tlsSecretName | default (include "core.componentTLSSecretName" .) }}
+            {{- if not .Values.dataPlane.edge.tlsSecretName }}
+            items:
+              - key: module.crt
+                path: tls.crt
+              - key: module.key
+                path: tls.key
+            {{- end }}
+            defaultMode: 0400
+        {{- end }}
         - name: component-tls
           secret:
             secretName: {{ include "core.componentTLSSecretName" . }}
             defaultMode: 0400
-      {{- if or .Values.monitoring.prometheusEndpoint .Values.monitoring.lokiEndpoint .Values.monitoring.tempoEndpoint }}
+      {{- if or .Values.monitoring.prometheusEndpoint $frontendLokiEndpoint .Values.monitoring.tempoEndpoint }}
         - name: otel-collector-config
           configMap:
-            name: akernel-otel-collector-config
+            name: akernel-frontend-otel-collector-config
       {{- end }}
 {{- end }}
