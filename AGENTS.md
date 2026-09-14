@@ -644,3 +644,138 @@ image manager. The pinned distill-fs supports RAFS v5; use
 - Keep unrelated dirty files out of commits, especially local deployment state,
   generated binaries, Terraform state, kubeconfigs, tokens, and private
   registry configuration.
+
+## Scheduler development pressure growth
+
+The scheduler functionsystem C++ build prepares vendor dependencies, logs,
+Litebus, then metrics before configuring production targets. Litebus itself
+links yrlogs, including on the Bazel preparation path. The common-library CMake
+includes now fail on missing installed artifacts instead of starting implicit
+sub-builds. After vendor preparation, manual builds must run
+`bash common/logs/build.sh -j 2`, `bash common/litebus/build.sh -t off -j 2`,
+then `bash common/metrics/build.sh -j 2` from the functionsystem repository root.
+These artifact checks do not prove binary ABI compatibility or runtime readiness.
+
+On the scheduler development line, PressureMonitor memory/CPU growth flags route
+elastic-instance proposals through FunctionAgentMgr::ResizeSandbox and the shared
+ResourceView budget; they no longer instantiate the historical direct-cgroup
+ladders. Creation-time resource ceilings and fresh physical-generation Stats are
+required. Memory proposals grow by at most the current limit per step. Unknown
+RPC outcomes retain their operation record pending authoritative reconciliation;
+this is not yet a production readiness claim. Do not enable a separate cgroup
+writer alongside this path. Full build, restart reconciliation and deployment
+validation remain required before deep-swe pressure runs.
+
+The scheduler frontend streaming service requires `InvokeInstanceStream` in
+`proto/posix/frontend_proxy_service.proto`, with an `InvokeInstanceStreamResponse`
+oneof carrying opaque `bytes event = 1` or `InvokeInstanceResponse final = 2`.
+Keep the proto paired with the already present C++ service and client tests when
+backporting frontend changes; a header-only backport cannot build the driver.
+
+PressureMonitor may clear a returned-UNKNOWN resize gate only after a fresh
+post-deadline Stats read matches the exact target and original runtime/sandbox/
+resource generation. This clears no ResourceView budget and proves no soft-limit
+completion. Do not infer success from a timeout, replacement generation or partial
+limits. Unresolved operations still require persistent authoritative recovery.
+
+The scheduler development driver binds PhysicalLLMClient only when both
+`AKERNEL_SCHEDULER_TRANSDUCER_URL` and
+`AKERNEL_SCHEDULER_HOLD_CONTROL_TOKEN` are nonempty runtime settings. These are
+separate from model API credentials and must never be logged or committed.
+Without the client, pressure park fails closed; resize flags remain independent.
+The F7 integration remains experimental: expected physical source identity still
+needs an end-to-end SnapCtrl handoff, and FIFO/unknown hold recovery and full
+runtime acceptance remain open. Do not deploy this path as pressure-test-ready.
+
+SandboxdCheckpointOrchestrator now requires a recorded Start/Restore physical
+resource generation and sends only CheckpointIfGeneration. Snapshot requests
+may additionally pin expected_sandbox_id and expected_resource_generation as a
+complete pair; partial or mismatching pairs are rejected. Old daemon RPC
+unavailability must not trigger an unconditional fallback. Checkpoint completion
+and upload registration verify the captured physical identity and local
+registration UUID. A mismatched or missing registration retains an unresolved
+artifact/reference; no automatic reconciliation is implemented yet. Upper
+monitor/SnapCtrl propagation and mixed-version actor-message rejection are still
+required before treating this as an end-to-end source fence.
+
+Generation-pinned snapshots now have a dedicated actor channel:
+`SnapshotRuntimeIfGeneration` / `SnapshotRuntimeIfGenerationResponse`, exposed by
+FunctionAgentMgr's separate API. Both relay hops allocate private transport UUIDs;
+the function-agent also pins the runtime-manager registration ID. Never send a
+legacy SnapshotRuntime message when this channel is unavailable. An older actor
+without the receiver leaves the operation UNKNOWN through bounded caller waits.
+Replies must match the expected runtime/sandbox/generation and checkpoint ID.
+Relays own only transport bookkeeping: timeout/finalization cannot release the
+caller's hold or resource budget. PressureMonitor/SnapCtrl still need to use this
+API with their originally captured identity. The scheduler manager currently has
+only an agent AID binding, not a persisted agent registration nonce; full restart
+reconciliation and actual actor-message acceptance remain open.
+
+PressureMonitor now passes its captured InstanceStateMachine pointer and the
+original runtime/sandbox/resource-generation tuple through HandleSnapshotIfSource
+and SnapOptions fields 6–8. Pressure park request IDs use the private prepare
+attempt UUID. SnapCtrl rejects token-only park payloads, checks source identity
+before marking, after drain, after control-client lookup and before conditional
+snapshot dispatch. Source mismatch is latched; failed cleanup must not clear a
+replacement source's drain/park marker, and the attempt remains UNKNOWN.
+Legacy tokenless snapshot callers retain the existing entry point.
+This is not a complete control-client lease: InstanceClients::UpdateClient can
+replace the underlying PosixClient within the same BaseClient object. State
+pointer rechecks do not establish immutable physical transport ownership.
+Resolve that binding, marker/hold reconciliation and full actor/runtime acceptance
+before considering F7 ready for a deep-swe pressure run.
+
+Vendor zlib completion requires installed library and generated headers, not
+merely an Install directory created while staging minizip headers. The minizip
+archive has an independent CMake target that survives reconfiguration, depends
+on zlib header installation, and is included in both vendor main modes.
+
+The YuanRong SDK Linux Bazel HTTP metrics exporter declares the existing
+`@ds_libcurl//:curl` source dependency (including headers and BoringSSL),
+instead of linking an undeclared system curl. Prometheus push inherits it
+through http_exporter. Preserve default observability when validating SDK
+PrepareSnap; disabling it would bypass the delivery path being checked.
+
+SnapManager restore retries now retain bounded in-process replay records keyed
+by requester AID name/url and requestID. Identical request bytes replay the
+first stored response; changed payloads conflict, and all requests need a
+nonempty identity. Completion validates destination/requestID/ticket and stores
+response bytes before sending. Full ledgers reject new work without evicting
+unknown or completed records. This does not provide restart durability or safe
+record retirement; both remain required for sustained deep-swe readiness.
+
+LocalSchedSrvActor restore relay now pins immutable request bytes, a private
+transport UUID and the original SnapManager address. Identical caller request
+IDs with identical bytes share the retained first result; changed payloads
+conflict. Completed records are bounded but never retired, so reusing request
+IDs for new work is invalid. Replies require the pinned sender and transport ID;
+unknown timeouts never rebind to a new master. Both relay and master ledgers
+remain process-local and require persistent operation/epoch reconciliation and
+safe retirement before sustained deep-swe readiness.
+
+The scheduler feature worktree assigns a private registration ID to each
+successful park. Direct restore completion clears only registrations captured
+before dispatch; wake completion additionally checks that registration before
+the existing checkpoint/attempt fence. A checkpoint ID alone cannot retire a
+newer parked entry. This is process-local callback ownership, not persisted
+recovery or resolution of unknown wake outcomes.
+
+An unsuccessful owned wake now retains its parked registration/source/hold
+and enters wakeUnknown. Automatic selection and direct restore of that
+unresolved checkpoint refuse new dispatches. Error text and retry counts
+cannot retire it. This has no authoritative recovery path yet. Do not use
+ReconcileRuntimes as a read-only wake probe: it deletes exited and orphan
+sandboxes. Direct-restore first-failure handling and persistent operation
+reconciliation still need completion.
+
+Elastic cold deployment now awaits an authoritative ResourceView runtime binding
+before readiness. The binding validates allocation request/unit and compares the
+previous runtime, updates both indexes without rebooking resources, and rejects
+foreign incarnation samples. Deploy completion pins its original state-machine
+object and runtime before RPC dispatch; telemetry cannot select a runtime or
+clear pending admission before the binding. Pressure growth continues through
+shared-budget ResizeResources, with per-operation reservation/readback logs.
+Binding must also install functionagentid from the allocated unit in both indexes:
+allocation happens before SetScheduleResult fills the deploy request route. A
+nonempty conflicting route must be rejected, not accepted from telemetry.
+This does not add durable restart reconciliation or online shrinking.

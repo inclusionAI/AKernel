@@ -465,6 +465,7 @@ start_traefik_container() {
         "${TRAEFIK_IMAGE}" \
         --entryPoints.web.address=:80 \
         --entryPoints.websecure.address=:443 \
+        --entrypoints.websecure.http.tls=true \
         --providers.file.filename=/etc/traefik/dynamic.yml \
         --providers.http.endpoint="${provider_endpoint}" \
         --providers.http.pollInterval=1s \
