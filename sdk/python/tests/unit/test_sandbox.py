@@ -132,25 +132,28 @@ class SandboxTest(unittest.TestCase):
     def test_termination_failure_still_closes_local_resources(self):
         remote_error = RuntimeError("remote delete failed")
         self.session.terminate.side_effect = [remote_error, None]
-        sandbox = Sandbox()
+        sandbox = Sandbox(idle_timeout=7200)
         pty = MagicMock()
         sandbox._pty = pty
 
-        with self.assertRaisesRegex(RuntimeError, "remote delete failed") as raised:
+        with self.assertLogs(sandbox_module.logger, level="WARNING") as logs:
             sandbox.kill()
 
-        self.assertIs(raised.exception, remote_error)
+        self.assertIn("idle_timeout=7200 seconds", logs.output[0])
+        self.assertIn("physical-id", logs.output[0])
+        self.assertTrue(sandbox._terminated)
+        self.assertTrue(sandbox._closed)
         pty._close.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
         sandbox.kill()
         sandbox.kill()
 
-        self.assertEqual(self.session.terminate.call_count, 2)
+        self.assertEqual(self.session.terminate.call_count, 1)
         pty._close.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
-    def test_termination_error_takes_precedence_over_local_cleanup_error(self):
+    def test_all_cleanup_errors_are_logged_without_raising(self):
         remote_error = RuntimeError("remote delete failed")
         self.session.terminate.side_effect = remote_error
         self.session.close.side_effect = RuntimeError("client close failed")
@@ -159,16 +162,12 @@ class SandboxTest(unittest.TestCase):
         pty._close.side_effect = RuntimeError("PTY close failed")
         sandbox._pty = pty
 
-        with (
-            self.assertLogs(sandbox_module.logger, level="WARNING"),
-            self.assertRaisesRegex(
-                RuntimeError,
-                "remote delete failed",
-            ) as raised,
-        ):
+        with self.assertLogs(sandbox_module.logger, level="WARNING") as logs:
             sandbox.kill()
 
-        self.assertIs(raised.exception, remote_error)
+        self.assertEqual(len(logs.records), 3)
+        self.assertTrue(sandbox._terminated)
+        self.assertTrue(sandbox._closed)
         pty._close.assert_called_once_with()
         self.session.close.assert_called_once_with()
 

@@ -28,7 +28,6 @@ from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_e
 from ._backends.base import BackendSession, SandboxSpec
 from ._backends.registry import load_backend
 from ._dockerfile_launch import DockerfileLaunch
-from ._sandbox_cleanup import defer_cleanup, start_cleanup_worker
 from ._sandbox_resources import normalize_xpu, validate_storage_mb
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
@@ -344,7 +343,6 @@ class Sandbox:
             if not isinstance(image, str) or not image.strip():
                 raise ValueError("Dockerfile base image must be a non-empty string")
 
-        start_cleanup_worker()
         self._session: BackendSession | None = None
         self._startup_command: CommandHandle | None = None
         self._pty: Pty | None = None
@@ -357,6 +355,7 @@ class Sandbox:
         self._memory = memory
         self._xpu = normalized_xpu
         self._storage_mb = storage_mb
+        self._idle_timeout = idle_timeout
         self._inherit_entrypoint = inherit_entrypoint
         self._id = ""
 
@@ -602,55 +601,54 @@ class Sandbox:
         )
 
     def kill(self) -> None:
-        """Release client resources and terminate a non-detached sandbox."""
+        """Synchronously attempt cleanup and retire this handle.
+
+        Remote deletion and local cleanup failures are logged, not raised.
+        Retirement is final for this handle, not proof of remote deletion;
+        the cluster's idle timeout is the fallback for orphaned resources.
+        Detached sandboxes are not remotely deleted by this method.
+        """
 
         if self._closed and self._terminated:
             return
 
-        local_errors: list[Exception] = []
-        terminate_error: Exception | None = None
-
-        if self._session is not None:
-            if not self._terminated:
-                try:
+        if not self._terminated:
+            try:
+                if self._session is not None:
                     self._session.terminate()
-                except Exception as error:
-                    terminate_error = error
-                else:
-                    self._terminated = True
+            except Exception:
+                logger.warning(
+                    "Sandbox %s deletion failed; retiring handle without further "
+                    "cleanup attempts. Remote deletion is unconfirmed "
+                    "(configured idle_timeout=%s seconds).",
+                    self._id,
+                    self._idle_timeout,
+                    exc_info=True,
+                )
+            finally:
+                self._terminated = True
 
         if not self._closed:
             if self._pty is not None:
                 try:
                     self._pty._close()
-                except Exception as error:
-                    local_errors.append(error)
+                except Exception:
+                    logger.warning("Failed to close sandbox PTY", exc_info=True)
 
             if self._session is not None:
                 try:
                     self._session.close()
-                except Exception as error:
-                    local_errors.append(error)
+                except Exception:
+                    logger.warning("Failed to close sandbox session", exc_info=True)
             self._closed = True
-
-        if terminate_error is not None:
-            for cleanup_error in local_errors:
-                logger.warning(
-                    "local sandbox cleanup also failed after termination error: %s",
-                    cleanup_error,
-                )
-            raise terminate_error
-        if local_errors:
-            for cleanup_error in local_errors[1:]:
-                logger.warning(
-                    "additional sandbox cleanup failure: %s",
-                    cleanup_error,
-                )
-            raise local_errors[0]
 
     @classmethod
     def delete(cls, name: str) -> None:
-        """Terminate a named detached sandbox.
+        """Synchronously attempt deletion of a named detached sandbox.
+
+        Backend failures are logged, not raised or retried in the background.
+        Successful return does not confirm remote deletion; idle timeout is
+        the fallback if the remote operation failed.
 
         Args:
             name: Name supplied when the detached sandbox was created.
@@ -658,21 +656,18 @@ class Sandbox:
 
         if not isinstance(name, str) or not name.strip():
             raise ValueError("name must be a non-empty string")
-        load_backend().delete_named(name)
+        try:
+            load_backend().delete_named(name)
+        except Exception:
+            logger.warning(
+                "Sandbox %r deletion failed; remote resources may remain "
+                "until idle timeout.",
+                name,
+                exc_info=True,
+            )
 
     def __enter__(self) -> Sandbox:
         return self
 
     def __exit__(self, *_exc: object) -> None:
         self.kill()
-
-    def __del__(self) -> None:
-        try:
-            if getattr(self, "_closed", True) and getattr(self, "_terminated", True):
-                return
-            # GC may interrupt a request while its HTTP pool lock is held.
-            # Never perform network I/O (or start a thread) on that same stack.
-            defer_cleanup(self.kill)
-        except Exception:
-            # Partial initialization and interpreter shutdown are best-effort.
-            pass
