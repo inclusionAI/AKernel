@@ -21,6 +21,7 @@ from akernel_sdk import Sandbox
 
 
 def main() -> None:
+    # Context exit explicitly cleans up; GC does not delete the sandbox.
     with Sandbox(cpu=1000, memory=2048) as sandbox:
         print(f"Sandbox created: {sandbox.id}")
 

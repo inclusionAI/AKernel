@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -46,6 +47,7 @@ from .errors import BackendOperationError, UnsupportedBackendFeatureError
 
 _NAMESPACE = "default"
 _DEFAULT_LISTEN_PORT = 8766
+logger = logging.getLogger(__name__)
 
 
 def _native_port_range(value: PortRange | int | None) -> Any:
@@ -396,12 +398,24 @@ class _Session:
         # lets transports such as reverse tunnels close while their routes are
         # still available. The stable-ID delete still uses a fresh native
         # client, so a failed deletion remains retryable after local cleanup.
-        self.close()
+        close_error: Exception | None = None
+        try:
+            self.close()
+        except Exception as error:
+            close_error = error
         try:
             yr_sandbox.Sandbox.delete(self.id)
         except Exception as error:
+            if close_error is not None:
+                logger.warning(
+                    "Local cleanup also failed for sandbox %s: %s",
+                    self.id,
+                    close_error,
+                )
             raise _convert_error("terminate sandbox", error) from error
         self._terminated = True
+        if close_error is not None:
+            raise close_error
 
     def close(self) -> None:
         if self._closed:

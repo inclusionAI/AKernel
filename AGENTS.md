@@ -497,6 +497,10 @@ loaded lazily on first use. Keep public `Sandbox`, `Commands`, `Filesystem`,
 and value types independent of both native packages; all native conversions
 belong under `akernel_sdk._backends`.
 
+Keep sandbox cleanup explicit through context managers or `kill()`, with
+observable, retryable deletion failures and workload exceptions preserved on
+context exit. See [SDK lifecycle guidance](sdk/python/README.md#resources-and-lifecycle).
+
 Dockerfile direct launch is a supported AKernel SDK capability through
 `DockerContext` and
 `Sandbox(dockerfile=DockerfileLaunch(context=..., auto_start_cmd=..., run_timeout=...))`.

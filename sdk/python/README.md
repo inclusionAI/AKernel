@@ -648,8 +648,13 @@ Accelerators appear under keys such as `GPU/l20`. Capacity is the total card
 count and allocatable is the currently free count. `ak resources` renders the
 same information as, for example, `gpu/l20 1/4`.
 
-Use the context manager for ordinary sandboxes. For a named detached sandbox,
-explicitly delete it when it is no longer needed:
+Use a context manager or call `kill()` in a `finally` block. The SDK does not
+delete sandboxes during garbage collection or interpreter exit. Cleanup failures
+propagate and can be retried explicitly; existing workload exceptions are
+preserved on context exit. Server `idle_timeout` is a fallback, not a maximum
+lifetime.
+
+For a named detached sandbox, explicitly delete it when it is no longer needed:
 
 ```python
 sandbox = Sandbox(name="worker", detached=True)

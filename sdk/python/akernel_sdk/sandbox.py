@@ -600,7 +600,13 @@ class Sandbox:
         )
 
     def kill(self) -> None:
-        """Release client resources and terminate a non-detached sandbox."""
+        """Release client resources and terminate a non-detached sandbox.
+
+        Call explicitly or use a context manager; garbage collection does not
+        clean up sandboxes. Failures propagate after local cleanup is attempted.
+        If remote deletion fails, another explicit kill() can retry even though
+        the local handle is closed. Detached sandboxes only close local clients.
+        """
 
         if self._closed and self._terminated:
             return
@@ -650,6 +656,8 @@ class Sandbox:
     def delete(cls, name: str) -> None:
         """Terminate a named detached sandbox.
 
+        Backend failures propagate so callers can retry unconfirmed deletion.
+
         Args:
             name: Name supplied when the detached sandbox was created.
         """
@@ -661,11 +669,19 @@ class Sandbox:
     def __enter__(self) -> Sandbox:
         return self
 
-    def __exit__(self, *_exc: object) -> None:
-        self.kill()
-
-    def __del__(self) -> None:
+    def __exit__(
+        self,
+        _exc_type: object,
+        exc_value: BaseException | None,
+        _traceback: object,
+    ) -> None:
         try:
             self.kill()
         except Exception:
-            pass
+            if exc_value is None:
+                raise
+            logger.warning(
+                "Failed to clean up sandbox %s while leaving an exceptional block",
+                self._id,
+                exc_info=True,
+            )
