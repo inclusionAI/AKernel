@@ -132,14 +132,13 @@ class SandboxTest(unittest.TestCase):
     def test_termination_failure_still_closes_local_resources(self):
         remote_error = RuntimeError("remote delete failed")
         self.session.terminate.side_effect = [remote_error, None]
-        sandbox = Sandbox(idle_timeout=7200)
+        sandbox = Sandbox()
         pty = MagicMock()
         sandbox._pty = pty
 
         with self.assertLogs(sandbox_module.logger, level="WARNING") as logs:
             sandbox.kill()
 
-        self.assertIn("idle_timeout=7200 seconds", logs.output[0])
         self.assertIn("physical-id", logs.output[0])
         self.assertTrue(sandbox._terminated)
         self.assertTrue(sandbox._closed)

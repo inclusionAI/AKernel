@@ -355,7 +355,6 @@ class Sandbox:
         self._memory = memory
         self._xpu = normalized_xpu
         self._storage_mb = storage_mb
-        self._idle_timeout = idle_timeout
         self._inherit_entrypoint = inherit_entrypoint
         self._id = ""
 
@@ -619,10 +618,8 @@ class Sandbox:
             except Exception:
                 logger.warning(
                     "Sandbox %s deletion failed; retiring handle without further "
-                    "cleanup attempts. Remote deletion is unconfirmed "
-                    "(configured idle_timeout=%s seconds).",
+                    "cleanup attempts. Remote deletion is unconfirmed.",
                     self._id,
-                    self._idle_timeout,
                     exc_info=True,
                 )
             finally:

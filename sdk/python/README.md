@@ -657,21 +657,6 @@ sandbox.kill()             # closes local clients; remote sandbox remains
 Sandbox.delete("worker")   # terminates the named remote sandbox
 ```
 
-Context-manager exit and `kill()` synchronously attempt remote deletion and
-local resource cleanup. Cleanup failures are logged rather than raised, and
-the handle is marked finished even if deletion fails: repeated `kill()` calls
-do not retry. `Sandbox.delete(name)` also logs backend failures and returns
-normally; invalid names still raise `ValueError`. A successful return from
-either method is **not** confirmation that the remote sandbox was deleted.
-
-The SDK performs **no cleanup from garbage collection**, and has no background
-cleanup worker or finalizer retry. Always use `with Sandbox(...)` or explicit
-`kill()`; detached sandboxes require `Sandbox.delete(name)` for remote deletion.
-The cluster's configured idle timeout is the fallback when cleanup fails or
-is omitted. Configure a finite idle timeout if relying on this fallback;
-disabling it removes that guarantee. This best-effort behavior means cleanup
-errors no longer replace an exception raised inside a `with` block.
-
 `sandbox.id` is the physical ID shown by `ak list`. `get_info()` returns a
 `SandboxInfo` containing `id`, state, requested CPU, memory, XPU and storage,
 and the OCI image when one was configured.
