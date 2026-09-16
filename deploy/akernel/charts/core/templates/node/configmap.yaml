@@ -21,6 +21,20 @@ data:
 {{- end }}
 {{- $sandboxdConfig = replace $runcMarker "runc=\"/usr/local/bin/runc\"" $sandboxdConfig }}
 {{- end }}
+{{- $ascendMarker := "# AKERNEL_XPU_ASCEND" }}
+{{- if .Values.node.config.sandboxd.enableAscend }}
+{{- if not .Values.node.config.sandboxd.enableRunc }}
+{{- fail "node.config.sandboxd.enableAscend requires node.config.sandboxd.enableRunc=true" }}
+{{- end }}
+{{- if not (contains $ascendMarker $sandboxdConfig) }}
+{{- fail "node.config.sandboxd.enableAscend requires the # AKERNEL_XPU_ASCEND marker in node.config.sandboxd.config" }}
+{{- end }}
+{{- $ascendConfig := `[plugin.xpu.ascend]
+enabled=true
+adapter="/usr/local/libexec/akernel/ascend-oci-adapter"
+mount_profile="/etc/akernel/ascend/mounts.json"` }}
+{{- $sandboxdConfig = replace $ascendMarker $ascendConfig $sandboxdConfig }}
+{{- end }}
 {{ $sandboxdConfig | indent 4 }}
 
   registry.json: |
