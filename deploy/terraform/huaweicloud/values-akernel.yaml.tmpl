@@ -126,6 +126,7 @@ node:
       cpuQuota: "100%"
     sandboxd:
       enableRunc: ${enable_runc}
+      chunkDbSize: ${jsonencode(chunk_db_size)}
       config: |-
         rootDir="/home/akernel/sandboxd/root"
         storeDir="/home/akernel/sandboxd/store"
@@ -191,6 +192,7 @@ node:
         # configs live under /home/akernel/sandboxd/config/ so the wipe never
         # hits the read-only bind-mounted config files.
         [plugin.image]
+        # AKERNEL_CHUNK_DB_SIZE
         root="/home/akernel/sandboxd/image_manager"
         distill_fs_bin="/usr/local/bin/distill_fs"
         oss_template="/home/akernel/sandboxd/config/oss.json"

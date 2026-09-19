@@ -71,6 +71,7 @@ kvm_device="/dev/kvm"
 # on pod change; input configs live under /home/akernel/sandboxd/config/ so the
 # wipe never hits them.
 [plugin.image]
+# AKERNEL_CHUNK_DB_SIZE
 root="/home/akernel/sandboxd/image_manager"
 distill_fs_bin="/usr/local/bin/distill_fs"
 oss_template="/home/akernel/sandboxd/config/oss.json"

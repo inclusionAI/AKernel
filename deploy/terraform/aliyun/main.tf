@@ -157,6 +157,7 @@ locals {
     master_service_type         = (var.master_public_access_8888 && !var.traefik_enabled) ? var.master_service_type : "ClusterIP"
     traefik_enabled             = var.traefik_enabled
     sandboxd_nat_backend        = var.sandboxd_nat_backend
+    chunk_db_size               = var.chunk_db_size
     enable_runc                 = var.enable_runc
     node_secret_create          = var.node_secret_create
     node_home_use_csi_ephemeral = var.node_home_use_csi_ephemeral

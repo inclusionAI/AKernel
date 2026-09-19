@@ -23,6 +23,7 @@ TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
+AKERNEL_CHUNK_DB_SIZE="${AKERNEL_CHUNK_DB_SIZE:-}"
 YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG:-/run/akernel/yr-image-process.json}"
 LITEBUS_DATA_KEY=""
 
@@ -266,6 +267,20 @@ configure_network() {
         fi
         sed_args+=(
             -e 's|^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$|runc="/usr/local/bin/runc"|'
+        )
+    fi
+    if [[ -n "${AKERNEL_CHUNK_DB_SIZE}" ]]; then
+        if [[ ! "${AKERNEL_CHUNK_DB_SIZE}" =~ ^[0-9]+(B|KiB|MiB|GiB|TiB)?$ ]]; then
+            log_error "AKERNEL_CHUNK_DB_SIZE must be whole bytes or an integer with B/KiB/MiB/GiB/TiB"
+            exit 1
+        fi
+        if ! grep -q '^[[:space:]]*# AKERNEL_CHUNK_DB_SIZE[[:space:]]*$' \
+            "${CONFIG_DIR}/sandboxd_config.toml"; then
+            log_error "AKERNEL_CHUNK_DB_SIZE requires the # AKERNEL_CHUNK_DB_SIZE marker in sandboxd_config.toml"
+            exit 1
+        fi
+        sed_args+=(
+            -e "s|^[[:space:]]*# AKERNEL_CHUNK_DB_SIZE[[:space:]]*$|chunk_db_size=\"${AKERNEL_CHUNK_DB_SIZE}\"|"
         )
     fi
     sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"

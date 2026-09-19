@@ -966,3 +966,13 @@ variable "tempo_resources" {
   })
   default = {}
 }
+
+variable "chunk_db_size" {
+  type        = string
+  description = "Shared distill-fs ChunkDB map capacity, e.g. 64GiB; empty uses the Linux default of 100 GiB. Existing caches must not be resized."
+  default     = ""
+  validation {
+    condition     = var.chunk_db_size == "" || can(regex("^[0-9]+(B|KiB|MiB|GiB|TiB)?$", var.chunk_db_size))
+    error_message = "chunk_db_size must be empty, whole bytes, or an integer with B/KiB/MiB/GiB/TiB."
+  }
+}

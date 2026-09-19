@@ -451,6 +451,8 @@ node:
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
       # Sandboxd probes runc and runc-shim before advertising the runtime.
       enableRunc: false
+      # Empty uses the distill-fs default (100 GiB on Linux).
+      chunkDbSize: ""
       config: |-
         rootDir="/home/akernel/sandboxd/root"
         storeDir="/home/akernel/sandboxd/store"
@@ -519,6 +521,7 @@ node:
         # configs live under /home/akernel/sandboxd/config/ so the wipe never
         # hits the read-only bind-mounted config files.
         [plugin.image]
+        # AKERNEL_CHUNK_DB_SIZE
         root="/home/akernel/sandboxd/image_manager"
         distill_fs_bin="/usr/local/bin/distill_fs"
         oss_template="/home/akernel/sandboxd/config/oss.json"

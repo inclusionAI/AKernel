@@ -172,6 +172,15 @@ Never use a guessed checksum or silently fall back to a source build.
 Missing or invalid release pins prevent builds. `make versions` reports the
 release tag and archive digest without requiring the distill-fs submodule.
 
+The optional node-wide ChunkDB capacity is configured with standalone
+`AKERNEL_CHUNK_DB_SIZE`, Helm `node.config.sandboxd.chunkDbSize` (under
+`core` in the umbrella chart), or Terraform `chunk_db_size`. Guided profiles
+accept `make config CHUNK_DB_SIZE=64GiB`. Empty values preserve the Linux
+100 GiB default. Sandboxd passes the same capacity to every distill-fs user;
+existing-cache resizing is unsupported. Preserve the
+`# AKERNEL_CHUNK_DB_SIZE` marker in custom deployment templates. See
+`deploy/README.md#shared-chunkdb-capacity` for cache replacement semantics.
+
 Each component embeds its own semantic version: sandboxd uses
 `version/VERSION`, while distill-fs uses its release package version in
 `Cargo.toml`. AKernel does not inject parent-repository version metadata into

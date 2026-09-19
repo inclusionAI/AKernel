@@ -113,6 +113,7 @@ locals {
     master_service_annotations     = merge(local.huaweicloud_master_elb_annotations, var.master_service_annotations)
     master_service_loadbalancer_ip = var.master_public_access_8888 ? var.master_service_loadbalancer_ip : ""
     sandboxd_nat_backend           = var.sandboxd_nat_backend
+    chunk_db_size                  = var.chunk_db_size
     enable_runc                    = var.enable_runc
     node_secret_create             = var.node_secret_create
     node_home_use_csi_ephemeral    = var.node_home_use_csi_ephemeral

@@ -30,6 +30,7 @@ image_repository_override=""
 image_tag_override=""
 install_monitor_override=""
 install_dragonfly_override=""
+chunk_db_size_override=""
 enable_runc_override=""
 schedule_placement_policy_override=""
 grafana_public_access_override=""
@@ -116,6 +117,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --install-dragonfly)
       install_dragonfly_override="$2"
+      shift 2
+      ;;
+    --chunk-db-size)
+      chunk_db_size_override="$2"
       shift 2
       ;;
     --enable-runc)
@@ -238,6 +243,10 @@ esac
 set_or_prompt image_tag "All-in-one image tag" "${default_tag}" "${image_tag_override}"
 set_or_prompt install_monitor "Install monitor chart (true/false)" "true" "${install_monitor_override}"
 set_or_prompt install_dragonfly "Install Dragonfly and dedicated node pools (true/false)" "false" "${install_dragonfly_override}"
+set_or_prompt chunk_db_size "Shared ChunkDB capacity (empty uses distill-fs default)" "" "${chunk_db_size_override}"
+if [[ -n "${chunk_db_size}" && ! "${chunk_db_size}" =~ ^[0-9]+(B|KiB|MiB|GiB|TiB)?$ ]]; then
+  die "CHUNK_DB_SIZE must be whole bytes or an integer with B/KiB/MiB/GiB/TiB"
+fi
 set_or_prompt enable_runc "Enable the optional runc runtime (true/false)" "false" "${enable_runc_override}"
 set_or_prompt schedule_placement_policy \
   "YuanRong schedule placement policy (binpack/spread)" "spread" \
@@ -373,6 +382,7 @@ grafana_public_access  = ${grafana_public_access}
 grafana_admin_password = "${grafana_admin_password}"
 
 install_dragonfly = ${install_dragonfly}
+chunk_db_size     = "${chunk_db_size}"
 enable_runc       = ${enable_runc}
 schedule_placement_policy = "${schedule_placement_policy}"
 EOF
@@ -428,6 +438,7 @@ grafana_public_access  = ${grafana_public_access}
 grafana_admin_password = "${grafana_admin_password}"
 
 install_dragonfly = ${install_dragonfly}
+chunk_db_size     = "${chunk_db_size}"
 enable_runc       = ${enable_runc}
 schedule_placement_policy = "${schedule_placement_policy}"
 EOF
@@ -450,6 +461,7 @@ IMAGE_TAG=${image_tag}
 CORE_NAMESPACE=akernel
 MONITOR_NAMESPACE=akernel-monitor
 INSTALL_DRAGONFLY=${install_dragonfly}
+CHUNK_DB_SIZE=${chunk_db_size}
 AKERNEL_ENABLE_RUNC=${enable_runc}
 SCHEDULE_PLACEMENT_POLICY=${schedule_placement_policy}
 EOF

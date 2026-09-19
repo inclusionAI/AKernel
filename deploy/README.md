@@ -404,3 +404,11 @@ The all-in-one image downloads the static Linux/amd64 distill-fs release pinned 
 Publish and verify the distill-fs release before updating the AKernel version, URL, and checksum pin together. Missing or invalid pins stop `make build` before either image is built. There is no source-build fallback.
 
 Validate installation against a downloaded candidate or release with `python3 builder/scripts/test-install-distill-fs.py /path/to/distill-fs-vX.Y.Z-linux-amd64.tar.gz` on Linux/amd64 with curl, jq, and binutils. This checks normal installation and rejects missing/invalid pins, corrupted archives, version/architecture mismatch, binary hash mismatch, and dynamically linked executables. The sandboxd pipeline and gitlink are independent of this dependency.
+
+## Shared ChunkDB capacity
+
+The node image's distill-fs v0.1.2 supports a configurable shared image-cache database capacity. The Linux default remains 100 GiB when omitted. Set `AKERNEL_CHUNK_DB_SIZE=64GiB` for standalone, `core.node.config.sandboxd.chunkDbSize=64GiB` in the umbrella Helm chart (`node.config.sandboxd.chunkDbSize` in the core chart), or `chunk_db_size = "64GiB"` in either cloud Terraform module. Guided profiles accept `make config CHUNK_DB_SIZE=64GiB`; this records the value in the generated Terraform configuration. Use a node image built with the matching sandboxd and distill-fs pins before enabling this option.
+
+Whole bytes and integer `B`, `KiB`, `MiB`, `GiB`, or `TiB` values are supported. Sandboxd validates the minimum of 1 MiB, addressability, and host page alignment and supplies the same capacity to mounts, stats, GC, and recovered daemons. This is the LMDB map limit, not a memory reservation, a whole-cache disk quota, or a sandbox `storage_mb` limit.
+
+Resizing an existing cache is unsupported. Same-Pod service restarts retain it; a replacement Pod with a changed hostname clears the image-manager root and creates a new cache with the configured capacity. Drain workloads before replacement. Standalone deployments must stop all users and select a fresh image-manager cache directory when changing capacity. Custom sandboxd configuration templates must retain the `# AKERNEL_CHUNK_DB_SIZE` marker when using the standalone or Helm override.
