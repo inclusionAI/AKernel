@@ -21,6 +21,17 @@ data:
 {{- end }}
 {{- $sandboxdConfig = replace $runcMarker "runc=\"/usr/local/bin/runc\"" $sandboxdConfig }}
 {{- end }}
+{{- $chunkDbSize := .Values.node.config.sandboxd.chunkDbSize | default "" }}
+{{- if $chunkDbSize }}
+{{- if not (regexMatch "^[0-9]+(B|KiB|MiB|GiB|TiB)?$" $chunkDbSize) }}
+{{- fail "node.config.sandboxd.chunkDbSize must be whole bytes or an integer with B/KiB/MiB/GiB/TiB" }}
+{{- end }}
+{{- $chunkDbMarker := "# AKERNEL_CHUNK_DB_SIZE" }}
+{{- if not (contains $chunkDbMarker $sandboxdConfig) }}
+{{- fail "node.config.sandboxd.chunkDbSize requires the # AKERNEL_CHUNK_DB_SIZE marker in node.config.sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = replace $chunkDbMarker (printf "chunk_db_size=%s" ($chunkDbSize | quote)) $sandboxdConfig }}
+{{- end }}
 {{ $sandboxdConfig | indent 4 }}
 
   registry.json: |
