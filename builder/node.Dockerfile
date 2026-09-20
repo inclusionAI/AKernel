@@ -45,6 +45,7 @@ ARG GVISOR_RELEASE
 ARG GVISOR_AMD64_URL
 ARG GVISOR_AMD64_SHA512
 ARG TARGETARCH
+COPY src/sandboxd/third_party/install-gvisor.sh /usr/local/libexec/install-gvisor.sh
 RUN set -eux; \
     case "${TARGETARCH:-}" in \
       amd64) ;; \
@@ -55,14 +56,14 @@ RUN set -eux; \
     test -n "${GVISOR_RELEASE}"; \
     test -n "${GVISOR_AMD64_URL}"; \
     test -n "${GVISOR_AMD64_SHA512}"; \
-    asset=/tmp/runsc; \
+    asset=/tmp/gvisor.tar.bz2; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl; \
+    apt-get install -y --no-install-recommends bzip2 ca-certificates curl; \
     rm -rf /var/lib/apt/lists/*; \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
       "${GVISOR_AMD64_URL}" -o "${asset}"; \
-    echo "${GVISOR_AMD64_SHA512}  ${asset}" | sha512sum -c -; \
-    install -D -m 0755 "${asset}" /gvisor/runsc
+    bash /usr/local/libexec/install-gvisor.sh "${asset}" \
+      "${GVISOR_AMD64_SHA512}" /gvisor
 
 FROM ${KATA_BUILD_IMAGE} AS kata-runtime-true
 ARG KATA_RELEASE
@@ -360,7 +361,7 @@ RUN set -eux; \
 
 COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img
 
-COPY --from=gvisor-runtime /gvisor/runsc /usr/local/bin/runsc
+COPY --from=gvisor-runtime /gvisor/ /usr/local/bin/
 COPY --from=sandboxd-builder /src/sandboxd/output/sandboxd /usr/local/bin/sandboxd
 COPY --from=sandboxd-builder /src/sandboxd/output/sbox /usr/local/bin/sbox
 COPY --from=sandboxd-builder /src/sandboxd/output/sandbox-logger /usr/local/bin/sandbox-logger

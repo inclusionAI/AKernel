@@ -152,6 +152,12 @@ pins it rather than overriding manifest fields from the AKernel build. Keep
 sandboxd's pooled-TAP contract and the matching gVisor compatibility patches
 validated together when upgrading.
 
+Install the complete checksum-pinned gVisor release archive with sandboxd's
+`third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all
+four adjacent `gvisor-bin/` helpers in the final image. The manifest SHA-512
+covers the archive, not a bare runsc binary. Keep CI's final-image payload
+checks synchronized; do not mix helper versions or fetch them at runtime.
+
 The sandboxd gitlink fixes the source revision compiled by `make build`.
 AKernel's `builder/distill-fs-versions.env` fixes the distill-fs release URL
 and SHA-256. `make build` compiles the local sandboxd worktree and consumes the
