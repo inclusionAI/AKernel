@@ -5,6 +5,7 @@
 ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG AKERNEL_RUNTIME_PROFILE=rrt
+ARG AKERNEL_ENABLE_RUNSC=true
 ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
@@ -40,7 +41,7 @@ ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collecto
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 
-FROM ${GVISOR_DOWNLOAD_IMAGE} AS gvisor-runtime
+FROM ${GVISOR_DOWNLOAD_IMAGE} AS gvisor-runtime-true
 ARG GVISOR_RELEASE
 ARG GVISOR_AMD64_URL
 ARG GVISOR_AMD64_SHA512
@@ -64,6 +65,11 @@ RUN set -eux; \
       "${GVISOR_AMD64_URL}" -o "${asset}"; \
     bash /usr/local/libexec/install-gvisor.sh "${asset}" \
       "${GVISOR_AMD64_SHA512}" /gvisor
+
+FROM ${GVISOR_DOWNLOAD_IMAGE} AS gvisor-runtime-false
+RUN mkdir -p /gvisor
+
+FROM gvisor-runtime-${AKERNEL_ENABLE_RUNSC} AS gvisor-runtime
 
 FROM ${KATA_BUILD_IMAGE} AS kata-runtime-true
 ARG KATA_RELEASE
@@ -231,11 +237,10 @@ FROM ${AKERNEL_NODE_BASE_IMAGE}
 ENV container=oci
 
 ARG AKERNEL_ENABLE_KATA
+ARG AKERNEL_ENABLE_RUNSC
 ARG AKERNEL_ENABLE_RUNC
 ARG AKERNEL_ENABLE_FIRECRACKER
 ARG AKERNEL_RUNTIME_PROFILE
-ARG AKERNEL_VERSION
-ARG AKERNEL_REVISION
 ARG OPEN_YR_VERSION
 ARG OPEN_YR_CORE_WHEEL_URL
 ARG OPEN_YR_CORE_WHEEL_SHA256
@@ -377,15 +382,21 @@ RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
 COPY ./builder/scripts/akernel-entrypoint.sh /usr/local/bin/akernel-entrypoint
 COPY ./builder/scripts/ensure-component-cert.sh /usr/local/bin/ensure-component-cert
 COPY ./builder/scripts/sandboxd_network_prepare.sh /usr/local/bin/sandboxd-network-prepare
+COPY ./builder/scripts/verify-external-filestore.sh /usr/local/bin/verify-external-filestore
 RUN chmod 0755 \
-        /usr/local/bin/runsc \
         /usr/local/bin/sandboxd \
         /usr/local/bin/sbox \
         /usr/local/bin/sandbox-logger \
         /usr/local/bin/distill_fs \
         /usr/local/bin/akernel-entrypoint \
         /usr/local/bin/ensure-component-cert \
-        /usr/local/bin/sandboxd-network-prepare
+        /usr/local/bin/sandboxd-network-prepare \
+        /usr/local/bin/verify-external-filestore
+RUN if [ "${AKERNEL_ENABLE_RUNSC}" = "true" ]; then \
+      chmod 0755 /usr/local/bin/runsc; \
+    else \
+      test ! -e /usr/local/bin/runsc; \
+    fi
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then chmod 0755 /usr/local/bin/containerd-shim-kata-v2; fi
 RUN if [ "${AKERNEL_ENABLE_RUNC}" = "true" ]; then \
       chmod 0755 /usr/local/bin/runc /usr/local/bin/runc-shim; \
@@ -429,9 +440,12 @@ RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INS
     systemctl enable sandboxd.service && \
     systemctl enable yuanrong.service
 
+ARG AKERNEL_VERSION
+ARG AKERNEL_REVISION
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
       org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \
+      org.akernel.runsc.enabled="${AKERNEL_ENABLE_RUNSC}" \
       org.akernel.gvisor.release="${GVISOR_RELEASE}" \
       org.akernel.runc.version="${RUNC_VERSION}" \
       org.akernel.runc.enabled="${AKERNEL_ENABLE_RUNC}" \

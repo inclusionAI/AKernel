@@ -164,6 +164,9 @@ deploy-script-check:
 	while IFS= read -r -d '' script; do \
 		bash -n "$$script"; \
 	done < <(git ls-files -z -- 'deploy/**/*.sh'); \
+	bash -n builder/scripts/verify-external-filestore.sh; \
+	./deploy/standalone/tests/external-filestore-guard.sh; \
+	./deploy/standalone/tests/external-filestore-launcher.sh; \
 	while IFS= read -r -d '' template; do \
 		if ! bash -n <( \
 			sed \

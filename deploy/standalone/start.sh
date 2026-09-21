@@ -22,7 +22,9 @@ IAM_SEED_FILE="${DATA_DIR}/iam-seed"
 TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
+AKERNEL_ENABLE_RUNSC="${AKERNEL_ENABLE_RUNSC:-true}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
+STANDALONE_FILESTORE_DIR="${STANDALONE_FILESTORE_DIR:-}"
 YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG:-/run/akernel/yr-image-process.json}"
 LITEBUS_DATA_KEY=""
 
@@ -31,6 +33,9 @@ DOCKER_CMD=""
 DOCKER_PREFIX=()
 PROXY_RUN_ARGS=()
 GPU_RUN_ARGS=()
+FILESTORE_RUN_ARGS=()
+FILESTORE_STATE_DIR="${DATA_DIR}/sandboxd/external-filestore"
+FILESTORE_REQUIRED=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -104,6 +109,18 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    case "${AKERNEL_ENABLE_RUNSC}" in
+        true|false)
+            ;;
+        *)
+            log_error "AKERNEL_ENABLE_RUNSC must be true or false"
+            exit 1
+            ;;
+    esac
+    if [[ "${AKERNEL_ENABLE_RUNSC}" == "false" && "${AKERNEL_ENABLE_RUNC}" != "true" ]]; then
+        log_error "Disabling runsc requires AKERNEL_ENABLE_RUNC=true"
+        exit 1
+    fi
 
     # Create data directory
     mkdir -p "${DATA_DIR}"
@@ -187,6 +204,50 @@ ensure_image() {
     fi
 }
 
+image_label() {
+    local image=$1 label=$2 value
+    value="$("${DOCKER_PREFIX[@]}" ${DOCKER_CMD} image inspect \
+        --format "{{ index .Config.Labels \"${label}\" }}" "${image}")"
+    if [[ "${value}" == "<no value>" ]]; then
+        value=""
+    fi
+    printf '%s\n' "${value}"
+}
+
+validate_image_capabilities() {
+    local image_runsc_enabled image_runc_enabled
+    image_runsc_enabled="$(image_label "${IMAGE}" org.akernel.runsc.enabled)"
+    image_runc_enabled="$(image_label "${IMAGE}" org.akernel.runc.enabled)"
+
+    if [[ -z "${image_runsc_enabled}" ]]; then
+        log_warn "Image has no runsc capability label; assuming legacy runsc support"
+        image_runsc_enabled=true
+    fi
+    case "${image_runsc_enabled}" in
+        true|false) ;;
+        *)
+            log_error "Invalid org.akernel.runsc.enabled label on ${IMAGE}: ${image_runsc_enabled}"
+            exit 1
+            ;;
+    esac
+    case "${image_runc_enabled}" in
+        true|false) ;;
+        *)
+            log_error "Missing or invalid org.akernel.runc.enabled label on ${IMAGE}"
+            exit 1
+            ;;
+    esac
+
+    if [[ "${AKERNEL_ENABLE_RUNSC}" == "true" && "${image_runsc_enabled}" != "true" ]]; then
+        log_error "AKERNEL_ENABLE_RUNSC=true but ${IMAGE} does not contain runsc"
+        exit 1
+    fi
+    if [[ "${AKERNEL_ENABLE_RUNC}" == "true" && "${image_runc_enabled}" != "true" ]]; then
+        log_error "AKERNEL_ENABLE_RUNC=true but ${IMAGE} does not contain runc"
+        exit 1
+    fi
+}
+
 configure_container_proxy() {
     local proxy="${AKERNEL_CONTAINER_PROXY:-}"
     if [[ -z "${proxy}" ]]; then
@@ -237,6 +298,90 @@ configure_gpu() {
     log_info "Enabling NVIDIA GPU access for the AKernel node container"
 }
 
+configure_external_filestore() {
+    if [[ -z "${STANDALONE_FILESTORE_DIR}" ]]; then
+        FILESTORE_REQUIRED=false
+        FILESTORE_RUN_ARGS=()
+        rm -f -- \
+            "${FILESTORE_STATE_DIR}/enabled" \
+            "${FILESTORE_STATE_DIR}/target" \
+            "${FILESTORE_STATE_DIR}/source" \
+            "${FILESTORE_STATE_DIR}/fstype" \
+            "${FILESTORE_STATE_DIR}/uuid"
+        rmdir "${FILESTORE_STATE_DIR}" 2> /dev/null || true
+        return 0
+    fi
+
+    local resolved data_resolved source filesystem filesystem_uuid probe state_tmp
+    for command in findmnt mountpoint readlink mktemp; do
+        if ! command -v "${command}" &> /dev/null; then
+            log_error "${command} is required for an external standalone filestore"
+            exit 1
+        fi
+    done
+
+    resolved="$(readlink -f "${STANDALONE_FILESTORE_DIR}")"
+    if [[ ! -d "${resolved}" ]] || ! mountpoint -q "${resolved}"; then
+        log_error "STANDALONE_FILESTORE_DIR must resolve to a mounted directory"
+        exit 1
+    fi
+    data_resolved="$(readlink -f "${DATA_DIR}")"
+    if [[ "${resolved}" == / ||
+          "${resolved}" == "${data_resolved}" ||
+          "${resolved}" == "${data_resolved}"/* ||
+          "${data_resolved}" == "${resolved}"/* ]]; then
+        log_error "STANDALONE_FILESTORE_DIR must not be / or overlap the standalone data directory"
+        exit 1
+    fi
+    source="$(findmnt -n -o SOURCE -M "${resolved}")"
+    filesystem="$(findmnt -n -o FSTYPE -M "${resolved}")"
+    filesystem_uuid="$(findmnt -n -o UUID -M "${resolved}")"
+    if [[ -z "${source}" || -z "${filesystem}" ]]; then
+        log_error "Unable to identify the external filestore filesystem"
+        exit 1
+    fi
+    if [[ "${source}" == /dev/loop* ]]; then
+        log_error "STANDALONE_FILESTORE_DIR must not be backed by a loop device"
+        exit 1
+    fi
+    if [[ "${source}" == /dev/* && -z "${filesystem_uuid}" ]]; then
+        log_error "Block-device filestores must have a filesystem UUID"
+        exit 1
+    fi
+    if [[ -e "${DATA_DIR}/filestore/ext4.img" ]]; then
+        log_error "legacy loop-backed filestore image exists in the standalone data directory"
+        exit 1
+    fi
+    if [[ -e "${resolved}/ext4.img" ]]; then
+        log_error "legacy loop-backed ext4.img exists in the external filestore"
+        exit 1
+    fi
+
+    probe="$(mktemp "${resolved}/.akernel-filestore-probe.XXXXXX")"
+    rm -f -- "${probe}"
+    state_tmp="$(mktemp -d "${DATA_DIR}/sandboxd/.external-filestore.XXXXXX")"
+    printf 'true\n' > "${state_tmp}/enabled"
+    printf '/home/akernel/filestore\n' > "${state_tmp}/target"
+    printf '%s\n' "${source}" > "${state_tmp}/source"
+    printf '%s\n' "${filesystem}" > "${state_tmp}/fstype"
+    printf '%s\n' "${filesystem_uuid}" > "${state_tmp}/uuid"
+    chmod 0644 "${state_tmp}"/*
+    rm -f -- \
+        "${FILESTORE_STATE_DIR}/enabled" \
+        "${FILESTORE_STATE_DIR}/target" \
+        "${FILESTORE_STATE_DIR}/source" \
+        "${FILESTORE_STATE_DIR}/fstype" \
+        "${FILESTORE_STATE_DIR}/uuid"
+    rmdir "${FILESTORE_STATE_DIR}" 2> /dev/null || true
+    mv "${state_tmp}" "${FILESTORE_STATE_DIR}"
+    FILESTORE_RUN_ARGS=(
+        -v "${resolved}:/home/akernel/filestore"
+        -v "${FILESTORE_STATE_DIR}:/etc/akernel/external-filestore:ro"
+    )
+    FILESTORE_REQUIRED=true
+    log_info "Using external filestore mount: ${resolved} (${source}, ${filesystem})"
+}
+
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
     local sed_args=(
@@ -268,11 +413,34 @@ configure_network() {
             -e 's|^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$|runc="/usr/local/bin/runc"|'
         )
     fi
+    if [[ "${AKERNEL_ENABLE_RUNSC}" == "false" ]]; then
+        if [[ "$(grep -Fxc 'runsc="/usr/local/bin/runsc"' \
+            "${CONFIG_DIR}/sandboxd_config.toml")" != 1 ]]; then
+            log_error "Disabling runsc requires exactly one runtime binary setting"
+            exit 1
+        fi
+        sed_args+=(
+            -e '/^[[:space:]]*runsc="\/usr\/local\/bin\/runsc"[[:space:]]*$/d'
+        )
+    fi
+    if [[ -n "${STANDALONE_FILESTORE_DIR}" ]]; then
+        if [[ "$(grep -Ec '^[[:space:]]*filestore_dir_size[[:space:]]*=' \
+            "${CONFIG_DIR}/sandboxd_config.toml")" != 1 ]]; then
+            log_error "External filestore requires exactly one filestore_dir_size setting"
+            exit 1
+        fi
+        sed_args+=(
+            -e 's|^[[:space:]]*filestore_dir_size[[:space:]]*=.*|filestore_dir_size=""|'
+        )
+    fi
     sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
     mv "${config_tmp}" "${SANDBOXD_CONFIG_FILE}"
 
     if [[ "${AKERNEL_ENABLE_RUNC}" == "true" ]]; then
         log_info "Enabling the optional runc sandbox runtime"
+    fi
+    if [[ "${AKERNEL_ENABLE_RUNSC}" == "false" ]]; then
+        log_info "Disabling the gVisor runsc sandbox runtime"
     fi
 
     if [[ "${AKERNEL_NAT_BACKEND}" == "bpfnat" ]]; then
@@ -349,6 +517,64 @@ prepare_host_network_modules() {
     log_info "Loaded host filter, bridge, conntrack, and ipset modules for the iptables ACL backend"
 }
 
+host_filesystem_available() {
+    grep -Eq "(^|[[:space:]])$1$" /proc/filesystems
+}
+
+host_loop_available() {
+    [[ -c /dev/loop-control ]]
+}
+
+load_host_module() {
+    local module=$1 modprobe_bin
+    modprobe_bin="$(command -v modprobe || true)"
+    [[ -n "${modprobe_bin}" ]] || return 1
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "${modprobe_bin}" "${module}"
+    else
+        sudo -n "${modprobe_bin}" "${module}"
+    fi
+}
+
+prepare_runc_host_modules() {
+    if [[ "${AKERNEL_ENABLE_RUNC}" != "true" ]]; then
+        return 0
+    fi
+
+    local filesystem
+    if host_filesystem_available overlay &&
+       host_filesystem_available erofs &&
+       host_loop_available; then
+        log_info "Host overlay, EROFS, and loop capabilities are ready for runc"
+        return 0
+    fi
+
+    for filesystem in overlay erofs; do
+        if ! host_filesystem_available "${filesystem}"; then
+            if ! load_host_module "${filesystem}"; then
+                log_error "Unable to load ${filesystem}; run this script as root or allow passwordless sudo for modprobe"
+                exit 1
+            fi
+        fi
+    done
+    if ! host_loop_available; then
+        if ! load_host_module loop; then
+            log_error "Unable to load loop; run this script as root or allow passwordless sudo for modprobe"
+            exit 1
+        fi
+    fi
+
+    for filesystem in overlay erofs; do
+        host_filesystem_available "${filesystem}" || \
+            { log_error "runc requires the host ${filesystem} filesystem"; exit 1; }
+    done
+    if ! host_loop_available; then
+        log_error "runc requires /dev/loop-control"
+        exit 1
+    fi
+    log_info "Loaded host overlay, EROFS, and loop modules for runc"
+}
+
 # Start the AKernel all-in-one container. Traefik runs separately so traffic
 # from the gateway enters this network namespace through PREROUTING.
 start_node_container() {
@@ -376,10 +602,12 @@ start_node_container() {
         -e TZ=Asia/Shanghai \
         -e ENABLE_TRACE="${ENABLE_TRACE:-false}" \
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
+        -e AKERNEL_EXTERNAL_FILESTORE_REQUIRED="${FILESTORE_REQUIRED}" \
         "${PROXY_RUN_ARGS[@]}" \
         "${GPU_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
         -v "${DATA_DIR}:/home/akernel" \
+        "${FILESTORE_RUN_ARGS[@]}" \
         -v "${CONFIG_DIR}/oss_auths.json:/home/akernel/sandboxd/config/oss_auths.json:ro" \
         -v "${CONFIG_DIR}/oss.json:/home/akernel/sandboxd/config/oss.json:ro" \
         -v "${CONFIG_DIR}/registry_auths.json:/home/akernel/sandboxd/config/registry_auths.json:ro" \
@@ -523,35 +751,43 @@ show_status() {
     echo "  SDK token:     ${TOKEN_FILE}"
 }
 
-# Main
-check_prerequisites
-cleanup_existing
-configure_auth
-ensure_image "${IMAGE}"
-ensure_image "${TRAEFIK_IMAGE}"
-configure_container_proxy
-configure_gpu
-configure_network
-prepare_host_network_modules
-start_node_container
-wait_for_ready
-NODE_IP="$(container_ip "${NODE_CONTAINER_NAME}")"
-if [[ -z "${NODE_IP}" ]]; then
-    log_error "Could not determine the AKernel container IP"
-    exit 1
-fi
-write_traefik_config "${NODE_IP}"
-TRAEFIK_PROVIDER_ENDPOINT="http://${NODE_IP}:22770/global-scheduler/traefik/config"
-log_info "Using FunctionMaster route provider: ${TRAEFIK_PROVIDER_ENDPOINT}"
-start_traefik_container "${TRAEFIK_PROVIDER_ENDPOINT}"
-TRAEFIK_IP="$(container_ip "${TRAEFIK_CONTAINER_NAME}")"
-if [[ -z "${TRAEFIK_IP}" ]]; then
-    log_error "Could not determine the Traefik container IP"
-    exit 1
-fi
-wait_for_gateway "${TRAEFIK_IP}"
-show_status "${NODE_IP}" "${TRAEFIK_IP}"
+main() {
+    check_prerequisites
+    cleanup_existing
+    configure_auth
+    ensure_image "${IMAGE}"
+    ensure_image "${TRAEFIK_IMAGE}"
+    validate_image_capabilities
+    configure_container_proxy
+    configure_gpu
+    configure_external_filestore
+    configure_network
+    prepare_runc_host_modules
+    prepare_host_network_modules
+    start_node_container
+    wait_for_ready
+    NODE_IP="$(container_ip "${NODE_CONTAINER_NAME}")"
+    if [[ -z "${NODE_IP}" ]]; then
+        log_error "Could not determine the AKernel container IP"
+        exit 1
+    fi
+    write_traefik_config "${NODE_IP}"
+    TRAEFIK_PROVIDER_ENDPOINT="http://${NODE_IP}:22770/global-scheduler/traefik/config"
+    log_info "Using FunctionMaster route provider: ${TRAEFIK_PROVIDER_ENDPOINT}"
+    start_traefik_container "${TRAEFIK_PROVIDER_ENDPOINT}"
+    TRAEFIK_IP="$(container_ip "${TRAEFIK_CONTAINER_NAME}")"
+    if [[ -z "${TRAEFIK_IP}" ]]; then
+        log_error "Could not determine the Traefik container IP"
+        exit 1
+    fi
+    wait_for_gateway "${TRAEFIK_IP}"
+    show_status "${NODE_IP}" "${TRAEFIK_IP}"
 
-log_info "AKernel started successfully in standalone mode"
-log_info "Set AKERNEL_SERVER_ADDRESS=${TRAEFIK_IP}"
-log_info "Set AKERNEL_TOKEN=\$(cat ${TOKEN_FILE})"
+    log_info "AKernel started successfully in standalone mode"
+    log_info "Set AKERNEL_SERVER_ADDRESS=${TRAEFIK_IP}"
+    log_info "Set AKERNEL_TOKEN=\$(cat ${TOKEN_FILE})"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

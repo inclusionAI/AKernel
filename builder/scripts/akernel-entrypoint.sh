@@ -35,6 +35,7 @@ case "${role}" in
         exec /usr/sbin/init "$@"
         ;;
     standalone)
+        /usr/local/bin/verify-external-filestore
         /usr/local/bin/ensure-component-cert
         exec /usr/sbin/init "$@"
         ;;

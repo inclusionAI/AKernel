@@ -28,6 +28,7 @@ _ENABLED = (
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
 _IMAGE = os.environ.get("AKERNEL_TEST_IMAGE") or None
+_ENABLE_KVM = os.environ.get("AKERNEL_TEST_ENABLE_KVM") == "1"
 
 _INSTALL_CURL_COMMAND = (
     "apt-get update && "
@@ -98,6 +99,11 @@ class SandboxIntegrationTest(unittest.TestCase):
         )
         self.assertTrue(self.sandbox.files.exists("/tmp/akernel-integration.txt"))
 
+    @unittest.skipUnless(_RUNTIME == "runc", "KVM injection is specific to runc")
+    def test_kvm_is_not_injected_by_default(self):
+        result = self.sandbox.commands.run("test ! -e /dev/kvm")
+        self.assertEqual(result.exit_code, 0, result.stderr)
+
     @unittest.skipUnless(_IMAGE, "set AKERNEL_TEST_IMAGE to test an OCI/Nydus root")
     def test_image_writes_are_private(self):
         original = self.sandbox.files.read("/etc/os-release")
@@ -150,6 +156,25 @@ class SandboxIntegrationTest(unittest.TestCase):
             self.assertEqual(session.wait(timeout=30), 0)
 
         self.assertIn(b"PTY_AFTER_INTERRUPT", output)
+
+
+@unittest.skipUnless(
+    _ENABLED and _RUNTIME == "runc" and _ENABLE_KVM,
+    "set AKERNEL_TEST_ENABLE_KVM=1 with the runc integration environment",
+)
+class RuncKVMIntegrationTest(unittest.TestCase):
+    def test_kvm_device_is_injected_only_when_requested(self):
+        with Sandbox(
+            cpu=1000,
+            memory=2048,
+            runtime="runc",
+            image=_IMAGE,
+            extra_config={"enableKVM": True},
+        ) as sandbox:
+            result = sandbox.commands.run(
+                "test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm"
+            )
+            self.assertEqual(result.exit_code, 0, result.stderr)
 
 
 @unittest.skipUnless(

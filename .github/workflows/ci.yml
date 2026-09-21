@@ -188,6 +188,28 @@ jobs:
               test ! -e /opt/firecracker/initrd.img
               test ! -e /usr/local/bin/runc
               test ! -e /usr/local/bin/runc-shim
+              test -x /usr/local/bin/verify-external-filestore
+            '
+
+      - name: Build and verify runc-only runtime payload
+        env:
+          AKERNEL_ENABLE_RUNSC: "false"
+          AKERNEL_ENABLE_KATA: "false"
+          AKERNEL_ENABLE_FIRECRACKER: "false"
+          AKERNEL_ENABLE_RUNC: "true"
+        run: |
+          make build \
+            IMAGE_REPOSITORY=akernel-ci/all-in-one \
+            IMAGE_TAG="${GITHUB_SHA}-runc" \
+            RUNTIME_PROFILE=rrt
+          docker run --rm --entrypoint /bin/bash \
+            "akernel-ci/all-in-one:${GITHUB_SHA}-runc" -euc '
+              test -x /usr/local/bin/runc
+              test -x /usr/local/bin/runc-shim
+              test ! -e /usr/local/bin/runsc
+              test ! -e /usr/local/bin/containerd-shim-runsc-v1
+              test ! -e /usr/local/bin/gvisor-bin
+              test -x /usr/local/bin/verify-external-filestore
             '
 
       - name: Start standalone AKernel
@@ -254,6 +276,102 @@ jobs:
             sdk/python/tests/integration/test_sandbox.py \
             SandboxReloadIntegrationTest -v
 
+      - name: Switch to runc-only standalone
+        run: |
+          ./deploy/standalone/stop.sh
+          filestore="${RUNNER_TEMP}/akernel-standalone-filestore"
+          mkdir -p "${filestore}"
+          sudo mount -t tmpfs -o size=4G tmpfs "${filestore}"
+          sudo chown "$(id -u):$(id -g)" "${filestore}"
+          echo "AKERNEL_CI_FILESTORE=${filestore}" >> "${GITHUB_ENV}"
+          IMAGE="akernel-ci/all-in-one:${GITHUB_SHA}-runc" \
+            AKERNEL_ENABLE_RUNSC=false \
+            AKERNEL_ENABLE_RUNC=true \
+            AKERNEL_NAT_BACKEND=iptables \
+            STANDALONE_FILESTORE_DIR="${filestore}" \
+            ./deploy/standalone/start.sh
+
+      - name: Verify external filestore restart guards
+        run: |
+          set -euo pipefail
+          state="deploy/standalone/data/sandboxd/external-filestore/source"
+          original_source="$(cat "${state}")"
+          restored=false
+          restore_state() {
+            if [[ "${restored}" != true ]]; then
+              printf '%s\n' "${original_source}" > "${state}"
+              docker exec akernel-node systemctl reset-failed sandboxd.service \
+                >/dev/null 2>&1 || true
+              docker exec akernel-node systemctl restart sandboxd.service \
+                >/dev/null 2>&1 || true
+            fi
+          }
+          trap restore_state EXIT
+
+          docker exec akernel-node systemctl restart sandboxd.service
+          for _ in $(seq 1 60); do
+            if docker exec akernel-node systemctl is-active --quiet sandboxd.service; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec akernel-node systemctl is-active --quiet sandboxd.service
+
+          printf 'intentionally-wrong-source\n' > "${state}"
+          if docker exec akernel-node systemctl restart sandboxd.service; then
+            echo "sandboxd unexpectedly accepted a changed filestore identity" >&2
+            exit 1
+          fi
+          docker exec akernel-node systemctl is-active --quiet sandboxd.service && exit 1
+
+          printf '%s\n' "${original_source}" > "${state}"
+          restored=true
+          docker exec akernel-node systemctl reset-failed sandboxd.service
+          docker exec akernel-node systemctl restart sandboxd.service
+          for _ in $(seq 1 60); do
+            if docker exec akernel-node systemctl is-active --quiet sandboxd.service; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec akernel-node systemctl is-active --quiet sandboxd.service
+          trap - EXIT
+
+          docker restart akernel-node >/dev/null
+          gateway_ip="$(docker inspect \
+            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+            akernel-traefik)"
+          for _ in $(seq 1 60); do
+            if docker exec akernel-node systemctl is-active --quiet sandboxd.service &&
+               docker exec akernel-node systemctl is-active --quiet yuanrong.service &&
+               curl --noproxy '*' -fkSs "https://${gateway_ip}/healthz" \
+                 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec akernel-node systemctl is-active --quiet sandboxd.service
+          docker exec akernel-node systemctl is-active --quiet yuanrong.service
+          curl --noproxy '*' -fkSs "https://${gateway_ip}/healthz" >/dev/null
+
+      - name: Run runc sandbox E2E
+        run: |
+          gateway_ip="$(docker inspect \
+            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+            akernel-traefik)"
+          test -n "${gateway_ip}"
+          token="$(cat deploy/standalone/data/token)"
+          export AKERNEL_TOKEN="${token}"
+          export AKERNEL_SERVER_ADDRESS="${gateway_ip}"
+          export AKERNEL_RUN_INTEGRATION=1
+          export AKERNEL_TEST_RUNTIME=runc
+          export AKERNEL_TEST_ENABLE_KVM=1
+          export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
+          test -c /dev/kvm
+
+          timeout 300s python sdk/python/tests/integration/test_sandbox.py \
+            SandboxIntegrationTest RuncKVMIntegrationTest -v
+
       - name: Show standalone diagnostics
         if: failure()
         run: |
@@ -289,6 +407,10 @@ jobs:
             ./deploy/standalone/stop.sh
           else
             docker rm -f akernel-traefik akernel-node >/dev/null 2>&1 || true
+          fi
+          if [[ -n "${AKERNEL_CI_FILESTORE:-}" ]] && \
+             mountpoint -q "${AKERNEL_CI_FILESTORE}"; then
+            sudo umount "${AKERNEL_CI_FILESTORE}"
           fi
 
       - name: Export tested all-in-one image

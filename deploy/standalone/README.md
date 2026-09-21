@@ -45,6 +45,18 @@ Clients then select it with `Sandbox(runtime="runc")`. A sandbox may request
 the configured KVM character device with
 `extra_config={"enableKVM": True}` when the host exposes `/dev/kvm`.
 
+An runc-only development image can skip the gVisor payload by setting `AKERNEL_ENABLE_RUNSC=false` for both build and startup. Disabling runsc requires runc to remain enabled, and clients must select `runtime="runc"` explicitly:
+
+```bash
+AKERNEL_ENABLE_RUNSC=false AKERNEL_ENABLE_RUNC=true make build \
+  IMAGE_REPOSITORY=akernel-runc IMAGE_TAG=local
+
+IMAGE=akernel-runc:local AKERNEL_ENABLE_RUNSC=false \
+  AKERNEL_ENABLE_RUNC=true ./start.sh
+```
+
+The image records its runsc and runc capabilities in OCI labels. The launcher validates requested runtimes against those labels before starting the node, so a runc-only image cannot silently start with a runsc configuration. Images built before the runsc capability label was introduced retain the historical assumption that runsc is present.
+
 Experimental NVIDIA GPU sandboxes use gVisor nvproxy. The host must provide a
 compatible NVIDIA driver and NVIDIA Container Toolkit. Enable GPU access to
 the node container with:
@@ -64,6 +76,14 @@ image there when needed; quota-backed writable layers therefore use local disk
 rather than tmpfs. Without `storage_mb`, runsc retains its configured
 memory-backed overlay while Firecracker uses its configured sparse ext4
 default.
+
+For a host with a dedicated filestore filesystem, pass its exact mountpoint to `STANDALONE_FILESTORE_DIR`. The launcher fails closed unless the path is a writable mountpoint backed by a non-loop device, rejects `/` and paths that overlap the standalone data directory, rejects a legacy `ext4.img`, bind-mounts it explicitly at `/home/akernel/filestore`, and generates a sandboxd config with `filestore_dir_size=""` so sandboxd uses the real filesystem rather than creating another loop-backed image:
+
+```bash
+STANDALONE_FILESTORE_DIR=/srv/akernel-filestore ./start.sh
+```
+
+The launcher records the filesystem type and stable identity in generated state under the persistent standalone data directory, then mounts that state read-only at `/etc/akernel/external-filestore`. It independently records in the container environment that the external filestore is required; a missing state mount therefore fails closed instead of being interpreted as the default loop-backed mode. Block-device filesystems must have a UUID; UUID-less network filesystems are pinned to their exact source. The container entrypoint and every sandboxd service start revalidate that identity, reject loop devices and `ext4.img`, and perform a write probe. A missing or replaced host mount therefore cannot silently fall back to the parent filesystem during either a Docker or sandboxd restart. Keep the host mount persistent across reboot by using its filesystem UUID in `/etc/fstab`; the container-side guard is a final safety boundary, not a replacement for host mount ordering.
 
 Sandbox checkpoints for runsc and Firecracker use YuanRong's local-only
 snapshot mode. Checkpoint state is kept under the persistent

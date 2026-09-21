@@ -123,6 +123,11 @@ case "${AKERNEL_ENABLE_KATA:-true}" in
   *) die "AKERNEL_ENABLE_KATA must be true or false" ;;
 esac
 
+case "${AKERNEL_ENABLE_RUNSC:-true}" in
+  true|false) ;;
+  *) die "AKERNEL_ENABLE_RUNSC must be true or false" ;;
+esac
+
 case "${AKERNEL_ENABLE_FIRECRACKER:-true}" in
   true|false) ;;
   *) die "AKERNEL_ENABLE_FIRECRACKER must be true or false" ;;
@@ -203,22 +208,28 @@ node_build_args=(
   --build-arg "DISTILL_FS_AMD64_SHA256=${DISTILL_FS_AMD64_SHA256}"
   --build-arg "AKERNEL_RUNTIME_IMAGE=${runtime_image}"
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
+  --build-arg "AKERNEL_ENABLE_RUNSC=${AKERNEL_ENABLE_RUNSC:-true}"
   --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA:-true}"
   --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC:-false}"
   --build-arg "AKERNEL_ENABLE_FIRECRACKER=${AKERNEL_ENABLE_FIRECRACKER:-true}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"
 )
-if [[ -z "${gvisor_release}" ||
-      -z "${gvisor_amd64_sha512}" ||
-      -z "${gvisor_amd64_url}" ]]; then
-  die "GVISOR_RELEASE, GVISOR_AMD64_URL, and GVISOR_AMD64_SHA512 must be set together"
+if [[ "${AKERNEL_ENABLE_RUNSC:-true}" == "true" ||
+      -n "${gvisor_release}" ||
+      -n "${gvisor_amd64_sha512}" ||
+      -n "${gvisor_amd64_url}" ]]; then
+  if [[ -z "${gvisor_release}" ||
+        -z "${gvisor_amd64_sha512}" ||
+        -z "${gvisor_amd64_url}" ]]; then
+    die "GVISOR_RELEASE, GVISOR_AMD64_URL, and GVISOR_AMD64_SHA512 must be set together"
+  fi
+  node_build_args+=(
+    --build-arg "GVISOR_RELEASE=${gvisor_release}"
+    --build-arg "GVISOR_AMD64_URL=${gvisor_amd64_url}"
+    --build-arg "GVISOR_AMD64_SHA512=${gvisor_amd64_sha512}"
+  )
 fi
-node_build_args+=(
-  --build-arg "GVISOR_RELEASE=${gvisor_release}"
-  --build-arg "GVISOR_AMD64_URL=${gvisor_amd64_url}"
-  --build-arg "GVISOR_AMD64_SHA512=${gvisor_amd64_sha512}"
-)
 if [[ -z "${firecracker_release}" ||
       -z "${firecracker_amd64_sha256}" ||
       -z "${firecracker_amd64_url}" ]]; then
