@@ -125,6 +125,10 @@ spec:
         {{- end }}
         - name: AKERNEL_ENV
           value: {{ .Values.monitoring.akernelEnv | default "default" | quote }}
+        {{- if .Values.node.memoryElasticity.enabled }}
+        - name: AKERNEL_MEMORY_ELASTICITY
+          value: "1"
+        {{- end }}
         - name: ENABLE_METRICS
           value: {{ ne (.Values.monitoring.prometheusEndpoint | default "") "" | ternary "true" "false" | quote }}
         - name: ENABLE_TRACE

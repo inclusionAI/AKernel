@@ -140,6 +140,10 @@ node:
   annotations: {}
   initContainers: []
   hostDiskPath: "/home/akernel"
+  # Explicit process-start opt-in for the revisioned memory elasticity chain
+  # (ResizeResources/ShrinkResources with operation IDs and revisions).
+  memoryElasticity:
+    enabled: false
   homeDisk:
     useEphemeralPVC: false
     storageClassName: ""
