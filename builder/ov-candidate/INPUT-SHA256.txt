@@ -37,17 +37,31 @@ processes, 107 loaded-library paths, 61 distinct byte identities).
 Base image immutable identity: canon-8c53bdd-rebuild1
   image Id sha256:f34b68d262639da84bc6617f7338b0462a944dc3d3cc3aabfa2189b1c856130e
   RepoDigest akernel-bm1/all-in-one@sha256:f34b68d262639da84bc6617f7338b0462a944dc3d3cc3aabfa2189b1c856130e
-runsc payload in the base image (node /usr/local/bin/runsc):
-  sha256 4605e4ba00b088e208f1c1947fd63ad370e6ad67b6159ebe5d47998f1c794309
-  runsc --version: release-20260817.0-akernel.1-2-g8fa119b8d333 (spec 1.2.1)
-  version-string commit 8fa119b8d333 = 8fa119b8d333c398f407019d14dc4672560ba63c
-  (an ANCESTOR of the local gvisor checkout
+runsc payload — VERIFIED official-release provenance (2315Z + first-hand
+re-read 2026-09-24; this is a RELEASE ARTIFACT, NOT a canonical-gvisor
+compile and makes no local-build claim):
+  base-image build log: /data/images/allinone-build.log
+    SHA256  580b067ab5fdfdccc60c2ac3fdf6080ff4cce32d4324984379b4b9bf410c2085
+    SHA512  ca0c70f3407674a30f3b04623aee0e3464f3ccb680d5f19cbf14e548f4e6b60e
+            3d38295fb462b7a2f20483e4ab3351535cd8
+  downloaded asset (from the log, trace + verified digest):
+    https://github.com/akernel-dev/gvisor/releases/download/release-20260817.0-akernel.2/runsc.x86_64
+    SHA512 10044872bf945dc2e7cec60aa21486ce54e263e5573db4df34587c40cec6db842
+           a1d7266e60c43486f5b4d77e6db5a9299dd406e56e7b333d31b35dbf2b9b036
+  node payload /usr/local/bin/runsc (akernel-node-l62cx, first-hand):
+    SHA256  4605e4ba00b088e208f1c1947fd63ad370e6ad67b6159ebe5d47998f1c794309
+    SHA512  equals the release digest recorded in the build log (verified)
+    runsc --version: release-20260817.0-akernel.1-2-g8fa119b8d333 (spec 1.2.1)
+  the build produced base image Id sha256:f34b68d262639da84bc6617f7338b046
+    2a944dc3d3cc3aabfa2189b1c856130e (= canon-8c53bdd-rebuild1); the two
+    Dockerfiles' bytes match platform commit
+    8c53bdd918faffbc474fbd23f0560b0e0c7a1480 (2315Z).
+  The version string's g8fa119b8d333 describes the release's source
+  revision; the local gvisor checkout (nested component repo, branch
   codex/bm1-memory-freezer-recv-20260909 @
-  46637b84fda2bdcfa664980171ed3dad19da7536, a nested component repo, NOT an
-  outer-repo submodule). Ancestry does NOT prove the running binary was
-  built from that source: the runsc SOURCE CHAIN IS UNCLOSED. Closing it
-  requires the actual 09-20 base-image build inputs (rebuild1 build records
-  / artifact provenance); no claim of consumption is made here.
+  46637b84fda2bdcfa664980171ed3dad19da7536) is NOT the build input for
+  this binary.
+
 sandboxd source (both ov17/ov19): 537ca54aa154e2f101c1e619829e614042b6226b
   (branch codex/bm1-memory-elasticity-20260909; runtime sources unchanged
   after the test-file-only format commit)
