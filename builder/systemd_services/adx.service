@@ -1,0 +1,20 @@
+[Unit]
+Description=Agent DX control and data plane
+After=network-online.target sandboxd.service
+Wants=network-online.target sandboxd.service
+
+[Service]
+Type=simple
+PassEnvironment=AKERNEL_ADX_CONFIG AKERNEL_ADX_MANAGED_CREDENTIALS AKERNEL_ADX_STATE_DIR
+PassEnvironment=ADX_REDIS_URL NODE_NAME INSTANCE_IP
+ExecStart=/usr/local/bin/adx-service run
+ExecStop=/usr/local/bin/adx-service stop
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=120
+KillMode=control-group
+Delegate=yes
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

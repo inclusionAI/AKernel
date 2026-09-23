@@ -2,7 +2,7 @@
 #
 # Role: runs in the same container as business processes, responsible for:
 #   1. Receive traces/metrics/logs reported by business processes via OTLP
-#   2. Collect mounted log files (${env:YR_LOG_PATH}/)
+#   2. Collect AKernel and runtime log files
 #   3. Forward to external monitoring stack (Prometheus/Loki/Tempo)
 #
 # External monitoring stack addresses are injected via environment variables:
@@ -26,202 +26,6 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
-  # ─────────────────────────────────────────────────────────────────────
-  # filelog/spdlog: C++ glog-style logs
-  # ─────────────────────────────────────────────────────────────────────
-  filelog/spdlog:
-    include:
-      - ${env:YR_LOG_PATH}/*function_*.log
-      - ${env:YR_LOG_PATH}/*libruntime*.log
-      - ${env:YR_LOG_PATH}/*iam_server.log
-      - ${env:YR_LOG_PATH}/job-*.log
-      - ${env:YR_LOG_PATH}/runtime-*_runtime.log
-    exclude:
-      - ${env:YR_LOG_PATH}/*_std.log
-      - ${env:YR_LOG_PATH}/*.log.gz
-    start_at: end
-    multiline:
-      line_start_pattern: '^[DIWEC]\d{4} '
-    operators:
-      - type: regex_parser
-        regex: '^(?P<severity>[DIWEC])(?P<log_time>\d{4} \d{2}:\d{2}:\d{2}\.\d+) (?P<thread>\d+) (?P<source>[^\]]+)\] (?P<pid>\d+),[^\]]*\](?P<node>[^,]*),(?P<component>[^\]]*)\](?P<body>[\s\S]*)'
-        timestamp:
-          parse_from: attributes.log_time
-          layout_type: strptime
-          layout: '%m%d %H:%M:%S.%f'
-          location: Asia/Shanghai
-        severity:
-          parse_from: attributes.severity
-          mapping:
-            debug: D
-            info: I
-            warn: W
-            error: E
-            fatal: C
-      - type: add
-        field: resource["service.name"]
-        value: "yuanrong-functionsystem"
-      - type: move
-        from: attributes.node
-        to: resource["node.name"]
-      - type: move
-        from: attributes.component
-        to: resource["component.name"]
-      - type: move
-        from: attributes.source
-        to: attributes["code.filepath"]
-      - type: move
-        from: attributes.thread
-        to: attributes["thread.id"]
-      - type: move
-        from: attributes.pid
-        to: attributes["process.pid"]
-      - type: remove
-        field: attributes.log_time
-      - type: copy
-        from: attributes.body
-        to: body
-      - type: remove
-        field: attributes.body
-        if: 'attributes.body != nil'
-
-  # ─────────────────────────────────────────────────────────────────────
-  # filelog/faasfrontend: Go pipe-separated
-  # ─────────────────────────────────────────────────────────────────────
-  filelog/faasfrontend:
-    include:
-      - ${env:YR_LOG_PATH}/faasfrontend.*.log
-    exclude:
-      - ${env:YR_LOG_PATH}/*.log.gz
-    start_at: end
-    multiline:
-      line_start_pattern: '^\d{4}-\d{2}-\d{2} \d{2}:'
-    operators:
-      - type: regex_parser
-        regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) \| (?P<severity>\w+) \| (?P<source>[^|]+?)\s*\| (?P<process>[^|]+?)\s*\|[^|]*\|[^|]*\|\s*(?P<body>[\s\S]*)'
-        timestamp:
-          parse_from: attributes.timestamp
-          layout_type: strptime
-          layout: '%Y-%m-%d %H:%M:%S.%f'
-        severity:
-          parse_from: attributes.severity
-          mapping:
-            debug: DEBUG
-            info: INFO
-            warn: WARN
-            error: ERROR
-      - type: add
-        field: resource["service.name"]
-        value: "yuanrong-faasfrontend"
-      - type: move
-        from: attributes.process
-        to: resource["process.name"]
-      - type: move
-        from: attributes.source
-        to: attributes["code.filepath"]
-      - type: remove
-        field: attributes.timestamp
-      - type: copy
-        from: attributes.body
-        to: body
-      - type: remove
-        field: attributes.body
-        if: 'attributes.body != nil'
-
-  # ─────────────────────────────────────────────────────────────────────
-  # filelog/faasscheduler: Go pipe-separated
-  # ─────────────────────────────────────────────────────────────────────
-  filelog/faasscheduler:
-    include:
-      - ${env:YR_LOG_PATH}/faasscheduler.*.log
-    exclude:
-      - ${env:YR_LOG_PATH}/*.log.gz
-    start_at: end
-    multiline:
-      line_start_pattern: '^\d{4}-\d{2}-\d{2} \d{2}:'
-    operators:
-      - type: regex_parser
-        regex: '^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) \| (?P<severity>\w+) \| (?P<source>[^|]+?)\s*\| (?P<process>[^|]+?)\s*\|[^|]*\|[^|]*\|\s*(?P<body>[\s\S]*)'
-        timestamp:
-          parse_from: attributes.timestamp
-          layout_type: strptime
-          layout: '%Y-%m-%d %H:%M:%S.%f'
-        severity:
-          parse_from: attributes.severity
-          mapping:
-            debug: DEBUG
-            info: INFO
-            warn: WARN
-            error: ERROR
-      - type: add
-        field: resource["service.name"]
-        value: "yuanrong-faasscheduler"
-      - type: move
-        from: attributes.process
-        to: resource["process.name"]
-      - type: move
-        from: attributes.source
-        to: attributes["code.filepath"]
-      - type: remove
-        field: attributes.timestamp
-      - type: copy
-        from: attributes.body
-        to: body
-      - type: remove
-        field: attributes.body
-        if: 'attributes.body != nil'
-
-  # ─────────────────────────────────────────────────────────────────────
-  # filelog/metaservice: Go bracket format
-  # ─────────────────────────────────────────────────────────────────────
-  filelog/metaservice:
-    include:
-      - ${env:YR_LOG_PATH}/meta-service-run.*.log
-    exclude:
-      - ${env:YR_LOG_PATH}/*.log.gz
-    start_at: end
-    multiline:
-      line_start_pattern: '^\[\d{4}-\d{2}-\d{2}'
-    operators:
-      - type: regex_parser
-        regex: '^\[(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) (?P<severity>\w+) (?P<source>[^\]]+)\] \[(?P<node>[^\]]*)\] (?P<body>[\s\S]*)'
-        timestamp:
-          parse_from: attributes.timestamp
-          layout_type: strptime
-          layout: '%Y-%m-%d %H:%M:%S.%f'
-        severity:
-          parse_from: attributes.severity
-          mapping:
-            debug: DEBUG
-            info: INFO
-            warn: WARN
-            error: ERROR
-      - type: add
-        field: resource["service.name"]
-        value: "yuanrong-metaservice"
-      - type: move
-        from: attributes.node
-        to: resource["node.name"]
-      - type: move
-        from: attributes.source
-        to: attributes["code.filepath"]
-      - type: remove
-        field: attributes.timestamp
-      - type: move
-        from: attributes.body
-        to: body
-
-  # filelog/imagemanager removed: image-manager was folded into sandboxd,
-  # so its former standalone log file no longer exists.
-  # Its log records now flow through filelog/sandboxd below; tag them
-  # downstream by source if you need to distinguish them.
-
-  # ─────────────────────────────────────────────────────────────────────
-  # filelog/distillfs: Rust tracing_subscriber fmt logs
-  # distill_fs is still spawned as a subprocess by sandboxd's image-manager
-  # module, so daemon.log lives under the image_manager root's daemons/ tree
-  # (${plugin.image.root}/daemons); only the parent Go binary was absorbed.
-  # ─────────────────────────────────────────────────────────────────────
   filelog/distillfs:
     include:
       - /home/akernel/sandboxd/image_manager/daemons/*/daemon.log
@@ -337,24 +141,16 @@ receivers:
         from: attributes.body
         to: body
 
-  # ─────────────────────────────────────────────────────────────────────
-  # filelog/stdlogs: stdout unstructured logs
-  # ─────────────────────────────────────────────────────────────────────
-  filelog/stdlogs:
+  filelog/adx:
     include:
-      - ${env:YR_LOG_PATH}/*_std.log
-      - ${env:YR_LOG_PATH}/*.out
-      - ${env:YR_LOG_PATH}/*.err
+      - /home/akernel/adx/run/node/logs/*.log
     exclude:
-      - ${env:YR_LOG_PATH}/*.log.gz
+      - "**/*.gz"
     start_at: end
     operators:
       - type: add
         field: resource["service.name"]
-        value: "yuanrong-stdlogs"
-      - type: move
-        from: attributes["log.file.name"]
-        to: resource["log.file.name"]
+        value: akernel
 
 processors:
   batch:
@@ -406,7 +202,7 @@ service:
 
   pipelines:
     logs:
-      receivers: [filelog/spdlog, filelog/faasfrontend, filelog/faasscheduler, filelog/metaservice, filelog/distillfs, filelog/sandboxd, filelog/runsc, filelog/stdlogs, otlp]
+      receivers: [filelog/adx, filelog/distillfs, filelog/sandboxd, filelog/runsc, otlp]
       processors: [memory_limiter, resource, batch]
       exporters: [otlphttp/loki]
     traces:

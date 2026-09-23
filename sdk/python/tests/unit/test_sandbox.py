@@ -42,6 +42,7 @@ class SandboxTest(unittest.TestCase):
         self.session.id = "physical-id"
         self.session.commands = MagicMock()
         self.session.files = MagicMock()
+        self.session.pty = MagicMock()
         self.session.is_running.return_value = True
         self.session.get_info.return_value = SandboxInfo(
             id="physical-id",
@@ -70,6 +71,7 @@ class SandboxTest(unittest.TestCase):
         self.assertIsNone(sandbox.get_info().xpu)
         self.assertIsNone(sandbox.get_info().storage_mb)
         self.assertIsNone(sandbox.startup_command)
+        self.assertIs(sandbox.pty._driver, self.session.pty)
 
         spec = self.backend.create.call_args.args[0]
         self.assertEqual(spec.cpu, 2000)

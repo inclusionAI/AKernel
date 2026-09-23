@@ -1,0 +1,33 @@
+schema_version: 1
+profile: standalone
+internal_security: network
+namespace: akernel
+service_overrides:
+  coordinator:
+    config:
+      placement: spread
+  adxlet:
+    config:
+      execd_env:
+        ADX_EXECD_CONTROL_SOCKET_PATH: /run/akernel
+      resource_source:
+        disk_path: /home/akernel
+  ingress:
+    env:
+      ADX_DATA_PLANE_INGRESS_PLAIN_BIND: 0.0.0.0:8080
+      ADX_DATA_PLANE_INGRESS_ALLOWED_CLIENT_CIDRS: 0.0.0.0/0
+runtime_profile:
+  rootfs:
+    runtime_class: runsc
+    type: local
+    path: /opt/akernel/runtime/akernel-runtime-rootfs.img
+    readonly: false
+  bootstrap:
+    type: erofs
+    root: /opt/akernel/runtime/akernel-runtime-rootfs.img
+    target: /__adx
+    entrypoint:
+      - /__adx/usr/local/bin/adx-execd
+    image_process_config: /etc/adx-image-process.json
+  env:
+    PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

@@ -111,6 +111,37 @@ jobs:
         run: |
           make deploy-script-check
 
+  adx-integration-contracts:
+    name: ADX release and deployment contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sdk/python/pyproject.toml
+
+      - name: Install contract-test dependencies
+        run: |
+          python -m pip install PyYAML
+          helm version --short
+
+      - name: Verify ADX package, standalone, Helm, and Terraform contracts
+        run: |
+          python builder/scripts/test_adx_service.py -v
+          python builder/scripts/test_runtime_contract.py -v
+          python deploy/standalone/test_start.py -v
+          python deploy/scripts/test_ensure_adx_secret.py -v
+          python deploy/scripts/test_get_adx_admin_key.py -v
+          python deploy/akernel/charts/core/tests/test_adx_chart.py -v
+          python deploy/terraform/test_adx_contract.py -v
+
   standalone-e2e:
     name: Standalone E2E
     needs:
@@ -118,6 +149,7 @@ jobs:
       - sdk-quality
       - sdk-distributions
       - deployment-script-syntax
+      - adx-integration-contracts
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     outputs:
@@ -162,8 +194,7 @@ jobs:
         run: |
           make build \
             IMAGE_REPOSITORY=akernel-ci/all-in-one \
-            IMAGE_TAG="${GITHUB_SHA}" \
-            RUNTIME_PROFILE=rrt
+            IMAGE_TAG="${GITHUB_SHA}"
 
       - name: Verify systemd container identity in the image
         run: |
@@ -194,6 +225,8 @@ jobs:
         run: |
           IMAGE="akernel-ci/all-in-one:${GITHUB_SHA}" \
             AKERNEL_NAT_BACKEND=iptables \
+            AKERNEL_CONTROL_BIND=127.0.0.1 \
+            AKERNEL_DATA_BIND=127.0.0.1 \
             ./deploy/standalone/start.sh
 
       - name: Verify PID 1 detects its container
@@ -206,13 +239,9 @@ jobs:
 
       - name: Run SDK end-to-end examples
         run: |
-          gateway_ip="$(docker inspect \
-            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
-            akernel-traefik)"
-          test -n "${gateway_ip}"
           token="$(cat deploy/standalone/data/token)"
           export AKERNEL_TOKEN="${token}"
-          export AKERNEL_SERVER_ADDRESS="${gateway_ip}"
+          export AKERNEL_SERVER_ADDRESS="127.0.0.1"
           export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
 
           examples=(
@@ -238,27 +267,28 @@ jobs:
               python -u "sdk/python/examples/${example}"
           done
 
-      - name: Run runsc checkpoint reload E2E
+      - name: Run runsc SDK integration and standalone E2E
         run: |
-          gateway_ip="$(docker inspect \
-            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
-            akernel-traefik)"
-          test -n "${gateway_ip}"
           token="$(cat deploy/standalone/data/token)"
           export AKERNEL_TOKEN="${token}"
-          export AKERNEL_SERVER_ADDRESS="${gateway_ip}"
+          export AKERNEL_SERVER_ADDRESS="127.0.0.1"
           export AKERNEL_RUN_INTEGRATION=1
           export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
 
-          AKERNEL_TEST_RUNTIME=runsc timeout 600s python \
-            sdk/python/tests/integration/test_sandbox.py \
-            SandboxReloadIntegrationTest -v
+          AKERNEL_TEST_RUNTIME=runsc timeout 900s python -m unittest discover \
+            -s sdk/python/tests/integration \
+            -t sdk/python \
+            -v
+          AKERNEL_TEST_RUNTIME=runsc timeout 900s python -m unittest discover \
+            -s sdk/python/tests/e2e/standalone \
+            -t sdk/python \
+            -v
 
       - name: Show standalone diagnostics
         if: failure()
         run: |
           docker ps -a
-          for container in akernel-node akernel-traefik; do
+          for container in akernel-node; do
             if docker container inspect "${container}" >/dev/null 2>&1; then
               echo "=== ${container}: docker logs ==="
               docker logs --tail 500 "${container}" 2>&1 || true
@@ -267,14 +297,12 @@ jobs:
           if docker container inspect akernel-node >/dev/null 2>&1; then
             echo "=== akernel-node: service journal ==="
             docker exec akernel-node journalctl --no-pager -n 500 \
-              -u sandboxd.service -u yuanrong.service || true
+              -u sandboxd.service -u adx.service || true
             docker exec akernel-node bash -c '
               shopt -s nullglob
               for logfile in \
                 /home/akernel/logs/sandboxd/sandboxd*.log \
-                /home/yuanrong/logs/*function_master*.log \
-                /home/yuanrong/logs/*function_proxy*.log \
-                /home/yuanrong/logs/*function_agent*.log \
+                /home/akernel/adx/logs/*.log \
                 /home/akernel/sandboxd/image_manager/daemons/*/daemon.log; do
                 echo "=== ${logfile} ==="
                 tail -n 300 "${logfile}"
@@ -288,7 +316,7 @@ jobs:
           if [[ -x ./deploy/standalone/stop.sh ]]; then
             ./deploy/standalone/stop.sh
           else
-            docker rm -f akernel-traefik akernel-node >/dev/null 2>&1 || true
+            docker rm -f akernel-node >/dev/null 2>&1 || true
           fi
 
       - name: Export tested all-in-one image

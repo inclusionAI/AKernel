@@ -27,13 +27,8 @@ from urllib.error import HTTPError, URLError
 from ._addresses import Endpoint, api_endpoint_from_env
 from ._resource_api import (
     ResourceAPIError,
+    parse_resource_nodes,
     query_resource_view,
-)
-from ._resource_api import (
-    extract_labels as _extract_labels,
-)
-from ._resource_api import (
-    extract_resources as _extract_resources,
 )
 from .pty import Pty, PtyError
 
@@ -184,19 +179,10 @@ def handle_resources(debug: bool = False):
         print(json.dumps(data, indent=2, ensure_ascii=False))
         print()
 
-    # Response is QueryResourcesInfoResponse: {"requestID": "...", "resource": {...}}
-    resource = data.get("resource", data) if isinstance(data, dict) else None
-    if resource is None:
+    nodes = parse_resource_nodes(data) if isinstance(data, dict) else []
+    if not nodes:
         print("No resource data in response.")
         return
-
-    # The top-level resource is the domain scheduler (aggregate).
-    # Actual nodes live in resource.fragment as a map of nodeId → ResourceUnit.
-    fragment = resource.get("fragment", {}) if isinstance(resource, dict) else {}
-    if fragment:
-        units = list(fragment.values())
-    else:
-        units = [resource] if isinstance(resource, dict) else resource
 
     # ── Summary accumulators ──
     total_cpu_total = 0.0
@@ -218,16 +204,16 @@ def handle_resources(debug: bool = False):
         "HOST IP",
     ]
     rows = []
-    for u in units:
-        nid = u.get("id", "-")
+    for node in nodes:
+        nid = node.id or "-"
         # Protobuf JSON omits the default enum value. YuanRong defines
         # NORMAL as zero, so an absent status is a normal node rather than an
         # unknown state.
-        st = _fmt_node_status(u.get("status", 0))
+        st = _fmt_node_status(node.status)
 
-        capacity = _extract_resources(u.get("capacity", {}))
-        allocatable = _extract_resources(u.get("allocatable", {}))
-        labels = _extract_labels(u.get("nodeLabels", {}))
+        capacity = node.capacity
+        allocatable = node.allocatable
+        labels = node.labels
 
         cpu_total = capacity.get("CPU", 0)  # millicores
         cpu_al = allocatable.get("CPU", 0)  # millicores

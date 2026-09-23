@@ -85,14 +85,12 @@ node_pool_key_name = "<your-ecs-key-name>"
 # --- Core chart settings ---
 core_namespace = "akernel"
 
-# Optional: stable IAM JWT signing seed. Generate a 32-byte hex value with:
+# Legacy control-plane only: stable IAM JWT signing seed. Ignored by the
+# default ADX deployment. Generate a 32-byte hex value with:
 #   python3 -c 'import secrets; print(secrets.token_hex(32).upper())'
-# iam_litebus_data_key = "<64-char-hex-seed>"
 
 # --- Component images ---
 # Override image repository/tag for each component. Defaults to <acr_registry>/<component>.
-# etcd_image_repository    = "my-registry.com/etcd"
-# etcd_image_tag           = "3.6.8"
 # master_image_repository  = "my-registry.com/akernel/all-in-one"
 # master_image_tag         = "<release-tag>"
 # node_image_repository    = "my-registry.com/akernel/all-in-one"
@@ -131,19 +129,6 @@ core_namespace = "akernel"
 # prometheus_resources       = { cpu = "2", memory = "4Gi", pvc_size = "50Gi" }
 # loki_resources             = { cpu = "1", memory = "2Gi", pvc_size = "50Gi" }
 # tempo_resources            = { cpu = "1", memory = "2Gi", pvc_size = "20Gi" }
-
-# Optional: expose akernel-master port 8888 through LoadBalancer.
-# master_public_access_8888 = true
-# master_service_type       = "LoadBalancer"
-
-# Optional: master replicas (for HA when frontend is enabled).
-# master_replicas = 1
-
-# Frontend Deployment. Traefik routes API traffic to akernel-frontend when it is enabled.
-frontend_enabled  = true
-frontend_replicas = 1
-frontend_cpu      = "1"
-frontend_memory   = "2Gi"
 
 # Traefik ingress controller (deployed via core chart).
 traefik_enabled               = true

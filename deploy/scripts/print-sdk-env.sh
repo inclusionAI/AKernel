@@ -54,12 +54,33 @@ get_lb_host() {
 
 traefik_host="$(get_lb_host "${core_ns}" traefik)"
 [[ -n "${traefik_host}" ]] || die "traefik LoadBalancer address is not ready"
+traefik_control_port="$(kubectl --kubeconfig "${kubeconfig}" -n "${core_ns}" get svc traefik -o jsonpath='{.spec.ports[?(@.name=="websecure")].port}')"
+traefik_data_port="$(kubectl --kubeconfig "${kubeconfig}" -n "${core_ns}" get svc traefik -o jsonpath='{.spec.ports[?(@.name=="web")].port}')"
+[[ -n "${traefik_control_port}" ]] || die "traefik websecure port is not available"
+[[ -n "${traefik_data_port}" ]] || die "traefik web port is not available"
 
-token="$("${AKERNEL_REPO_ROOT}/deploy/scripts/generate-token.py" --env "${env_name}" --write-file "${dir}/token")"
+address_host="${traefik_host}"
+if [[ "${address_host}" == *:* && "${address_host}" != \[*\] ]]; then
+  address_host="[${address_host}]"
+fi
+server_address="${address_host}"
+if [[ "${traefik_control_port}" != "443" ]]; then
+  server_address="${server_address}:${traefik_control_port}"
+fi
+gateway_address="http://${address_host}"
+if [[ "${traefik_data_port}" != "80" ]]; then
+  gateway_address="${gateway_address}:${traefik_data_port}"
+fi
+
+token="$("${AKERNEL_REPO_ROOT}/deploy/scripts/get-adx-admin-key.sh" \
+  --vendor "${vendor}" --env "${env_name}" --write-file "${dir}/token")"
 
 sdk_env="${dir}/sdk.env"
 {
-  printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${traefik_host}"
+  printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${server_address}"
+  if [[ "${traefik_data_port}" != 80 || "${traefik_control_port}" != 443 ]]; then
+    printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' "${gateway_address}"
+  fi
   printf 'export AKERNEL_TOKEN=%q\n' "${token}"
 } > "${sdk_env}"
 chmod 600 "${sdk_env}"

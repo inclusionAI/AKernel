@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: akernel-adx-ingress-api
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: akernel-adx-ingress-api
+  ports:
+    - name: control
+      port: 8443
+      targetPort: control
+    - name: data
+      port: 8080
+      targetPort: data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: akernel-adx-ingress-api
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.adx.ingressApi.replicas }}
+  selector:
+    matchLabels:
+      app: akernel-adx-ingress-api
+  template:
+    metadata:
+      labels:
+        app: akernel-adx-ingress-api
+      annotations:
+        checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ingress-api
+          image: "{{ include "core.image" (dict "root" . "image" .Values.coordinator.image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
+          command: [/opt/adx/current/bin/adxctl]
+          args: [--config, /etc/akernel/adx-ingress-api.yaml, run]
+          env:
+            {{- if eq .Values.adx.redis.mode "managed" }}
+            - name: ADX_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: akernel-adx-redis-auth
+                  key: password
+            {{- end }}
+            - name: ADX_REDIS_URL
+              {{- if eq .Values.adx.redis.mode "managed" }}
+              value: redis://:$(ADX_REDIS_PASSWORD)@akernel-adx-redis.{{ .Release.Namespace }}.svc.cluster.local:6379/
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adx.redis.external.existingSecret | quote }}
+                  key: {{ .Values.adx.redis.external.urlKey | quote }}
+              {{- end }}
+          ports:
+            - name: control
+              containerPort: 8443
+            - name: data
+              containerPort: 8080
+            - name: health
+              containerPort: 18080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            timeoutSeconds: 3
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            timeoutSeconds: 3
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.adx.ingressApi.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/akernel/adx-ingress-api.yaml
+              subPath: ingress-api.yaml
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/adx
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: akernel-adx-config
+        - name: credentials
+          secret:
+            secretName: {{ .Values.adx.tls.existingSecret | quote }}
+            defaultMode: 0400
+            items:
+              - {key: public.pem, path: tls/public.pem}
+              - {key: public.key, path: tls/public.key}

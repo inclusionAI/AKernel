@@ -23,107 +23,64 @@ image:
   tag: "latest"
   pullPolicy: IfNotPresent
 
-yuanrong:
-  imageProcessConfig: "/run/akernel/yr-image-process.json"
+# Agent DX is the default AKernel control and data plane. The chart expects an
+# existing Secret containing the public HTTPS certificate and initial API key;
+# see deploy/README.md for the exact key contract.
+adx:
+  namespace: akernel
+  schedulerShards: 1
+  tls:
+    existingSecret: akernel-adx-tls
+  redis:
+    mode: managed
+    appendfsync: everysec
+    external:
+      existingSecret: ""
+      urlKey: redis-url
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 20Gi
+      accessModes:
+        - ReadWriteOnce
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  coordinator:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  ingressApi:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  node:
+    allowedTargetCidrs: 10.88.0.0/16
+    allowedIngressCidrs: 0.0.0.0/0
+    reportIntervalSeconds: 5
+    resourceValidForSeconds: 30
 
-auth:
-  # Existing Secret that contains the JWT signing seed. For
-  # `helm template | kubectl apply`, prefer pre-creating this Secret with
-  # deploy/scripts/ensure-iam-secret.sh so repeated applies do not rotate it.
-  existingSecret: ""
-  # Optional explicit JWT signing seed. If empty and no existingSecret is set,
-  # the chart generates a random hex seed at render time.
-  litebusDataKey: ""
-
-# Shared TLS material used by the openYuanrong frontend and IAM services.
-# The chart generates a deployment-specific self-signed certificate when an
-# existing Secret or explicit certificate is not supplied.
-componentTLS:
-  existingSecret: ""
-  secretName: "akernel-component-tls"
-  caCrt: ""
-  moduleCrt: ""
-  moduleKey: ""
-
-etcd:
-  # The bundled chart currently manages one durable etcd member. Use an
-  # external HA etcd deployment when control-plane availability requires it.
-  replicas: 1
-  dataDir: /etcd
-  persistence:
-    enabled: true
-    storageClassName: ""
-    size: "20Gi"
-    accessModes:
-    - ReadWriteOnce
-  volumePermissions:
-    enabled: true
-    runAsUser: 0
-    dataUser: 1001
+# Preserve the existing placement setting; translate binpack to ADX pack.
+coordinator:
   image:
-    repository: public.ecr.aws/bitnami/etcd
-    tag: 3.6.8
-    pullPolicy: IfNotPresent
-  resources:
-    limits:
-      cpu: "1"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
-  args:
-    quotaBackendBytes: "42949672960"
-    autoCompactionRetention: "100000"
-
-master:
-  replicas: 1
-  # AKernel defaults YuanRong's Unit scheduler to spread. Use binpack to
-  # compact new sandbox placements onto fewer eligible nodes.
+    repository: ""
+    tag: ""
+    pullPolicy: ""
   schedulePlacementPolicy: spread
-  host: ""
-  port: "22770"
-  service:
-    type: ClusterIP
-    annotations: {}
-  image:
-    repository: ""
-    tag: ""
-    pullPolicy: ""
-  resources:
-    limits:
-      cpu: "1"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
-  etcd:
-    host: ""
-    port: "2379"
-
-frontend:
-  enabled: true
-  replicas: 2
-  service:
-    type: ClusterIP
-    annotations: {}
-  # Image defaults to the global all-in-one image. Set these only to override.
-  image:
-    repository: ""
-    tag: ""
-    pullPolicy: ""
-  resources:
-    limits:
-      cpu: "1"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
-  etcd:
-    host: ""
-    port: "2379"
-  master:
-    metaServiceAddress: ""
-    iamServerAddress: ""
 
 node:
   secret:
@@ -531,7 +488,7 @@ node:
         registry_auths_path="/home/akernel/sandboxd/config/registry_auths.json"
         cgroup_memory_limit="64GiB"
 
-        # node-resource config. sock_path matches what yuanrong's C++
+        # node-resource config. sock_path matches the sandboxd
         # external_system_collector reads, so it must stay /var/run/...
         [plugin.node_resource]
         provider="kubernetes"
@@ -541,18 +498,10 @@ traefik:
   enabled: false
   mode: "http"
   enableTLS: false
-  # When enabled, creates a separate "web" entrypoint (no TLS) on its own port
-  # for port forwarding traffic, while frontend API stays on "websecure" with TLS.
+  # Legacy control-plane deployments may disable the separate web entrypoint.
+  # ADX always exposes websecure for control traffic and web for instance data,
+  # regardless of this compatibility setting.
   enableWebEntrypoint: true
-  # Transport options for the frontend (akernel-master) backend.
-  frontendTransport:
-    # Force HTTP/1.1 to the frontend backend. The HTTP provider reloads the
-    # full config every 1s, and the per-sandbox routes churn constantly; each
-    # reload drains Traefik's backend connections. An HTTP/2 backend uses a
-    # single multiplexed connection, so a reload stalls all in-flight requests
-    # for 7-10s. An HTTP/1.1 connection pool avoids this. Keep true unless the
-    # frontend backend requires HTTP/2 (e.g. gRPC over :8888).
-    disableHTTP2: true
   replicas: 1
   image:
     repository: traefik

@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Adapter for the frontend/RRT ``openyuanrong-sandbox`` backend."""
+"""Adapter for the frontend/RRT ``adx-sandbox`` backend."""
 
 from __future__ import annotations
 
-import inspect
 import logging
-import os
+import time
 from collections.abc import Mapping
 from typing import Any
 
-import yr_sandbox
+import adx_sandbox
 
 from ..types import (
     CommandInfo,
@@ -54,11 +53,11 @@ def _native_port_range(value: PortRange | int | None) -> Any:
     if value is None:
         return None
     assert isinstance(value, PortRange)
-    return yr_sandbox.PortRange(first=value.first, last=value.last)
+    return adx_sandbox.PortRange(first=value.first, last=value.last)
 
 
 def _native_network_rule(rule: NetworkRule) -> Any:
-    return yr_sandbox.NetworkRule(
+    return adx_sandbox.NetworkRule(
         action=rule.action,
         direction=rule.direction,
         protocol=rule.protocol,
@@ -73,7 +72,7 @@ def _native_network_rule(rule: NetworkRule) -> Any:
 def _native_traffic_policy(policy: TrafficPolicy | None) -> Any:
     if policy is None:
         return None
-    return yr_sandbox.TrafficPolicy(
+    return adx_sandbox.TrafficPolicy(
         ingress_default_action=policy.ingress_default_action,
         egress_default_action=policy.egress_default_action,
         rules=tuple(_native_network_rule(rule) for rule in policy.rules),
@@ -82,20 +81,20 @@ def _native_traffic_policy(policy: TrafficPolicy | None) -> Any:
 
 
 def _native_dns_rule(rule: DNSRule) -> Any:
-    return yr_sandbox.DNSRule(pattern=rule.pattern, action=rule.action)
+    return adx_sandbox.DNSRule(pattern=rule.pattern, action=rule.action)
 
 
 def _native_dns_policy(policy: DNSPolicy | None) -> Any:
     if policy is None:
         return None
-    return yr_sandbox.DNSPolicy(
+    return adx_sandbox.DNSPolicy(
         default_action=policy.default_action,
         rules=tuple(_native_dns_rule(rule) for rule in policy.rules),
     )
 
 
 def _native_network_policy(policy: NetworkPolicy) -> Any:
-    return yr_sandbox.NetworkPolicy(
+    return adx_sandbox.NetworkPolicy(
         block_network=policy.block_network,
         dns_blacklist=policy.dns_blacklist,
         traffic=_native_traffic_policy(policy.traffic),
@@ -105,23 +104,6 @@ def _native_network_policy(policy: NetworkPolicy) -> Any:
 
 def _convert_error(operation: str, error: Exception) -> BackendOperationError:
     return BackendOperationError(f"{operation} failed: {error}")
-
-
-def _supports_keyword(callable_value: Any, name: str) -> bool:
-    """Return whether a native callable accepts one keyword argument."""
-
-    try:
-        parameters = inspect.signature(callable_value).parameters.values()
-    except (TypeError, ValueError):
-        # Extension and dynamically generated callables may not expose a
-        # signature. Treat those as current backends and preserve their native
-        # error if the keyword is rejected.
-        return True
-    return any(
-        parameter.name == name
-        or parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
-    )
 
 
 def _command_result(value: Any) -> CommandResult:
@@ -301,12 +283,22 @@ class _Session:
         self,
         sandbox: Any,
         spec: SandboxSpec,
+        connection: Any,
     ) -> None:
         self.id = str(sandbox.id)
         self.commands = _CommandsDriver(sandbox.commands)
         self.files = _FilesystemDriver(sandbox.files)
+        pty_connection = adx_sandbox.ConnectionConfig(
+            server_address=connection.server_address,
+            token=connection.token,
+            use_tls=connection.use_tls,
+            verify_tls=connection.verify_tls,
+            token_provider=connection.token_provider,
+        )
+        self.pty = adx_sandbox.Pty(self.id, connection=pty_connection)
         self._sandbox = sandbox
         self._spec = spec
+        self._connection = connection
         self._terminated = False
         self._closed = False
 
@@ -320,12 +312,14 @@ class _Session:
             value = self._sandbox.get_info()
         except Exception as error:
             raise _convert_error("get sandbox info", error) from error
+        raw_image = getattr(value, "image", None)
+        image = str(raw_image).strip() if raw_image is not None else ""
         return SandboxInfo(
             id=str(value.id),
             state=str(value.state),
             cpu=value.cpu,
             memory=value.memory,
-            image=value.image,
+            image=image or None,
             xpu=self._spec.xpu,
             storage_mb=self._spec.storage_mb,
         )
@@ -336,11 +330,27 @@ class _Session:
         reload_sandbox = getattr(self._sandbox, "reload", None)
         if not callable(reload_sandbox):
             raise UnsupportedBackendFeatureError(
-                "The installed openyuanrong-sandbox backend does not support "
+                "The installed adx backend does not support "
                 "sandbox reload. Upgrade it to a version with failover support."
             )
         try:
-            return bool(reload_sandbox())
+            if not reload_sandbox():
+                return False
+            # The lifecycle commit can precede Edge applying the new route.
+            # Probe read-only data traffic; never repeat the rollback itself.
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    self._sandbox.commands.list()
+                    return True
+                except adx_sandbox.SandboxError as error:
+                    if (
+                        getattr(error, "status_code", None) != 409
+                        or getattr(error, "retry", None) == "never"
+                        or time.monotonic() >= deadline
+                    ):
+                        raise
+                    time.sleep(0.1)
         except Exception:
             return False
 
@@ -350,7 +360,7 @@ class _Session:
         wait = getattr(self._sandbox, "wait_entrypoint", None)
         if not callable(wait):
             raise UnsupportedBackendFeatureError(
-                "The installed openyuanrong-sandbox backend does not support "
+                "The installed adx backend does not support "
                 "waiting for an inherited image entrypoint. Upgrade it to "
                 "0.10.2rc1 or newer."
             )
@@ -382,7 +392,7 @@ class _Session:
         update = getattr(self._sandbox, "update_network_policy", None)
         if not callable(update):
             raise UnsupportedBackendFeatureError(
-                "The installed openyuanrong-sandbox backend does not support "
+                "The installed adx backend does not support "
                 "dynamic network policy updates. Upgrade the backend package."
             )
         native_policy = None if policy is None else _native_network_policy(policy)
@@ -404,7 +414,7 @@ class _Session:
         except Exception as error:
             close_error = error
         try:
-            yr_sandbox.Sandbox.delete(self.id)
+            adx_sandbox.Sandbox.delete(self.id, connection=self._connection)
         except Exception as error:
             if close_error is not None:
                 logger.warning(
@@ -428,10 +438,19 @@ class _Session:
             self._closed = True
 
 
-class OpenYuanRongSandboxBackend:
-    """Backend implemented by ``openyuanrong-sandbox``."""
+class _OwnedSandbox(adx_sandbox.Sandbox):
+    """Native handle whose lifecycle is owned by the AKernel session."""
 
-    name = "openyuanrong-sandbox"
+    def __del__(self) -> None:
+        # GC can run while HTTPX holds a non-reentrant pool lock. Network
+        # deletion and transport closure belong to explicit session cleanup.
+        pass
+
+
+class AdxBackend:
+    """Backend implemented by ``adx-sandbox``."""
+
+    name = "adx"
     namespace = _NAMESPACE
     capabilities = frozenset(
         {
@@ -441,41 +460,27 @@ class OpenYuanRongSandboxBackend:
     )
 
     def __init__(self, config: BackendConfig) -> None:
-        os.environ["YR_SERVER_ADDRESS"] = config.api_endpoint.authority()
-        os.environ["YR_TLS"] = "1" if config.api_endpoint.use_tls else "0"
-        os.environ["YR_GATEWAY_ADDRESS"] = config.gateway_endpoint.authority()
-        os.environ["YR_GATEWAY_TLS"] = "1" if config.gateway_endpoint.use_tls else "0"
-        os.environ["YR_TOKEN"] = config.token
+        self._connection = adx_sandbox.ConnectionConfig(
+            server_address=config.api_endpoint.authority(),
+            token=config.token,
+            use_tls=config.api_endpoint.use_tls,
+            gateway_address=config.gateway_endpoint.authority(),
+            gateway_use_tls=config.gateway_endpoint.use_tls,
+        )
 
     def _validate(self, spec: SandboxSpec) -> None:
         tunnel = spec.reverse_tunnel
         if tunnel is not None and tunnel.reverse_port != tunnel.listen_port - 1:
             raise UnsupportedBackendFeatureError(
-                "Backend 'openyuanrong-sandbox' requires reverse_port to equal "
+                "Backend 'adx' requires reverse_port to equal "
                 "listen_port - 1."
             )
 
     def create(self, spec: SandboxSpec) -> BackendSession:
         self._validate(spec)
-        supports_failover = _supports_keyword(yr_sandbox.Sandbox, "failover")
-        supports_inherit_entrypoint = _supports_keyword(
-            yr_sandbox.Sandbox, "inherit_entrypoint"
-        )
-        if spec.failover and not supports_failover:
-            raise UnsupportedBackendFeatureError(
-                "The installed openyuanrong-sandbox backend does not support "
-                "automatic sandbox failover. Upgrade it to a version with "
-                "failover support."
-            )
-        if spec.inherit_entrypoint and not supports_inherit_entrypoint:
-            raise UnsupportedBackendFeatureError(
-                "The installed openyuanrong-sandbox backend does not support "
-                "inheriting image ENTRYPOINT and CMD. Upgrade it to 0.10.2rc1 "
-                "or newer."
-            )
         rootfs = None
         if spec.rootfs is not None:
-            rootfs = yr_sandbox.S3Config(
+            rootfs = adx_sandbox.S3Config(
                 endpoint=spec.rootfs.endpoint,
                 bucket=spec.rootfs.bucket,
                 object=spec.rootfs.object,
@@ -486,11 +491,11 @@ class OpenYuanRongSandboxBackend:
         if spec.network_policy is not None:
             network = _native_network_policy(spec.network_policy)
         mounts = [
-            yr_sandbox.Mount(
+            adx_sandbox.Mount(
                 target=mount.target,
                 image_url=mount.image_url,
                 s3_config=(
-                    yr_sandbox.S3Config(
+                    adx_sandbox.S3Config(
                         endpoint=mount.s3_config.endpoint,
                         bucket=mount.s3_config.bucket,
                         object=mount.s3_config.object,
@@ -504,7 +509,7 @@ class OpenYuanRongSandboxBackend:
             )
             for mount in spec.mounts
         ]
-        create_timeout = max(60, spec.schedule_timeout + 30)
+        create_timeout = spec.schedule_timeout + 60
         create_args = dict(
             image=spec.image,
             rootfs=rootfs,
@@ -542,21 +547,42 @@ class OpenYuanRongSandboxBackend:
             network=network,
             extra_config=dict(spec.extra_config),
             create_timeout=create_timeout,
+            failover=spec.failover,
+            inherit_entrypoint=spec.inherit_entrypoint,
+            data_plane_security=adx_sandbox.DataPlaneSecurityPolicy(
+                tunnel_mode="tls",
+                port_forward_mode="tls",
+            ),
+            connection=self._connection,
         )
-        if supports_failover:
-            create_args["failover"] = spec.failover
-        if supports_inherit_entrypoint:
-            create_args["inherit_entrypoint"] = spec.inherit_entrypoint
         try:
-            sandbox = yr_sandbox.Sandbox(**create_args)
+            sandbox = _OwnedSandbox(**create_args)
         except Exception as error:
             raise _convert_error("create sandbox", error) from error
-        return _Session(sandbox, spec)
+        session = _Session(sandbox, spec, self._connection)
+        try:
+            # Creation is authoritative before Edge necessarily applies the
+            # next route-stream delta. A read-only direct operation closes
+            # that gap so the first caller operation does not observe 503.
+            session.commands.list()
+        except Exception:
+            try:
+                session.terminate()
+            except Exception:
+                logger.warning(
+                    "failed to clean up sandbox after direct route readiness failure",
+                    exc_info=True,
+                )
+            raise
+        return session
 
     def delete_named(self, name: str) -> None:
         sandbox_id = f"{self.namespace}-{name}"
         try:
-            yr_sandbox.Sandbox.delete(sandbox_id)
+            adx_sandbox.Sandbox.delete(
+                sandbox_id,
+                connection=self._connection,
+            )
         except Exception as error:
             raise _convert_error(f"delete sandbox {name!r}", error) from error
 
@@ -565,6 +591,6 @@ class OpenYuanRongSandboxBackend:
 
 
 def create_backend(config: BackendConfig) -> Backend:
-    """Construct the ``openyuanrong-sandbox`` backend for the lazy registry."""
+    """Construct the ``adx-sandbox`` backend for the lazy registry."""
 
-    return OpenYuanRongSandboxBackend(config)
+    return AdxBackend(config)

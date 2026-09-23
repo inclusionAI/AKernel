@@ -392,7 +392,7 @@ class Sandbox:
             self._id = self._session.id
             self._files = Filesystem(self._session.files)
             self._commands = Commands(self._session.commands)
-            self._pty = Pty(self._id)
+            self._pty = Pty(self._id, driver=self._session.pty)
             if dockerfile is not None and parsed_dockerfile is not None:
                 from ._dockerfile_runner import apply_dockerfile
 

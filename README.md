@@ -2,7 +2,7 @@
 
 ## Overview
 
-**AKernel** (**A**gent **Kernel**) is a distributed kernel that combines the performance of [AFaaS](https://www.usenix.org/conference/osdi25/presentation/chai-xiaohu) with the architecture of [openYuanrong](https://docs.openyuanrong.org/en/latest/index.html), enabling **true "datacenter use"** — treating the entire datacenter as a programmable extension of your AI Agent.
+**AKernel** (**A**gent **Kernel**) is a distributed kernel that combines the performance of [AFaaS](https://www.usenix.org/conference/osdi25/presentation/chai-xiaohu) with the Agent DX control and data plane, enabling **true "datacenter use"** — treating the entire datacenter as a programmable extension of your AI Agent.
 
 Traditional infrastructure tools (IaC, Kubernetes-native platforms, multi-cloud Terraform, and vendor-specific CDKs) are designed for provisioning infrastructure, not operating it. They fall short for AI agents, RL training, and data pipelines that require runtime elasticity, dynamic workflows, and programmatic access to datacenter capabilities.
 
@@ -63,6 +63,7 @@ Built-in OpenTelemetry (OTEL) integration provides complete observability out of
 - 💡 [Examples](./sdk/python/examples/) - AKernel SDK examples and use cases
 - 🏗️ [Architecture](#architecture) - System design and components
 - 🚀 [Deployment](./deploy/README.md) - Installation and configuration guide
+- 🧪 [Performance and stability test plan](./sdk/python/benchmarks/README.md) - Baselines, capacity and mixed-workload acceptance
 
 ### Bootstrap a Cluster
 
@@ -88,6 +89,7 @@ make config VENDOR=aliyun \
   IMAGE_REPOSITORY=akerneldev/all-in-one \
   IMAGE_TAG=latest
 make deploy
+make print-env
 ```
 
 #### Option 2: Build from Source
@@ -102,6 +104,7 @@ docker login registry.example.com
 make build
 make push
 make deploy
+make print-env
 ```
 
 See the [Deployment Guide](./deploy/README.md) for prerequisites, cloud-specific configuration, deployment verification, and cluster cleanup, and the [Build Guide](./CLAUDE.md) for development details.
@@ -109,8 +112,7 @@ See the [Deployment Guide](./deploy/README.md) for prerequisites, cloud-specific
 
 ### Create a Sandbox
 
-Install the Python SDK. The default installation includes the
-`openyuanrong-sandbox` backend:
+Install the Python SDK:
 
 ```bash
 # PyPI
@@ -118,31 +120,7 @@ python -m pip install akernel-sdk
 
 # Source
 python -m pip install ./sdk/python
-
-# Also install the deprecated actor compatibility backend
-python -m pip install "akernel-sdk[openyuanrong-sdk]"
 ```
-
-The actor-based `openyuanrong-sdk` backend is deprecated and retained only for
-compatibility with existing applications. New applications should use the
-default `openyuanrong-sandbox` backend. When the actor extra is installed,
-both backend packages are present and `openyuanrong-sandbox` remains the
-automatic default. Set
-`AKERNEL_BACKEND=openyuanrong-sdk` before importing `akernel_sdk` to select
-the actor backend:
-
-```bash
-export AKERNEL_BACKEND=openyuanrong-sdk
-```
-
-When `openyuanrong-sdk` is used from a YuanRong function, the SDK process
-inherits runtime paths configured by `builder/scripts/entryfile.sh`. That
-entrypoint exports `PYTHONPATH` and, in some runtime layouts,
-`LD_LIBRARY_PATH`; both variables are inherited by the application and its
-child processes. `PYTHONPATH` prepends the runtime site-packages directory and
-can change import resolution or shadow application dependencies.
-`LD_LIBRARY_PATH` prepends runtime library directories and can change native
-library resolution, causing ABI or version conflicts.
 
 Configure the AKernel environment:
 
@@ -150,6 +128,15 @@ Configure the AKernel environment:
 export AKERNEL_SERVER_ADDRESS="<your-akernel-server-address>"
 export AKERNEL_TOKEN="<your-akernel-token>"
 ```
+
+For standalone deployment, read the generated key with
+`cat deploy/standalone/data/token`. For Terraform-managed Kubernetes, run
+`make token ENV=<env>` or `make print-env ENV=<env>` to read the current deployed
+key and obtain SDK exports. Direct Helm deployments can read `admin-key` from
+the `akernel-adx-tls` Secret. Keys are generated once and reused; see the
+[deployment guide](./deploy/README.md#read-and-rotate-the-administrator-key) and
+[standalone guide](./deploy/standalone/README.md#read-and-rotate-the-administrator-key)
+for retrieval and rotation.
 
 Use the SDK to create and interact with a sandbox:
 
@@ -183,15 +170,20 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 
 ### System Components
 
+**Sandbox management**
+
+Agent DX handles sandbox scheduling, lifecycle and request routing.
+
 **Node-Level Infrastructure**
 - **Sandbox runtimes**: gVisor by default; Kata Containers and Firecracker on
   KVM-capable nodes; and an explicitly enabled native Linux runc backend
 - **sandboxd**: Sandbox lifecycle daemon with pluggable sandbox runtime integration
+- **RRT**: the Agent DX runtime transport packaged into AKernel's own runtime
+  rootfs
 - **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication; packaged from a static GitHub Release with its version and checksum pinned in AKernel
 
 **Cluster-Wide Services**
-- **Distributed Scheduler**: Workload-aware placement and scaling
-- **API Gateway**: Unified interface for all operations
+- **Traefik**: external TLS entrypoint in front of Agent DX Edge
 - **Object Storage**: Raw and Nydus rootfs images and read-only sandbox mounts
 - **Cloud Provisioning**: Terraform modules for Alibaba Cloud ACK and Huawei Cloud CCE
 

@@ -378,65 +378,16 @@ variable "core_namespace" {
   default     = "akernel"
 }
 
-variable "iam_litebus_data_key" {
-  type        = string
-  description = "Hex-encoded IAM JWT signing seed passed to the core chart as auth.litebusDataKey. Leave empty to let the chart generate or reuse a seed."
-  default     = ""
-  sensitive   = true
-}
-
-variable "etcd_image_repository" {
-  type        = string
-  description = "Image repository for etcd."
-  default     = ""
-}
-
-variable "etcd_image_tag" {
-  type        = string
-  description = "Image tag for etcd."
-  default     = "3.6.8"
-}
-
 variable "master_image_repository" {
   type        = string
-  description = "All-in-one image repository for akernel-master. Defaults to '<acr_registry>/all-in-one'."
+  description = "All-in-one image repository for the control-plane service. Defaults to '<acr_registry>/all-in-one'."
   default     = ""
 }
 
 variable "master_image_tag" {
   type        = string
-  description = "Image tag for akernel-master."
+  description = "Image tag for the control-plane service."
   default     = ""
-}
-
-variable "master_replicas" {
-  type        = number
-  description = "Number of master replicas (for HA when frontend is enabled)."
-  default     = 1
-}
-
-variable "frontend_enabled" {
-  type        = bool
-  description = "Whether to enable frontend Deployment (splits from master for independent scaling)."
-  default     = true
-}
-
-variable "frontend_replicas" {
-  type        = number
-  description = "Number of frontend replicas."
-  default     = 1
-}
-
-variable "frontend_cpu" {
-  type        = string
-  description = "CPU request/limit for frontend pods."
-  default     = "1"
-}
-
-variable "frontend_memory" {
-  type        = string
-  description = "Memory request/limit for frontend pods."
-  default     = "2Gi"
 }
 
 variable "node_image_repository" {
@@ -511,18 +462,6 @@ variable "dragonfly_dfinit_image_tag" {
   default     = ""
 }
 
-variable "master_service_type" {
-  type        = string
-  description = "Service type for akernel-master. Use 'LoadBalancer' for public access (ACK auto-creates SLB)."
-  default     = "LoadBalancer"
-}
-
-variable "master_public_access_8888" {
-  type        = bool
-  description = "Whether to expose akernel-master port 8888 publicly. Ignored (forced ClusterIP) when traefik_enabled=true."
-  default     = false
-}
-
 
 variable "traefik_enabled" {
   type        = bool
@@ -550,19 +489,19 @@ variable "traefik_tcp_port" {
 
 variable "traefik_enable_web_entrypoint" {
   type        = bool
-  description = "Enable dual entrypoints: 'websecure' (TLS, frontend API) on traefik_websecure_port and 'web' (plain HTTP, port forwarding) on traefik_web_port. When false, falls back to legacy single-entrypoint mode using traefik_tcp_port."
+  description = "Enable dual entrypoints for the legacy control plane. ADX always exposes 'websecure' for control traffic and 'web' for instance data."
   default     = true
 }
 
 variable "traefik_web_port" {
   type        = number
-  description = "Port for Traefik 'web' (plain HTTP) entrypoint. Only used when traefik_enable_web_entrypoint=true."
+  description = "Port for Traefik 'web' (plain HTTP) data entrypoint. ADX always uses it."
   default     = 80
 }
 
 variable "traefik_websecure_port" {
   type        = number
-  description = "Port for Traefik 'websecure' (TLS) entrypoint. Only used when traefik_enable_web_entrypoint=true."
+  description = "Port for Traefik 'websecure' (TLS) control entrypoint. ADX always uses it."
   default     = 443
 }
 
@@ -895,7 +834,7 @@ variable "registry_auths" {
 # --- Component resource specifications ---
 
 variable "etcd_resources" {
-  description = "Resource requests/limits and PVC size for etcd."
+  description = "Resource requests/limits and PVC size for managed Redis (retained input name)."
   type = object({
     cpu               = optional(string, "1")
     memory            = optional(string, "2Gi")
@@ -906,7 +845,7 @@ variable "etcd_resources" {
 }
 
 variable "master_resources" {
-  description = "Resource requests/limits for akernel-master."
+  description = "Resource requests/limits for the control-plane service."
   type = object({
     cpu               = optional(string, "1")
     memory            = optional(string, "2Gi")

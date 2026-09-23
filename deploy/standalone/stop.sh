@@ -7,7 +7,7 @@
 
 set -e
 
-CONTAINER_NAMES=("akernel-traefik" "akernel-node")
+CONTAINER_NAMES=("akernel-node")
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
@@ -52,8 +52,6 @@ else
     exit 1
 fi
 
-# Stop the gateway before the AKernel container so no new requests arrive
-# while the runtime is shutting down.
 for container in "${CONTAINER_NAMES[@]}"; do
     if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} container inspect "${container}" &> /dev/null; then
         log_info "Stopping container: ${container}"

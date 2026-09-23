@@ -145,6 +145,30 @@ class PtyTest(unittest.TestCase):
         connection.start.assert_called_once_with(2.0)
         self.assertEqual(session.session_id, "session-4")
 
+    def test_manager_delegates_to_backend_native_pty(self):
+        driver = MagicMock()
+        native = MagicMock()
+        native.session_id = "session-native"
+        driver.create.return_value = native
+
+        session = Pty("sandbox-native", driver=driver).create(
+            ["/bin/bash", "-lc", "printf ok"],
+            rows=40,
+            cols=120,
+            timeout=3,
+        )
+
+        driver.create.assert_called_once_with(
+            ["/bin/bash", "-lc", "printf ok"],
+            rows=40,
+            cols=120,
+            on_data=None,
+            timeout=3,
+        )
+        self.assertEqual(session.session_id, "session-native")
+        session.close()
+        native.close.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

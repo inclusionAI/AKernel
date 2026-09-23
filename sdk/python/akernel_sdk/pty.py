@@ -21,6 +21,7 @@ import shlex
 import ssl
 import threading
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from ._addresses import exec_endpoint_from_env
 from ._pty_transport import (
@@ -73,7 +74,7 @@ class PtySession:
 
     def __init__(
         self,
-        connection: _PtyConnection,
+        connection: Any,
         *,
         remove: Callable[[PtySession], None],
     ) -> None:
@@ -86,7 +87,7 @@ class PtySession:
 
         try:
             return self._connection.session_id
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     @property
@@ -108,7 +109,7 @@ class PtySession:
             raise TypeError("data must be bytes")
         try:
             self._connection.send_stdin(data)
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     def close_stdin(self) -> None:
@@ -116,7 +117,7 @@ class PtySession:
 
         try:
             self._connection.close_stdin()
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     def resize(self, *, rows: int, cols: int) -> None:
@@ -126,7 +127,7 @@ class PtySession:
         _validate_size("cols", cols)
         try:
             self._connection.resize(rows=rows, cols=cols)
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     def wait(self, timeout: float | None = None) -> int:
@@ -136,14 +137,20 @@ class PtySession:
             raise ValueError("timeout must be greater than zero")
         try:
             return self._connection.wait(timeout)
-        except _PtyTransportError as error:
+        except Exception as error:
+            if isinstance(error, TimeoutError):
+                raise
             raise PtyError(str(error)) from error
 
     def close(self) -> None:
         """Close the connection and terminate the remote PTY process."""
 
-        self._connection.close()
-        self._remove(self)
+        try:
+            self._connection.close()
+        except Exception as error:
+            raise PtyError(str(error)) from error
+        finally:
+            self._remove(self)
 
     def __enter__(self) -> PtySession:
         return self
@@ -155,8 +162,9 @@ class PtySession:
 class Pty:
     """Factory for interactive PTY sessions in one sandbox."""
 
-    def __init__(self, instance_id: str) -> None:
+    def __init__(self, instance_id: str, *, driver: Any | None = None) -> None:
         self._instance_id = instance_id
+        self._driver = driver
         self._sessions: set[PtySession] = set()
         self._lock = threading.Lock()
 
@@ -197,6 +205,24 @@ class Pty:
             raise TypeError("timeout must be a number")
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero")
+
+        if self._driver is not None:
+            try:
+                connection = self._driver.create(
+                    arguments,
+                    rows=rows,
+                    cols=cols,
+                    on_data=on_data,
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                raise
+            except Exception as error:
+                raise PtyError(str(error)) from error
+            session = PtySession(connection, remove=self._remove)
+            with self._lock:
+                self._sessions.add(session)
+            return session
 
         token = os.environ.get("AKERNEL_TOKEN", "").strip()
         if not token:

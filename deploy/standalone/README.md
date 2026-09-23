@@ -1,16 +1,8 @@
 # AKernel Standalone Deployment
 
 This directory contains scripts and configurations for running AKernel in
-standalone mode using Docker or Pouch, without Kubernetes. The deployment uses
-two containers on the default container bridge:
-
-- `akernel-node` runs the AKernel all-in-one image.
-- `akernel-traefik` runs the official Traefik image as the external gateway.
-
-Keeping the gateway in a separate network namespace allows sandboxd's normal
-`PREROUTING` rules to handle gateway traffic. The all-in-one frontend sends
-traffic from the node network namespace, so the standalone sandboxd config
-also enables its local-output DNAT support.
+standalone mode using Docker or Pouch, without Kubernetes. One privileged `akernel-node` container serves the SDK on HTTPS port 443 and
+public sandbox ports on HTTP port 80. Both are ready before startup returns.
 
 The default runtime is gVisor `runsc`. The bundled image also contains Kata
 Containers and Firecracker. Both `Sandbox(runtime="kata")` and
@@ -65,13 +57,17 @@ rather than tmpfs. Without `storage_mb`, runsc retains its configured
 memory-backed overlay while Firecracker uses its configured sparse ext4
 default.
 
-Sandbox checkpoints for runsc and Firecracker use YuanRong's local-only
-snapshot mode. Checkpoint state is kept under the persistent
-`/home/akernel/checkpoints` data mount. Workloads trigger an anonymous recovery
+Sandbox checkpoints for runsc and Firecracker are local to the node. Checkpoint state is kept under the persistent
+`/home/akernel/adx/checkpoints` data mount. Workloads trigger an anonymous recovery
 point through `POST /checkpoint` on `/run/akernel/rrt.sock`, and the SDK can
 reload the same logical sandbox from the latest usable point. Recovery points
 follow the source sandbox lifecycle; they are not exposed as reusable SDK
 objects.
+
+The currently pinned release does not yet contain workload checkpoint support. The source changes
+were verified with an overlay validation image; see
+[checkpoint validation](checkpoint-validation.md) for results and the remaining
+release update.
 
 `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
 starting the pooled-TAP runtimes. Runc retains its separate veth network path.
@@ -94,11 +90,6 @@ does not override firewall policy. A custom host-network deployment whose
 `FORWARD` policy is `DROP` must allow traffic to and from `sandbox0` with
 bridge- and sandbox-CIDR-scoped rules.
 
-AKernel passes YuanRong the IPv4 address of the default-route interface so the
-later creation of `sandbox0` cannot change the advertised node address. Set
-`AKERNEL_NODE_IP` only when a multi-homed deployment requires an explicit
-override.
-
 The standalone configuration enables per-sandbox network ACLs. With the
 default iptables backend, `start.sh` loads IPv6 filter-table, `br_netfilter`,
 `xt_physdev`, conntrack/connmark, and timeout-capable ipset modules on the host
@@ -116,8 +107,8 @@ initialize ACLs while pre-ACL sandboxes remain in its store.
 ```
 deploy/standalone/
 ├── README.md                  # This file
-├── start.sh                   # Start AKernel and Traefik containers
-├── stop.sh                    # Stop AKernel and Traefik containers
+├── start.sh                   # Start the AKernel container
+├── stop.sh                    # Stop the AKernel container
 └── config/                    # Configuration files
     ├── config.json            # OCI runtime configuration
     ├── oss_auths.json         # OSS authentication (edit as needed)
@@ -173,26 +164,30 @@ This will:
 - Use `akerneldev/all-in-one:latest` if `IMAGE` is not set, reusing a local
   copy when present and otherwise pulling it from Docker Hub
 - Start the privileged AKernel all-in-one container
-- Start an independent Traefik container for the HTTPS API and HTTP sandbox
-  port-forwarding gateway
-- Configure Traefik to poll FunctionMaster's HTTP provider for per-sandbox
-  tunnel routes, including custom tunnel ports
-- Generate a deployment-specific IAM signing seed and a 24-hour SDK token
+- Publish HTTPS port `443` and HTTP port `80`
+- Initialize and reuse local credentials automatically
 - Generate a sandboxd config using `AKERNEL_NAT_BACKEND` (`iptables` by
   default)
-- Print the Traefik container IP to use as `AKERNEL_SERVER_ADDRESS`
+- Wait until the node has allocatable capacity
+- Print the SDK address and token path
 
-No host ports are published. On Linux, the host accesses Traefik directly
-through its Docker bridge IP.
+The default listeners bind all host interfaces. Override the bind addresses or
+ports before starting when the defaults conflict with another service:
+
+```bash
+AKERNEL_CONTROL_BIND=127.0.0.1 AKERNEL_CONTROL_PORT=8443 \
+AKERNEL_DATA_BIND=127.0.0.1 AKERNEL_DATA_PORT=8080 \
+AKERNEL_ENDPOINT_HOST=127.0.0.1 ./start.sh
+```
+
+`AKERNEL_ENDPOINT_HOST` controls the hostname printed for SDK configuration;
+it does not change the Docker bind address.
 
 ### 4. Check Status
 
 ```bash
 # View AKernel logs
 sudo docker logs -f akernel-node
-
-# View gateway logs
-sudo docker logs -f akernel-traefik
 
 # Enter the container
 sudo docker exec -it akernel-node bash
@@ -213,31 +208,59 @@ sudo docker exec akernel-node systemctl status
 
 ### SDK Connection
 
-Traefik listens on port 443 for the AKernel API and port 80 for sandbox port
-forwarding. These ports are not published on the host. Use the Traefik
-container IP printed by `start.sh`, or retrieve it later:
+Use the existing SDK environment variables:
 
 ```bash
-TRAEFIK_IP=$(docker inspect \
-  --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
-  akernel-traefik)
-```
-
-Set the SDK environment:
-
-```bash
-export AKERNEL_SERVER_ADDRESS="${TRAEFIK_IP}"
+export AKERNEL_SERVER_ADDRESS="127.0.0.1"
 export AKERNEL_TOKEN="$(cat data/token)"
 ```
 
-The signing seed is stored in `data/iam-seed` and reused while that standalone
-data directory exists. Delete the data directory to create a new deployment
-identity. Set `STANDALONE_TOKEN_TTL` when starting AKernel to choose a different
-token lifetime, for example `STANDALONE_TOKEN_TTL=7d ./start.sh`.
+Before starting the container, `start.sh` generates the API key once at
+`data/adx/secrets/admin-key` (mode 0600) and makes `data/token` point to it.
+An existing deployment token is retained. The service startup separately
+initializes the public HTTPS certificate. Both are reused on restart. Internal components use network mode without mTLS;
+these listeners remain within the standalone container network. SDK address
+and token settings are unchanged.
 
-When `AKERNEL_SERVER_ADDRESS` contains only an IP address, the SDK uses HTTPS
-port 443 for the API and HTTP port 80 for sandbox port forwarding. No separate
-`AKERNEL_GATEWAY_ADDRESS` is required.
+This configuration requires the ADX internal-network-mode update; the current
+#71 package pin predates that update. See [validation status](checkpoint-validation.md).
+`data/token` points to the deployment token. Keep the data directory private.
+For custom host port mappings, use the additional gateway override printed by
+`start.sh`; the default deployment does not require it.
+
+### Read and rotate the administrator key
+
+Run these commands from `deploy/standalone/`:
+
+```bash
+cat data/token
+export AKERNEL_TOKEN="$(cat data/token)"
+```
+
+To rotate the administrator key, keep the data directory and Redis data, stop
+the deployment, replace the key atomically and restart with the same image:
+
+```bash
+./stop.sh
+(umask 077; python3 -c 'import secrets; print(secrets.token_hex(32))' > data/adx/secrets/.admin-key-new)
+mv data/adx/secrets/.admin-key-new data/adx/secrets/admin-key
+IMAGE="<your-current-image>" ./start.sh
+export AKERNEL_TOKEN="$(cat data/token)"
+```
+
+Master reads `key_file` at startup and atomically reconciles the configured
+administrator keys. Removed keys are revoked and cannot be reused; tenant keys
+are preserved. Do not restore a revoked old key as a rollback. SDK processes
+must reload `AKERNEL_TOKEN`. Existing ingress authentication caches can accept
+the old key until their TTL expires (10 seconds in this deployment); requests
+already in flight also remain subject to their RPC deadlines. Rotation does not
+terminate already established streams.
+
+For a staged transition, configure both old and new administrator key files in
+Master's `bootstrap_credentials`, restart Master, update clients, then remove
+the old entry and restart again. At least one valid administrator key must remain.
+These rotation semantics require the updated ADX package; the #71 pin predates
+the implementation.
 
 ### Container Image Version
 
@@ -246,13 +269,6 @@ By default, `start.sh` uses the public Docker Hub image
 variable to test another registry, tag, or locally built image:
 ```bash
 IMAGE="<your-docker-registry>:<your-tag>" ./start.sh
-```
-
-The gateway defaults to `traefik:v3.6.8`. Override it independently when
-needed:
-
-```bash
-TRAEFIK_IMAGE="traefik:v3.6.8" ./start.sh
 ```
 
 ### Data Directory Location

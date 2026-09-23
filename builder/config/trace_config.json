@@ -1,6 +1,0 @@
-{
-    "otlpGrpcExporter":{
-        "enable":true,
-        "endpoint":"localhost:4317"
-    }
-}

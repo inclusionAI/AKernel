@@ -1,0 +1,99 @@
+{{- if ne (int .Values.adx.coordinator.replicas) 1 }}
+{{- fail "adx.coordinator.replicas must be 1 while ADX uses a single active Coordinator" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: akernel-adx-coordinator
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: akernel-adx-coordinator
+  ports:
+    - name: coordinator
+      port: 19000
+      targetPort: coordinator
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: akernel-adx-coordinator
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.adx.coordinator.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: akernel-adx-coordinator
+  template:
+    metadata:
+      labels:
+        app: akernel-adx-coordinator
+      annotations:
+        checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: coordinator
+          image: "{{ include "core.image" (dict "root" . "image" .Values.coordinator.image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
+          command: [/opt/adx/current/bin/adxctl]
+          args: [--config, /etc/akernel/adx-coordinator.yaml, run]
+          env:
+            {{- if eq .Values.adx.redis.mode "managed" }}
+            - name: ADX_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: akernel-adx-redis-auth
+                  key: password
+            {{- end }}
+            - name: ADX_REDIS_URL
+              {{- if eq .Values.adx.redis.mode "managed" }}
+              value: redis://:$(ADX_REDIS_PASSWORD)@akernel-adx-redis.{{ .Release.Namespace }}.svc.cluster.local:6379/
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adx.redis.external.existingSecret | quote }}
+                  key: {{ .Values.adx.redis.external.urlKey | quote }}
+              {{- end }}
+          ports:
+            - name: coordinator
+              containerPort: 19000
+            - name: metrics
+              containerPort: 19090
+          readinessProbe:
+            exec:
+              command: [/bin/bash, -ec, 'exec 3<>/dev/tcp/127.0.0.1/19000']
+            timeoutSeconds: 3
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            exec:
+              command: [/bin/bash, -ec, 'exec 3<>/dev/tcp/127.0.0.1/19000']
+            timeoutSeconds: 3
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.adx.coordinator.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/akernel/adx-coordinator.yaml
+              subPath: coordinator.yaml
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/adx
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: akernel-adx-config
+        - name: credentials
+          secret:
+            secretName: {{ .Values.adx.tls.existingSecret | quote }}
+            defaultMode: 0400
+            items:
+              - {key: admin-key, path: secrets/admin-key}

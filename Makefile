@@ -8,13 +8,6 @@ VENDOR ?= aliyun
 ENV ?= default
 IMAGE_TAG ?=
 IMAGE_REPOSITORY ?=
-OPEN_YR_CORE_WHEEL_URL ?=
-OPEN_YR_CORE_WHEEL_SHA256 ?=
-RRT_RUNTIME_URL ?=
-RRT_RUNTIME_SHA256 ?=
-TOKEN_TTL ?= $(if $(TTL),$(TTL),24h)
-TENANT ?= default
-ROLE ?= developer
 FORCE ?= 0
 NON_INTERACTIVE ?= 0
 REGION ?=
@@ -36,7 +29,6 @@ ENABLE_RUNC ?=
 SCHEDULE_PLACEMENT_POLICY ?=
 GRAFANA_PUBLIC_ACCESS ?=
 GRAFANA_ADMIN_PASSWORD ?=
-IAM_SEED_HEX ?=
 
 .PHONY: help
 help:
@@ -53,16 +45,14 @@ help:
 	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
 	@echo "  make config SCHEDULE_PLACEMENT_POLICY=binpack Use compact scheduling"
 	@echo "  make build IMAGE_TAG=<tag>          Build the all-in-one image"
-	@echo "  make build RUNTIME_PROFILE=python   Include optional Python runtimes"
 	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
 	@echo "  make build AKERNEL_ENABLE_FIRECRACKER=false Exclude Firecracker"
 	@echo "  make build AKERNEL_ENABLE_RUNC=true Include the optional runc payload"
-	@echo "  make build RRT_RUNTIME_URL=... RRT_RUNTIME_SHA256=... Override RRT artifact"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
 	@echo "  make plan                          Terraform plan"
 	@echo "  make deploy                        Terraform apply"
-	@echo "  make token TTL=24h                 Generate a local JWT token"
+	@echo "  make token                         Read the deployed ADX administrator API key"
 	@echo "  make print-env                     Print SDK environment exports"
 	@echo "  make sdk-check                     Lint, type-check, and test the Python SDK"
 	@echo "  make deploy-script-check           Check deployment script syntax"
@@ -99,7 +89,6 @@ config:
 	if [[ -n "$(SCHEDULE_PLACEMENT_POLICY)" ]]; then args+=(--schedule-placement-policy "$(SCHEDULE_PLACEMENT_POLICY)"); fi; \
 	if [[ -n "$(GRAFANA_PUBLIC_ACCESS)" ]]; then args+=(--grafana-public-access "$(GRAFANA_PUBLIC_ACCESS)"); fi; \
 	if [[ -n "$(GRAFANA_ADMIN_PASSWORD)" ]]; then args+=(--grafana-admin-password "$(GRAFANA_ADMIN_PASSWORD)"); fi; \
-	if [[ -n "$(IAM_SEED_HEX)" ]]; then args+=(--iam-seed-hex "$(IAM_SEED_HEX)"); fi; \
 	./deploy/scripts/configure.sh "$${args[@]}"
 
 .PHONY: build
@@ -107,11 +96,6 @@ build:
 	@args=(--env "$(ENV)"); \
 	if [[ -n "$(IMAGE_REPOSITORY)" ]]; then args+=(--repository "$(IMAGE_REPOSITORY)"); fi; \
 	if [[ -n "$(IMAGE_TAG)" ]]; then args+=(--tag "$(IMAGE_TAG)"); fi; \
-	if [[ -n "$(RUNTIME_PROFILE)" ]]; then args+=(--runtime-profile "$(RUNTIME_PROFILE)"); fi; \
-	if [[ -n "$(OPEN_YR_CORE_WHEEL_URL)" ]]; then args+=(--open-yr-core-wheel-url "$(OPEN_YR_CORE_WHEEL_URL)"); fi; \
-	if [[ -n "$(OPEN_YR_CORE_WHEEL_SHA256)" ]]; then args+=(--open-yr-core-wheel-sha256 "$(OPEN_YR_CORE_WHEEL_SHA256)"); fi; \
-	if [[ -n "$(RRT_RUNTIME_URL)" ]]; then args+=(--rrt-runtime-url "$(RRT_RUNTIME_URL)"); fi; \
-	if [[ -n "$(RRT_RUNTIME_SHA256)" ]]; then args+=(--rrt-runtime-sha256 "$(RRT_RUNTIME_SHA256)"); fi; \
 	./deploy/scripts/build-image.sh "$${args[@]}"
 
 .PHONY: versions
@@ -132,11 +116,9 @@ deploy:
 
 .PHONY: token
 token:
-	@./deploy/scripts/generate-token.py \
+	@./deploy/scripts/get-adx-admin-key.sh \
+		--vendor "$(VENDOR)" \
 		--env "$(ENV)" \
-		--tenant "$(TENANT)" \
-		--role "$(ROLE)" \
-		--ttl "$(TOKEN_TTL)" \
 		--print-export \
 		--write-file ".akernel/$(ENV)/token"
 

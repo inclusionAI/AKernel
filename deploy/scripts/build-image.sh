@@ -14,7 +14,7 @@ repository=""
 tag=""
 env_name=""
 runtime_image=""
-runtime_profile="${RUNTIME_PROFILE:-rrt}"
+target_platform="${AKERNEL_TARGET_PLATFORM:-linux/amd64}"
 runtime_versions_file="${ROOT}/src/sandboxd/third_party/runtime-versions.env"
 if [[ ! -f "${runtime_versions_file}" ]]; then
   die "missing runtime version manifest: ${runtime_versions_file}"
@@ -33,10 +33,6 @@ gvisor_amd64_url="${GVISOR_AMD64_URL:-}"
 firecracker_release="${FIRECRACKER_RELEASE:-}"
 firecracker_amd64_sha256="${FIRECRACKER_AMD64_SHA256:-}"
 firecracker_amd64_url="${FIRECRACKER_AMD64_URL:-}"
-open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
-open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
-rrt_runtime_url="${RRT_RUNTIME_URL:-}"
-rrt_runtime_sha256="${RRT_RUNTIME_SHA256:-}"
 print_component_versions=0
 
 component_revision() {
@@ -83,26 +79,6 @@ while [[ $# -gt 0 ]]; do
       runtime_image="$2"
       shift 2
       ;;
-    --runtime-profile)
-      runtime_profile="$2"
-      shift 2
-      ;;
-    --open-yr-core-wheel-url)
-      open_yr_core_wheel_url="$2"
-      shift 2
-      ;;
-    --open-yr-core-wheel-sha256)
-      open_yr_core_wheel_sha256="$2"
-      shift 2
-      ;;
-    --rrt-runtime-url)
-      rrt_runtime_url="$2"
-      shift 2
-      ;;
-    --rrt-runtime-sha256)
-      rrt_runtime_sha256="$2"
-      shift 2
-      ;;
     --print-component-versions)
       print_component_versions=1
       shift
@@ -112,11 +88,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-case "${runtime_profile}" in
-  rrt|python) ;;
-  *) die "unsupported runtime profile: ${runtime_profile}; expected rrt or python" ;;
-esac
 
 case "${AKERNEL_ENABLE_KATA:-true}" in
   true|false) ;;
@@ -140,6 +111,10 @@ case "${AKERNEL_ENABLE_RUNC:-false}" in
   true|false) ;;
   *) die "AKERNEL_ENABLE_RUNC must be true or false" ;;
 esac
+
+if [[ "${target_platform}" != "linux/amd64" ]]; then
+  die "AKERNEL_TARGET_PLATFORM must be linux/amd64 for the pinned ADX release"
+fi
 
 repository="${repository:-akernel-all-in-one}"
 tag="${tag:-$(git -C "${AKERNEL_REPO_ROOT}" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)}"
@@ -177,22 +152,11 @@ if [[ -z "${DISTILL_FS_RELEASE:-}" || -z "${DISTILL_FS_AMD64_URL:-}" ||
   die "publish and pin DISTILL_FS_RELEASE, DISTILL_FS_AMD64_URL, and DISTILL_FS_AMD64_SHA256 in ${distill_fs_versions_file} before building"
 fi
 
-runtime_build_args=()
-if [[ -n "${rrt_runtime_url}" || -n "${rrt_runtime_sha256}" ]]; then
-  if [[ -z "${rrt_runtime_url}" || -z "${rrt_runtime_sha256}" ]]; then
-    die "RRT_RUNTIME_URL and RRT_RUNTIME_SHA256 must be set together"
-  fi
-  runtime_build_args+=(
-    --build-arg "RRT_RUNTIME_URL=${rrt_runtime_url}"
-    --build-arg "RRT_RUNTIME_SHA256=${rrt_runtime_sha256}"
-  )
-fi
-
-info "building ${runtime_image} with runtime profile ${runtime_profile}"
+info "building ${runtime_image} with the EXECD runtime profile"
 docker build \
   -f builder/runtime.Dockerfile \
-  --target "runtime-${runtime_profile}" \
-  "${runtime_build_args[@]}" \
+  --platform "${target_platform}" \
+  --target runtime-execd \
   -t "${runtime_image}" \
   .
 
@@ -202,7 +166,6 @@ node_build_args=(
   --build-arg "DISTILL_FS_AMD64_URL=${DISTILL_FS_AMD64_URL}"
   --build-arg "DISTILL_FS_AMD64_SHA256=${DISTILL_FS_AMD64_SHA256}"
   --build-arg "AKERNEL_RUNTIME_IMAGE=${runtime_image}"
-  --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
   --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA:-true}"
   --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC:-false}"
   --build-arg "AKERNEL_ENABLE_FIRECRACKER=${AKERNEL_ENABLE_FIRECRACKER:-true}"
@@ -229,17 +192,10 @@ node_build_args+=(
   --build-arg "FIRECRACKER_AMD64_URL=${firecracker_amd64_url}"
   --build-arg "FIRECRACKER_AMD64_SHA256=${firecracker_amd64_sha256}"
 )
-if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; then
-  if [[ -z "${open_yr_core_wheel_url}" || -z "${open_yr_core_wheel_sha256}" ]]; then
-    die "OPEN_YR_CORE_WHEEL_URL and OPEN_YR_CORE_WHEEL_SHA256 must be set together"
-  fi
-  node_build_args+=(
-    --build-arg "OPEN_YR_CORE_WHEEL_URL=${open_yr_core_wheel_url}"
-    --build-arg "OPEN_YR_CORE_WHEEL_SHA256=${open_yr_core_wheel_sha256}"
-  )
-fi
+
 docker build \
   -f builder/node.Dockerfile \
+  --platform "${target_platform}" \
   "${node_build_args[@]}" \
   -t "${all_in_one_image}" \
   .
