@@ -1,0 +1,3 @@
+#!/bin/sh
+export LD_LIBRARY_PATH=/opt/akernel-scheduler/function-agent/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+exec /opt/akernel-scheduler/function-agent/function_agent "$@"

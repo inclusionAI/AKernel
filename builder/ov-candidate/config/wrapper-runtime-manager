@@ -1,0 +1,3 @@
+#!/bin/sh
+export LD_LIBRARY_PATH=/opt/akernel-scheduler/runtime-manager/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+exec /opt/akernel-scheduler/runtime-manager/runtime_manager "$@"

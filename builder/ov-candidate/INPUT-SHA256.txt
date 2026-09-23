@@ -1,0 +1,22 @@
+62ac4f555d44c7a73df84515294afdd114f3ec556a53c383bb3bb4bddf73291d  /data/images/ov17-staging/config/wrapper-function-agent
+fc75d0f8d6530c906f0af50c6b2da8f682385f988a92c4e8a991fa8572217a28  /data/images/ov17-staging/config/wrapper-function-master
+61d4d84e28bfc6019b4dbc757d7ea06d186cbb417b8b76f527125214a4dd3ec9  /data/images/ov17-staging/config/wrapper-function-proxy
+73e819504e31b04062f9421ff40ac81d47221a209452fd248ea8b4dd28e8800d  /data/images/ov17-staging/config/wrapper-runtime-manager
+accdcd8fc451805a8fbb0013be1c181182edf89af9a8d3bcf8aca20a05bdeb9f  /data/images/ov17-staging/config/elasticity.env
+d23f5718ebd8474b1ec378fd5a7142224363dfc5f22a195a815eff4a30555ceb  /data/images/ov17-staging/scripts/install.sh
+e456294519d662b9e17238f2d85894fc79af5d6f8ec1650336a8599de2c3b877  /data/images/ov17-staging/sandboxd/sandboxd
+826e100ba0db02a6d663253631cbb41ac64a93d584d0f5f107e9321f59b1aeb8  /data/images/ov17-staging/sandboxd/sandbox-logger
+25ad60a11a10c6df3e826311a664a4d4165d5f3b160d3f75714d9a8f138524c4  /data/images/ov17-staging/function-proxy/function_proxy
+
+Sources of the staged inputs (BM1 /data/images/ov17-staging):
+  wrapper-*            -> canonical builder/config (this directory, mirrored)
+  elasticity.env       -> explicit baseline config (this directory)
+  scripts/install.sh   -> components/yuanrong-functionsystem @ b8429734 scripts/deploy/function_system/install.sh
+  sandboxd/sandboxd    -> sandboxd @ 537ca54a release build (audit /data/audit/sandboxd-537ca54a)
+  sandboxd/sandbox-logger -> same build
+  function-proxy/...   -> functionsystem @ f58b9c7e Release build (/data/audit/final-candidate-f58b9c7e)
+  base                 -> akernel-bm1/all-in-one:canon-8c53bdd-rebuild1 (09-20, runsc pinned)
+Built image: canon-8c53bdd-ov17, K8s imageID sha256:8ebc6a82… (kind-loaded).
+Intermediate failures preserved: ov12 (wrapper-default masking), ov13 (argv
+landed/env did not), ov15 (env export missing + sandboxd reverted to base),
+ov16 (sandboxd still base), each with build logs under /data/images/.

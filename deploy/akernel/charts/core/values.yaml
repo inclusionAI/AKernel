@@ -144,6 +144,10 @@ node:
   # (ResizeResources/ShrinkResources with operation IDs and revisions).
   memoryElasticity:
     enabled: false
+    upgradeLadder:
+      enabled: false
+      stepMb: 512
+      capMb: 32768
   homeDisk:
     useEphemeralPVC: false
     storageClassName: ""

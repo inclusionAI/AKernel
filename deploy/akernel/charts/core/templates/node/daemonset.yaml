@@ -128,6 +128,19 @@ spec:
         {{- if .Values.node.memoryElasticity.enabled }}
         - name: AKERNEL_MEMORY_ELASTICITY
           value: "1"
+        {{- else }}
+        - name: AKERNEL_MEMORY_ELASTICITY
+          value: "0"
+        {{- end }}
+        {{- with .Values.node.memoryElasticity.upgradeLadder }}
+        {{- if .enabled }}
+        - name: ENABLE_UPGRADE_LADDER
+          value: "true"
+        - name: UPGRADE_STEP_MB
+          value: {{ .stepMb | default 512 | quote }}
+        - name: UPGRADE_CAP_MB
+          value: {{ .capMb | default 32768 | quote }}
+        {{- end }}
         {{- end }}
         - name: ENABLE_METRICS
           value: {{ ne (.Values.monitoring.prometheusEndpoint | default "") "" | ternary "true" "false" | quote }}
