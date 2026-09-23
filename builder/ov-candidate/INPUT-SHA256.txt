@@ -40,9 +40,14 @@ Base image immutable identity: canon-8c53bdd-rebuild1
 runsc payload in the base image (node /usr/local/bin/runsc):
   sha256 4605e4ba00b088e208f1c1947fd63ad370e6ad67b6159ebe5d47998f1c794309
   runsc --version: release-20260817.0-akernel.1-2-g8fa119b8d333 (spec 1.2.1)
-  source: gvisor branch codex/bm1-memory-freezer-recv-20260909 @
-  46637b84fda2bdcfa664980171ed3dad19da7536f (scheduler repo submodule; the
-  base-image build consumed its compiled artifact)
+  version-string commit 8fa119b8d333 = 8fa119b8d333c398f407019d14dc4672560ba63c
+  (an ANCESTOR of the local gvisor checkout
+  codex/bm1-memory-freezer-recv-20260909 @
+  46637b84fda2bdcfa664980171ed3dad19da7536, a nested component repo, NOT an
+  outer-repo submodule). Ancestry does NOT prove the running binary was
+  built from that source: the runsc SOURCE CHAIN IS UNCLOSED. Closing it
+  requires the actual 09-20 base-image build inputs (rebuild1 build records
+  / artifact provenance); no claim of consumption is made here.
 sandboxd source (both ov17/ov19): 537ca54aa154e2f101c1e619829e614042b6226b
   (branch codex/bm1-memory-elasticity-20260909; runtime sources unchanged
   after the test-file-only format commit)
