@@ -8,7 +8,7 @@ a593ce0fb623a7395b681de5aeb9fdcce1d11d47d7614ab1075caea10d06f4de  /data/images/o
 79d3fa673ec3d80d95c7852d6fe33ce8508b1010dbd5a5cdb4dbc58ce3298a14  /data/images/ov19-staging/function-proxy/function_proxy
 2f1c16f666a47617683647a2b6b48f911198e7ad63d3b5f38a1a83d4bcabf193  /data/images/ov19-staging/runtime-manager/runtime_manager
 e456294519d662b9e17238f2d85894fc79af5d6f8ec1650336a8599de2c3b877  /data/images/ov19-staging/sandboxd/sandboxd
-826e100ba0db02a6d663253631cbb41ac64a93d584d0f5f1079e9321f59b1aeb8  /data/images/ov19-staging/sandboxd/sandbox-logger
+826e100ba0db02a6d663253631cbb41ac64a93d584d0f5f107e9321f59b1aeb8  /data/images/ov19-staging/sandboxd/sandbox-logger
 4af5c4b19230d8d3131f62f3520b77c6db2af71f019e944203b724ddb669c8c2  /data/images/ov19-staging/Dockerfile
 d23f5718ebd8474b1ec378fd5a7142224363dfc5f22a195a815eff4a30555ceb  /data/images/ov19-staging/scripts/install.sh
 
@@ -34,8 +34,23 @@ Built image: canon-8c53bdd-ov19, K8s imageID
   (the image actually running on node akernel-node-l62cx).
 Runtime process audit: startup-ov19-verdict-independent-2112Z (nine target
 processes, 107 loaded-library paths, 61 distinct byte identities).
-Pending: distill-fs/runsc/Kata artifact pins and remaining dependency sources
-to be reconciled from the base-image build records at final freeze.
+Base image immutable identity: canon-8c53bdd-rebuild1
+  image Id sha256:f34b68d262639da84bc6617f7338b0462a944dc3d3cc3aabfa2189b1c856130e
+  RepoDigest akernel-bm1/all-in-one@sha256:f34b68d262639da84bc6617f7338b0462a944dc3d3cc3aabfa2189b1c856130e
+runsc payload in the base image (node /usr/local/bin/runsc):
+  sha256 4605e4ba00b088e208f1c1947fd63ad370e6ad67b6159ebe5d47998f1c794309
+  runsc --version: release-20260817.0-akernel.1-2-g8fa119b8d333 (spec 1.2.1)
+  source: gvisor branch codex/bm1-memory-freezer-recv-20260909 @
+  46637b84fda2bdcfa664980171ed3dad19da7536f (scheduler repo submodule; the
+  base-image build consumed its compiled artifact)
+sandboxd source (both ov17/ov19): 537ca54aa154e2f101c1e619829e614042b6226b
+  (branch codex/bm1-memory-elasticity-20260909; runtime sources unchanged
+  after the test-file-only format commit)
+Pending at final freeze: distill-fs/Kata/virtiofsd artifact pins, the
+remaining inherited dependency sources from the base-image build records,
+and the canonical chart/working-values correspondence for
+/data/chart/deploy/akernel. The 349-file staging match does NOT by itself
+complete the source chain.
 
 ---
 
