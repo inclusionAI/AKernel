@@ -32,6 +32,23 @@ ARG OTELCOL_CONTRIB_VERSION=0.120.0
 ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_amd64.tar.gz
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
+ARG ADX_RELEASE_URL=https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20260923062527-e295f895e279/linux/amd64/adx-release.tar.gz
+ARG ADX_RELEASE_SHA256=602a738c4367923e8b31a7b0125d5b2069389d7fef93796c86a8d7b758a40dab
+
+FROM ${AKERNEL_NODE_BASE_IMAGE} AS adx-release
+ARG ADX_RELEASE_URL
+ARG ADX_RELEASE_SHA256
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl python3; \
+    rm -rf /var/lib/apt/lists/*; \
+    mkdir -p /tmp/adx-release; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "${ADX_RELEASE_URL}" -o /tmp/adx-release.tar.gz; \
+    echo "${ADX_RELEASE_SHA256}  /tmp/adx-release.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/adx-release.tar.gz -C /tmp/adx-release; \
+    /tmp/adx-release/install.sh --prefix /opt/adx --bin-dir /usr/local/bin; \
+    rm -rf /tmp/adx-release /tmp/adx-release.tar.gz
 
 FROM ${GVISOR_DOWNLOAD_IMAGE} AS gvisor-runtime
 ARG GVISOR_RELEASE
@@ -299,20 +316,20 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone
 
 
-COPY --from=runtime-image /yr-runtime-rootfs.img /opt/akernel/runtime/akernel-runtime-rootfs.img
+COPY --from=runtime-image /akernel-runtime-rootfs.img /opt/akernel/runtime/akernel-runtime-rootfs.img
 
 # ADX provides the control and data plane processes. AKernel keeps building
-# sandboxd and the runtime rootfs from its own pinned sources; only the exact
-# files staged from builder/adx-release.lock.json enter this image.
-COPY --from=adx_release /bin/ /opt/adx/current/bin/
-COPY --from=adx_release /sdk/ /opt/adx/current/sdk/
-COPY --from=adx_release /runtime/rrt-runtime /opt/adx/current/runtime/rrt-runtime
+# sandboxd and its runtime rootfs from pinned sources and installs only EXECD
+# from the verified ADX release into that rootfs.
+COPY --from=adx-release /opt/adx/current/bin/ /opt/adx/current/bin/
+COPY --from=adx-release /opt/adx/current/sdk/ /opt/adx/current/sdk/
+COPY --from=adx-release /opt/adx/current/runtime/adx-execd /opt/adx/current/runtime/adx-execd
 RUN set -eux; \
     test -x /opt/adx/current/bin/adxctl; \
-    test -x /opt/adx/current/bin/adx-master; \
-    test -x /opt/adx/current/bin/adx-node-manager; \
-    test -x /opt/adx/current/bin/adx-api-server; \
-    test -x /opt/adx/current/runtime/rrt-runtime; \
+    test -x /opt/adx/current/bin/adx-coordinator; \
+    test -x /opt/adx/current/bin/adxlet; \
+    test -x /opt/adx/current/bin/adx-apiserver; \
+    test -x /opt/adx/current/runtime/adx-execd; \
     test ! -e /opt/adx/current/runtime/adx-runtime-rootfs.img; \
     ln -sfn /opt/adx/current/bin/adxctl /usr/local/bin/adxctl
 

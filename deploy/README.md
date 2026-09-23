@@ -28,6 +28,17 @@ make print-env
 make e2e
 ```
 
+The node image downloads the pinned ADX linux/amd64 release directly from OBS,
+verifies the archive SHA-256, and runs the release's own `install.sh`, which
+verifies its internal manifest before installation. The runtime build downloads
+the separately published `adx-execd` component archive and verifies its SHA-256.
+AKernel then builds its own runtime rootfs with that binary; the prebuilt ADX
+runtime image is not copied into the all-in-one image. When advancing ADX,
+update `ADX_RELEASE_URL` and `ADX_RELEASE_SHA256` in `builder/node.Dockerfile`,
+and `ADX_EXECD_URL` and `ADX_EXECD_SHA256` in `builder/runtime.Dockerfile`.
+The published release is linux/amd64, so `make build` explicitly targets
+`linux/amd64`; Mac ARM builds require Docker's amd64 emulation.
+
 Kata Containers and Firecracker are enabled in the default AKernel image and
 runtime configuration. Both require `/dev/kvm` to be available to the node
 container. Nodes without a usable KVM device remain ready for runsc workloads
@@ -245,17 +256,17 @@ export AKERNEL_TOKEN="$(kubectl -n akernel get secret akernel-adx-tls -o jsonpat
 ```
 
 Generate a replacement without changing the public HTTPS certificate, then
-restart the Master Deployment so it reads the mounted `key_file` again:
+restart the Coordinator Deployment so it reads the mounted `key_file` again:
 
 ```bash
 python3 -c 'import json,secrets; print(json.dumps({"stringData":{"admin-key":secrets.token_hex(32)}}))' \
   | kubectl -n akernel patch secret akernel-adx-tls --type merge --patch-file /dev/stdin
-kubectl -n akernel rollout restart deployment/akernel-adx-master
-kubectl -n akernel rollout status deployment/akernel-adx-master
+kubectl -n akernel rollout restart deployment/akernel-adx-coordinator
+kubectl -n akernel rollout status deployment/akernel-adx-coordinator
 ```
 
 Read the new key again using the command above (or `make token`) and update SDK
-processes. The updated ADX Master atomically replaces its administrator key set
+processes. The updated ADX Coordinator atomically replaces its administrator key set
 and persistently revokes removed keys. Tenant keys are preserved. Old keys
 cannot be reused, even after restart. Existing ingress caches remain bounded by
 the configured authentication TTL (10 seconds here); in-flight requests and
@@ -269,11 +280,11 @@ Managed mode is the default. It creates one Redis StatefulSet with AOF enabled,
 `appendfsync=everysec`, and a persistent volume. Helm generates an independent
 64-character Redis password in `akernel-adx-redis-auth` and reuses it on upgrades
 through a live Secret lookup. Use `helm install/upgrade` against the cluster;
-offline `helm template` cannot recover an existing password. Master, Gateway,
+offline `helm template` cannot recover an existing password. Coordinator, Ingress/API Server,
 and node Pods receive the password through Secret references. Redis requires
 authentication for Pod connections. An ingress NetworkPolicy also limits port 6379 to the
-Master, Gateway, and node Pods in the same namespace when the CNI enforces
-NetworkPolicy. Redis is exposed only by a ClusterIP Service. Master and Gateway
+Coordinator, Ingress/API Server, and node Pods in the same namespace when the CNI enforces
+NetworkPolicy. Redis is exposed only by a ClusterIP Service. Coordinator and Ingress/API Server
 have independent readiness/liveness checks and independent `adxctl` supervisors.
 Their generated configuration and logs are container-local under
 `/home/akernel/adx/run/<role>` and reset on Pod replacement; the authoritative cluster
@@ -346,7 +357,7 @@ The existing placement setting remains `spread` (default) or `binpack`:
 
 ```yaml
 core:
-  master:
+  coordinator:
     schedulePlacementPolicy: spread
 ```
 
@@ -376,27 +387,27 @@ export AKERNEL_TOKEN="$(kubectl -n akernel get secret akernel-adx-tls \
 ```
 
 Set `traefik.tls.enabled` only when supplying a custom default certificate for
-the public entrypoint. The HTTPS certificate used between Traefik and Edge
+the public entrypoint. The HTTPS certificate used between Traefik and Ingress
 comes from `akernel-adx-tls`; this connection does not require client certificates.
 
 ### Verify the deployment
 
 ```bash
 kubectl -n akernel rollout status statefulset/akernel-adx-redis  # managed mode
-kubectl -n akernel rollout status deployment/akernel-adx-master
-kubectl -n akernel rollout status deployment/akernel-adx-gateway
+kubectl -n akernel rollout status deployment/akernel-adx-coordinator
+kubectl -n akernel rollout status deployment/akernel-adx-ingress-api
 kubectl -n akernel rollout status daemonset/akernel-node
 kubectl -n akernel get pods -o wide
-kubectl -n akernel logs deployment/akernel-adx-master --tail=200
-kubectl -n akernel logs deployment/akernel-adx-gateway --tail=200
-kubectl -n akernel exec deployment/akernel-adx-master -- \
-  tail -n 200 /home/akernel/adx/run/master/logs/master.log
-kubectl -n akernel exec deployment/akernel-adx-gateway -- \
-  tail -n 200 /home/akernel/adx/run/gateway/logs/api-server.log
+kubectl -n akernel logs deployment/akernel-adx-coordinator --tail=200
+kubectl -n akernel logs deployment/akernel-adx-ingress-api --tail=200
+kubectl -n akernel exec deployment/akernel-adx-coordinator -- \
+  tail -n 200 /home/akernel/adx/run/coordinator/logs/coordinator.log
+kubectl -n akernel exec deployment/akernel-adx-ingress-api -- \
+  tail -n 200 /home/akernel/adx/run/ingress-api/logs/apiserver.log
 ```
 
 There must be one ready `akernel-node` Pod for every eligible Kubernetes node.
-The Master and Gateway Deployments become ready independently. In external
+The Coordinator and Ingress/API Server Deployments become ready independently. In external
 Redis mode, verify that Redis is reachable from both deployments and every node
 Pod before diagnosing ADX discovery. `kubectl logs` shows the `adxctl`
 supervisor stream; component output is stored under each role's
@@ -424,7 +435,7 @@ Per-vendor details are in
 [`terraform/huaweicloud/README.md`](./terraform/huaweicloud/README.md).
 
 The Alibaba Cloud Terraform defaults follow the recommended public layout:
-separate ADX Master and Gateway Deployments, one Node Manager DaemonSet,
+separate ADX Coordinator and Ingress/API Server Deployments, one Adxlet DaemonSet,
 managed Redis, Traefik `websecure:443` plus `web:80`, and Grafana exposed
 through its own LoadBalancer when `install_monitor=true`. Set
 `install_dragonfly=true` to install the pinned official Dragonfly chart and

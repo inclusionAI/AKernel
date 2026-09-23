@@ -1,5 +1,10 @@
 # ADX workload checkpoint validation
 
+> Historical evidence for the 2026-09-22 validation image. Component names and
+> the release-lock references below describe that run. The current build uses
+> Coordinator, Adxlet, Ingress and EXECD and installs its pinned OBS release
+> directly from the Dockerfiles.
+
 Verified on 2026-09-22 on the dedicated Linux x86_64 standalone host with gVisor.
 The workload interface remains `POST /checkpoint` on `/run/akernel/rrt.sock`.
 RRT publishes a pending request to its owning Node Manager, which calls sandboxd

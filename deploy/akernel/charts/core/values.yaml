@@ -50,7 +50,7 @@ adx:
       limits:
         cpu: "1"
         memory: 1Gi
-  master:
+  coordinator:
     replicas: 1
     resources:
       requests:
@@ -59,7 +59,7 @@ adx:
       limits:
         cpu: "1"
         memory: 1Gi
-  gateway:
+  ingressApi:
     replicas: 1
     resources:
       requests:
@@ -70,12 +70,12 @@ adx:
         memory: 1Gi
   node:
     allowedTargetCidrs: 10.88.0.0/16
-    allowedEdgeCidrs: 0.0.0.0/0
+    allowedIngressCidrs: 0.0.0.0/0
     reportIntervalSeconds: 5
     resourceValidForSeconds: 30
 
 # Preserve the existing placement setting; translate binpack to ADX pack.
-master:
+coordinator:
   image:
     repository: ""
     tag: ""

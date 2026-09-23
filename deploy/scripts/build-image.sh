@@ -14,6 +14,7 @@ repository=""
 tag=""
 env_name=""
 runtime_image=""
+target_platform="${AKERNEL_TARGET_PLATFORM:-linux/amd64}"
 runtime_versions_file="${ROOT}/src/sandboxd/third_party/runtime-versions.env"
 if [[ ! -f "${runtime_versions_file}" ]]; then
   die "missing runtime version manifest: ${runtime_versions_file}"
@@ -32,7 +33,6 @@ gvisor_amd64_url="${GVISOR_AMD64_URL:-}"
 firecracker_release="${FIRECRACKER_RELEASE:-}"
 firecracker_amd64_sha256="${FIRECRACKER_AMD64_SHA256:-}"
 firecracker_amd64_url="${FIRECRACKER_AMD64_URL:-}"
-adx_release_archive="${ADX_RELEASE_ARCHIVE:-}"
 print_component_versions=0
 
 component_revision() {
@@ -79,10 +79,6 @@ while [[ $# -gt 0 ]]; do
       runtime_image="$2"
       shift 2
       ;;
-    --adx-release)
-      adx_release_archive="$2"
-      shift 2
-      ;;
     --print-component-versions)
       print_component_versions=1
       shift
@@ -104,7 +100,6 @@ case "${AKERNEL_ENABLE_FIRECRACKER:-true}" in
 esac
 
 require_cmd docker
-require_cmd python3
 
 if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
   load_env_config "${env_name}"
@@ -116,6 +111,10 @@ case "${AKERNEL_ENABLE_RUNC:-false}" in
   true|false) ;;
   *) die "AKERNEL_ENABLE_RUNC must be true or false" ;;
 esac
+
+if [[ "${target_platform}" != "linux/amd64" ]]; then
+  die "AKERNEL_TARGET_PLATFORM must be linux/amd64 for the pinned ADX release"
+fi
 
 repository="${repository:-akernel-all-in-one}"
 tag="${tag:-$(git -C "${AKERNEL_REPO_ROOT}" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)}"
@@ -153,26 +152,11 @@ if [[ -z "${DISTILL_FS_RELEASE:-}" || -z "${DISTILL_FS_AMD64_URL:-}" ||
   die "publish and pin DISTILL_FS_RELEASE, DISTILL_FS_AMD64_URL, and DISTILL_FS_AMD64_SHA256 in ${distill_fs_versions_file} before building"
 fi
 
-if [[ -z "${adx_release_archive}" ]]; then
-  die "ADX_RELEASE_ARCHIVE or --adx-release must name the pinned ADX release archive"
-fi
-if [[ ! -f "${adx_release_archive}" ]]; then
-  die "ADX release archive does not exist: ${adx_release_archive}"
-fi
-
-adx_release_stage="$(mktemp -d "${TMPDIR:-/tmp}/akernel-adx-release.XXXXXX")"
-cleanup_adx_release_stage() {
-  rm -rf "${adx_release_stage}"
-}
-trap cleanup_adx_release_stage EXIT
-python3 "${AKERNEL_REPO_ROOT}/builder/scripts/stage_adx_release.py" \
-  "${adx_release_archive}" "${adx_release_stage}/package"
-
-info "building ${runtime_image} with the RRT runtime profile"
+info "building ${runtime_image} with the EXECD runtime profile"
 docker build \
   -f builder/runtime.Dockerfile \
-  --target runtime-rrt \
-  --build-context "adx_release=${adx_release_stage}/package" \
+  --platform "${target_platform}" \
+  --target runtime-execd \
   -t "${runtime_image}" \
   .
 
@@ -211,7 +195,7 @@ node_build_args+=(
 
 docker build \
   -f builder/node.Dockerfile \
-  --build-context "adx_release=${adx_release_stage}/package" \
+  --platform "${target_platform}" \
   "${node_build_args[@]}" \
   -t "${all_in_one_image}" \
   .

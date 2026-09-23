@@ -85,7 +85,7 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   -subj "/CN=akernel" -days 3650 \
   -addext "basicConstraints=critical,CA:FALSE" \
   -addext "extendedKeyUsage=serverAuth" \
-  -addext "subjectAltName=DNS:adx.internal,DNS:localhost,DNS:akernel-adx-gateway,DNS:akernel-adx-gateway.${namespace}.svc.cluster.local,IP:127.0.0.1" >/dev/null 2>&1
+  -addext "subjectAltName=DNS:adx.internal,DNS:localhost,DNS:akernel-adx-ingress-api,DNS:akernel-adx-ingress-api.${namespace}.svc.cluster.local,IP:127.0.0.1" >/dev/null 2>&1
 openssl rand -hex 32 >"${tmp_dir}/admin-key"
 
 kubectl_cmd -n "${namespace}" create secret generic "${secret_name}" \

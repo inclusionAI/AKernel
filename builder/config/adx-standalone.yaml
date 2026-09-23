@@ -3,20 +3,20 @@ profile: standalone
 internal_security: network
 namespace: akernel
 service_overrides:
-  master:
+  coordinator:
     config:
       placement: spread
-  node-manager:
+  adxlet:
     config:
-      rrt_env:
-        ADX_RRT_CONTROL_SOCKET_PATH: /run/akernel
+      execd_env:
+        ADX_EXECD_CONTROL_SOCKET_PATH: /run/akernel
       resource_source:
         disk_path: /home/akernel
-  edge:
+  ingress:
     env:
-      ADX_DATA_PLANE_EDGE_FRONTEND_PLAIN_BIND: 0.0.0.0:8080
-      ADX_DATA_PLANE_EDGE_FRONTEND_ALLOWED_CLIENT_CIDRS: 0.0.0.0/0
-environment:
+      ADX_DATA_PLANE_INGRESS_PLAIN_BIND: 0.0.0.0:8080
+      ADX_DATA_PLANE_INGRESS_ALLOWED_CLIENT_CIDRS: 0.0.0.0/0
+runtime_profile:
   rootfs:
     runtime_class: runsc
     type: local
@@ -27,7 +27,7 @@ environment:
     root: /opt/akernel/runtime/akernel-runtime-rootfs.img
     target: /__adx
     entrypoint:
-      - /__adx/usr/local/bin/rrt-runtime
+      - /__adx/usr/local/bin/adx-execd
     image_process_config: /etc/adx-image-process.json
   env:
     PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

@@ -26,6 +26,8 @@ class AdxTerraformContractTest(unittest.TestCase):
             with self.subTest(provider=provider):
                 values = (ROOT / provider / "values-akernel.yaml.tmpl").read_text()
                 self.assertIn("adx:", values)
+                self.assertIn("  coordinator:\n    replicas: 1", values)
+                self.assertIn("  ingressApi:\n    replicas: 1", values)
                 self.assertIn('repository: "${master_image_repository}"', values)
                 self.assertIn('tag: "${master_image_tag}"', values)
                 self.assertIn('schedulePlacementPolicy: "${schedule_placement_policy}"', values)

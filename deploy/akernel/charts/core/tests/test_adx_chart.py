@@ -45,43 +45,73 @@ class AdxChartTest(unittest.TestCase):
                 return resource
         self.fail(f"missing {kind}/{name}")
 
+    def test_uses_current_adx_role_names(self) -> None:
+        config = self.resource("ConfigMap", "akernel-adx-config")["data"]
+        self.assertIn("coordinator.yaml", config)
+        self.assertIn("ingress-api.yaml", config)
+        self.assertIn("role: coordinator", config["coordinator.yaml"])
+        self.assertIn("role: apiserver", config["ingress-api.yaml"])
+        self.assertIn("role: ingress", config["ingress-api.yaml"])
+        self.assertIn("role: adxlet", config["node.yaml"])
+        self.assertIn("ADX_EXECD_CONTROL_SOCKET_PATH", config["node.yaml"])
+        self.assertIn("ADX_DATA_PLANE_RELAY_BIND", config["node.yaml"])
+        self.assertIn(
+            "ADX_DATA_PLANE_ALLOWED_INGRESS_CIDRS", config["node.yaml"]
+        )
+        self.assertIn("/__adx/usr/local/bin/adx-execd", config["node.yaml"])
+        self.assertNotIn("role: master", self.rendered)
+        self.assertNotIn("role: node-manager", self.rendered)
+        self.assertNotIn("role: api-server", self.rendered)
+        self.assertNotIn("role: edge", self.rendered)
+
     def test_default_replaces_legacy_control_plane(self) -> None:
         self.resource("StatefulSet", "akernel-adx-redis")
-        self.resource("Deployment", "akernel-adx-master")
-        self.resource("Service", "akernel-adx-master")
-        self.resource("Deployment", "akernel-adx-gateway")
-        self.resource("Service", "akernel-adx-gateway")
+        self.resource("Deployment", "akernel-adx-coordinator")
+        self.resource("Service", "akernel-adx-coordinator")
+        self.resource("Deployment", "akernel-adx-ingress-api")
+        self.resource("Service", "akernel-adx-ingress-api")
         self.resource("DaemonSet", "akernel-node")
         names = {item["metadata"]["name"] for item in self.resources}
         self.assertNotIn("akernel-master", names)
         self.assertNotIn("akernel-frontend", names)
         self.assertNotIn("akernel-etcd", names)
 
-    def test_master_and_gateway_preserve_master_image_override(self) -> None:
+    def test_coordinator_and_ingress_api_preserve_control_image_override(self) -> None:
         result = subprocess.run(
-            ["helm", "template", "akernel", str(CHART), "--set",
-             "master.image.repository=example.test/control,master.image.tag=release"],
-            check=True, capture_output=True, text=True,
+            [
+                "helm",
+                "template",
+                "akernel",
+                str(CHART),
+                "--set",
+                "coordinator.image.repository=example.test/control,"
+                "coordinator.image.tag=release",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
         )
         resources = [item for item in yaml.safe_load_all(result.stdout) if item]
-        for name in ("akernel-adx-master", "akernel-adx-gateway"):
+        for name in ("akernel-adx-coordinator", "akernel-adx-ingress-api"):
             deployment = next(item for item in resources
                               if item["kind"] == "Deployment"
                               and item["metadata"]["name"] == name)
             image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
             self.assertEqual(image, "example.test/control:release")
 
-    def test_master_and_gateway_have_independent_adxctl_parents(self) -> None:
+    def test_coordinator_and_ingress_api_have_independent_adxctl_parents(self) -> None:
         config = self.resource("ConfigMap", "akernel-adx-config")["data"]
-        master = yaml.safe_load(config["master.yaml"])
-        gateway = yaml.safe_load(config["gateway.yaml"])
-        self.assertEqual([item["role"] for item in master["services"]], ["master"])
+        coordinator = yaml.safe_load(config["coordinator.yaml"])
+        ingress_api = yaml.safe_load(config["ingress-api.yaml"])
         self.assertEqual(
-            [item["role"] for item in gateway["services"]], ["api-server", "edge"]
+            [item["role"] for item in coordinator["services"]], ["coordinator"]
+        )
+        self.assertEqual(
+            [item["role"] for item in ingress_api["services"]], ["apiserver", "ingress"]
         )
         expected = {
-            "akernel-adx-master": "/etc/akernel/adx-master.yaml",
-            "akernel-adx-gateway": "/etc/akernel/adx-gateway.yaml",
+            "akernel-adx-coordinator": "/etc/akernel/adx-coordinator.yaml",
+            "akernel-adx-ingress-api": "/etc/akernel/adx-ingress-api.yaml",
         }
         for name, path in expected.items():
             container = self.resource("Deployment", name)["spec"]["template"]["spec"]
@@ -140,19 +170,21 @@ class AdxChartTest(unittest.TestCase):
 
     def test_internal_rpc_uses_network_identity_without_node_certificates(self) -> None:
         config = self.resource("ConfigMap", "akernel-adx-config")["data"]
-        self.assertNotIn("node-pool:", config["master.yaml"])
-        self.assertIn("mode: network", config["master.yaml"])
-        self.assertIn("internal_security: network", config["gateway.yaml"])
+        self.assertNotIn("node-pool:", config["coordinator.yaml"])
+        self.assertIn("mode: network", config["coordinator.yaml"])
+        self.assertIn("internal_security: network", config["ingress-api.yaml"])
         self.assertIn("mode: network", config["node.yaml"])
         self.assertNotIn(
             ".der",
-            config["master.yaml"] + config["gateway.yaml"] + config["node.yaml"],
+            config["coordinator.yaml"]
+            + config["ingress-api.yaml"]
+            + config["node.yaml"],
         )
         self.assertIn(
-            "state_dir: /home/akernel/adx/run/master", config["master.yaml"]
+            "state_dir: /home/akernel/adx/run/coordinator", config["coordinator.yaml"]
         )
         self.assertIn(
-            "state_dir: /home/akernel/adx/run/gateway", config["gateway.yaml"]
+            "state_dir: /home/akernel/adx/run/ingress-api", config["ingress-api.yaml"]
         )
         self.assertIn("state_dir: /home/akernel/adx/run/node", config["node.yaml"])
         self.assertIn("node_id: ${NODE_NAME}", config["node.yaml"])
@@ -168,30 +200,32 @@ class AdxChartTest(unittest.TestCase):
             for item in daemonset["spec"]["template"]["spec"]["volumes"]
         }
         self.assertNotIn("adx-credentials", volumes)
-        master = self.resource("Deployment", "akernel-adx-master")
-        master_secret = next(
-            v["secret"] for v in master["spec"]["template"]["spec"]["volumes"]
-            if v["name"] == "credentials"
-        )
-        self.assertEqual({i["key"] for i in master_secret["items"]}, {"admin-key"})
-        gateway = self.resource("Deployment", "akernel-adx-gateway")
-        gateway_secret = next(
-            v["secret"] for v in gateway["spec"]["template"]["spec"]["volumes"]
+        coordinator = self.resource("Deployment", "akernel-adx-coordinator")
+        coordinator_secret = next(
+            v["secret"] for v in coordinator["spec"]["template"]["spec"]["volumes"]
             if v["name"] == "credentials"
         )
         self.assertEqual(
-            {i["key"] for i in gateway_secret["items"]}, {"public.pem", "public.key"}
+            {i["key"] for i in coordinator_secret["items"]}, {"admin-key"}
+        )
+        ingress_api = self.resource("Deployment", "akernel-adx-ingress-api")
+        ingress_secret = next(
+            v["secret"] for v in ingress_api["spec"]["template"]["spec"]["volumes"]
+            if v["name"] == "credentials"
+        )
+        self.assertEqual(
+            {i["key"] for i in ingress_secret["items"]}, {"public.pem", "public.key"}
         )
 
-    def test_gateway_keeps_control_and_data_ports_separate(self) -> None:
+    def test_ingress_api_keeps_control_and_data_ports_separate(self) -> None:
         dynamic = self.resource("ConfigMap", "traefik-dynamic")["data"]["config.yml"]
-        self.assertIn('url: "https://akernel-adx-gateway:8443"', dynamic)
-        self.assertIn('url: "http://akernel-adx-gateway:8080"', dynamic)
+        self.assertIn('url: "https://akernel-adx-ingress-api:8443"', dynamic)
+        self.assertIn('url: "http://akernel-adx-ingress-api:8080"', dynamic)
         self.assertIn("- websecure", dynamic)
         self.assertIn("- web", dynamic)
         self.assertNotIn("akernel-frontend:8888", dynamic)
 
-        service = self.resource("Service", "akernel-adx-gateway")
+        service = self.resource("Service", "akernel-adx-ingress-api")
         ports = {port["name"]: port["port"] for port in service["spec"]["ports"]}
         self.assertEqual(ports["control"], 8443)
         self.assertEqual(ports["data"], 8080)
@@ -248,7 +282,7 @@ class AdxChartTest(unittest.TestCase):
             rule["from"],
             [{"podSelector": {"matchExpressions": [
                 {"key": "app", "operator": "In", "values": [
-                    "akernel-adx-master", "akernel-adx-gateway", "node"
+                    "akernel-adx-coordinator", "akernel-adx-ingress-api", "node"
                 ]}
             ]}}],
         )
@@ -264,8 +298,8 @@ class AdxChartTest(unittest.TestCase):
         self.assertEqual(redis["env"][0]["valueFrom"]["secretKeyRef"],
                          {"name": "akernel-adx-redis-auth", "key": "password"})
         for kind, name in (
-            ("Deployment", "akernel-adx-master"),
-            ("Deployment", "akernel-adx-gateway"),
+            ("Deployment", "akernel-adx-coordinator"),
+            ("Deployment", "akernel-adx-ingress-api"),
             ("DaemonSet", "akernel-node"),
         ):
             env = self.resource(kind, name)["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -276,22 +310,22 @@ class AdxChartTest(unittest.TestCase):
                              {"name": "akernel-adx-redis-auth", "key": "password"})
             self.assertIn(":$(ADX_REDIS_PASSWORD)@", env[url]["value"])
 
-    def test_master_and_gateway_have_independent_probes(self) -> None:
-        master = self.resource("Deployment", "akernel-adx-master")
-        container = master["spec"]["template"]["spec"]["containers"][0]
+    def test_coordinator_and_ingress_api_have_independent_probes(self) -> None:
+        coordinator = self.resource("Deployment", "akernel-adx-coordinator")
+        container = coordinator["spec"]["template"]["spec"]["containers"][0]
         for probe in ("readinessProbe", "livenessProbe"):
             command = " ".join(container[probe]["exec"]["command"])
             self.assertIn("/dev/tcp/127.0.0.1/19000", command)
             self.assertNotIn("18080", command)
-        gateway = self.resource("Deployment", "akernel-adx-gateway")
-        container = gateway["spec"]["template"]["spec"]["containers"][0]
+        ingress_api = self.resource("Deployment", "akernel-adx-ingress-api")
+        container = ingress_api["spec"]["template"]["spec"]["containers"][0]
         for probe in ("readinessProbe", "livenessProbe"):
             self.assertEqual(
                 container[probe]["httpGet"], {"path": "/healthz", "port": "health"}
             )
 
     def test_control_generated_state_is_reset_on_container_restart(self) -> None:
-        for name in ("akernel-adx-master", "akernel-adx-gateway"):
+        for name in ("akernel-adx-coordinator", "akernel-adx-ingress-api"):
             pod = self.resource("Deployment", name)["spec"]["template"]["spec"]
             mounts = pod["containers"][0]["volumeMounts"]
             self.assertNotIn("/home/akernel", [item["mountPath"] for item in mounts])
@@ -320,7 +354,8 @@ class AdxChartTest(unittest.TestCase):
         deployments = [
             item for item in resources
             if item["kind"] == "Deployment"
-            and item["metadata"]["name"] in {"akernel-adx-master", "akernel-adx-gateway"}
+            and item["metadata"]["name"]
+            in {"akernel-adx-coordinator", "akernel-adx-ingress-api"}
         ]
         self.assertEqual(len(deployments), 2)
         node = next(item for item in resources if item["kind"] == "DaemonSet")
@@ -356,7 +391,7 @@ class AdxChartTest(unittest.TestCase):
         self.assertNotIn("akernel-component-tls", names)
         self.assertNotIn("akernel-master-secret", names)
 
-    def test_multiple_master_replicas_are_rejected(self) -> None:
+    def test_multiple_coordinator_replicas_are_rejected(self) -> None:
         result = subprocess.run(
             [
                 "helm",
@@ -364,14 +399,14 @@ class AdxChartTest(unittest.TestCase):
                 "akernel",
                 str(CHART),
                 "--set",
-                "adx.master.replicas=2",
+                "adx.coordinator.replicas=2",
             ],
             check=False,
             capture_output=True,
             text=True,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("adx.master.replicas must be 1", result.stderr)
+        self.assertIn("adx.coordinator.replicas must be 1", result.stderr)
 
 
 if __name__ == "__main__":

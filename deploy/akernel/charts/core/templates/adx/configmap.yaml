@@ -1,5 +1,5 @@
-{{- if not (has (.Values.master.schedulePlacementPolicy | default "spread") (list "binpack" "spread")) }}
-{{- fail "master.schedulePlacementPolicy must be binpack or spread" }}
+{{- if not (has (.Values.coordinator.schedulePlacementPolicy | default "spread") (list "binpack" "spread")) }}
+{{- fail "coordinator.schedulePlacementPolicy must be binpack or spread" }}
 {{- end }}
 {{- if not (has .Values.adx.redis.mode (list "managed" "external")) }}
 {{- fail "adx.redis.mode must be managed or external" }}
@@ -13,23 +13,23 @@ metadata:
   name: akernel-adx-config
   namespace: {{ .Release.Namespace }}
 data:
-  master.yaml: |
+  coordinator.yaml: |
     schema_version: 1
     package_dir: /opt/adx/current
-    state_dir: /home/akernel/adx/run/master
+    state_dir: /home/akernel/adx/run/coordinator
     redis_url: ${ADX_REDIS_URL}
     namespace: {{ .Values.adx.namespace | quote }}
     restart_limit: 3
     restart_delay_ms: 1000
     stop_timeout_seconds: 90
     services:
-      - id: master
-        role: master
+      - id: coordinator
+        role: coordinator
         config:
           listen: 0.0.0.0:19000
-          advertised_address: http://akernel-adx-master.{{ .Release.Namespace }}.svc.cluster.local:19000
+          advertised_address: http://akernel-adx-coordinator.{{ .Release.Namespace }}.svc.cluster.local:19000
           scheduler_shards: {{ .Values.adx.schedulerShards }}
-          placement: {{ eq (.Values.master.schedulePlacementPolicy | default "spread") "binpack" | ternary "pack" "spread" | quote }}
+          placement: {{ eq (.Values.coordinator.schedulePlacementPolicy | default "spread") "binpack" | ternary "pack" "spread" | quote }}
           rpc_timeout_seconds: 30
           heartbeat_timeout_seconds: 30
           discovery_ttl_seconds: 15
@@ -49,18 +49,18 @@ data:
       max_files: 5
       max_age_seconds: 604800
       max_total_bytes: 1073741824
-  gateway.yaml: |
+  ingress-api.yaml: |
     schema_version: 1
     package_dir: /opt/adx/current
-    state_dir: /home/akernel/adx/run/gateway
+    state_dir: /home/akernel/adx/run/ingress-api
     redis_url: ${ADX_REDIS_URL}
     namespace: {{ .Values.adx.namespace | quote }}
     restart_limit: 3
     restart_delay_ms: 1000
     stop_timeout_seconds: 90
     services:
-      - id: api-server
-        role: api-server
+      - id: apiserver
+        role: apiserver
         config:
           listen: 127.0.0.1:18888
           internal_security: network
@@ -69,8 +69,8 @@ data:
           auth_cache_ttl_seconds: 10
           agent_address: ""
           loopback_http: true
-      - id: edge
-        role: edge
+      - id: ingress
+        role: ingress
         config:
           rpc_timeout_seconds: 5
           refresh_seconds: 2
@@ -79,15 +79,15 @@ data:
           tls:
             mode: network
         env:
-          ADX_DATA_PLANE_EDGE_FRONTEND_CONTROL_PLANE_ROUTES: exact:/,exact:/healthz,prefix:/api/instances,prefix:/api/sandbox,prefix:/api/admin/v1/keys
-          ADX_DATA_PLANE_EDGE_FRONTEND_TLS_BIND: 0.0.0.0:8443
-          ADX_DATA_PLANE_EDGE_FRONTEND_PLAIN_BIND: 0.0.0.0:8080
-          ADX_DATA_PLANE_EDGE_FRONTEND_HEALTH_BIND: 0.0.0.0:18080
-          ADX_DATA_PLANE_EDGE_FRONTEND_TLS_CERT: /etc/adx/tls/public.pem
-          ADX_DATA_PLANE_EDGE_FRONTEND_TLS_KEY: /etc/adx/tls/public.key
-          ADX_DATA_PLANE_EDGE_FRONTEND_ALLOWED_CLIENT_CIDRS: 0.0.0.0/0
-          ADX_DATA_PLANE_EDGE_FRONTEND_CONTROL_PLANE_ADDRESS: 127.0.0.1:18888
-          ADX_DATA_PLANE_EDGE_FRONTEND_NODE_SECURITY_MODE: network
+          ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ROUTES: exact:/,exact:/healthz,prefix:/api/instances,prefix:/api/sandbox,prefix:/api/admin/v1/keys
+          ADX_DATA_PLANE_INGRESS_TLS_BIND: 0.0.0.0:8443
+          ADX_DATA_PLANE_INGRESS_PLAIN_BIND: 0.0.0.0:8080
+          ADX_DATA_PLANE_INGRESS_HEALTH_BIND: 0.0.0.0:18080
+          ADX_DATA_PLANE_INGRESS_TLS_CERT: /etc/adx/tls/public.pem
+          ADX_DATA_PLANE_INGRESS_TLS_KEY: /etc/adx/tls/public.key
+          ADX_DATA_PLANE_INGRESS_ALLOWED_CLIENT_CIDRS: 0.0.0.0/0
+          ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ADDRESS: 127.0.0.1:18888
+          ADX_DATA_PLANE_INGRESS_NODE_SECURITY_MODE: network
     logging:
       enabled: true
       max_file_bytes: 104857600
@@ -96,7 +96,7 @@ data:
       max_files: 5
       max_age_seconds: 604800
       max_total_bytes: 1073741824
-    environment:
+    runtime_profile:
       rootfs:
         runtime_class: runsc
         type: local
@@ -107,7 +107,7 @@ data:
         root: /opt/akernel/runtime/akernel-runtime-rootfs.img
         target: /__adx
         entrypoint:
-          - /__adx/usr/local/bin/rrt-runtime
+          - /__adx/usr/local/bin/adx-execd
         image_process_config: /etc/adx-image-process.json
       env:
         PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -121,8 +121,8 @@ data:
     restart_delay_ms: 1000
     stop_timeout_seconds: 90
     services:
-      - id: node-manager
-        role: node-manager
+      - id: adxlet
+        role: adxlet
         config:
           node_id: ${NODE_NAME}
           listen: 0.0.0.0:19001
@@ -132,9 +132,9 @@ data:
           proxy_socket: /home/akernel/adx/run/node/route.sock
           report_interval_seconds: {{ .Values.adx.node.reportIntervalSeconds }}
           rpc_timeout_seconds: 30
-          rrt_port: 50090
-          rrt_env:
-            ADX_RRT_CONTROL_SOCKET_PATH: /run/akernel
+          execd_port: 50090
+          execd_env:
+            ADX_EXECD_CONTROL_SOCKET_PATH: /run/akernel
           checkpoint_dir: /home/akernel/adx/checkpoints
           degradation_journal: /home/akernel/adx/degraded/results.sqlite
           metrics_listen: 0.0.0.0:19091
@@ -145,12 +145,12 @@ data:
           tls:
             mode: network
         env:
-          ADX_DATA_PLANE_NODE_PROXY_ACTIVITY_UDS_DIR: /home/akernel/adx/run/node
-          ADX_DATA_PLANE_NODE_PROXY_BIND: 0.0.0.0:19002
-          ADX_DATA_PLANE_NODE_PROXY_ADVERTISE_ADDRESS: ${INSTANCE_IP}:19002
+          ADX_DATA_PLANE_RELAY_ACTIVITY_UDS_DIR: /home/akernel/adx/run/node
+          ADX_DATA_PLANE_RELAY_BIND: 0.0.0.0:19002
+          ADX_DATA_PLANE_RELAY_ADVERTISE_ADDRESS: ${INSTANCE_IP}:19002
           ADX_DATA_PLANE_ALLOWED_TARGET_CIDRS: {{ .Values.adx.node.allowedTargetCidrs | quote }}
-          ADX_DATA_PLANE_ALLOWED_EDGE_CIDRS: {{ .Values.adx.node.allowedEdgeCidrs | quote }}
-          ADX_DATA_PLANE_EDGE_FRONTEND_NODE_SECURITY_MODE: network
+          ADX_DATA_PLANE_ALLOWED_INGRESS_CIDRS: {{ .Values.adx.node.allowedIngressCidrs | quote }}
+          ADX_DATA_PLANE_INGRESS_NODE_SECURITY_MODE: network
     logging:
       enabled: true
       max_file_bytes: 104857600
@@ -159,7 +159,7 @@ data:
       max_files: 5
       max_age_seconds: 604800
       max_total_bytes: 1073741824
-    environment:
+    runtime_profile:
       rootfs:
         runtime_class: runsc
         type: local
@@ -170,7 +170,7 @@ data:
         root: /opt/akernel/runtime/akernel-runtime-rootfs.img
         target: /__adx
         entrypoint:
-          - /__adx/usr/local/bin/rrt-runtime
+          - /__adx/usr/local/bin/adx-execd
         image_process_config: /etc/adx-image-process.json
       env:
         PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

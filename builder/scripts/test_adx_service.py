@@ -59,9 +59,18 @@ class AdxServiceTest(unittest.TestCase):
             )
 
             tls = state / "tls"
-            self.assertEqual({p.name for p in tls.iterdir()}, {"edge-public.pem", "edge-public.key"})
+            self.assertEqual(
+                {p.name for p in tls.iterdir()},
+                {"ingress-public.pem", "ingress-public.key"},
+            )
             subprocess.run(
-                ["openssl", "verify", "-CAfile", tls / "edge-public.pem", tls / "edge-public.pem"],
+                [
+                    "openssl",
+                    "verify",
+                    "-CAfile",
+                    tls / "ingress-public.pem",
+                    tls / "ingress-public.pem",
+                ],
                 check=True, capture_output=True, text=True,
             )
             self.assertFalse((state / "secrets/admin-key").exists())

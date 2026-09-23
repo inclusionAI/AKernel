@@ -8,7 +8,6 @@ VENDOR ?= aliyun
 ENV ?= default
 IMAGE_TAG ?=
 IMAGE_REPOSITORY ?=
-ADX_RELEASE_ARCHIVE ?= out/buildkite/adx-release.tar.gz
 FORCE ?= 0
 NON_INTERACTIVE ?= 0
 REGION ?=
@@ -49,8 +48,6 @@ help:
 	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
 	@echo "  make build AKERNEL_ENABLE_FIRECRACKER=false Exclude Firecracker"
 	@echo "  make build AKERNEL_ENABLE_RUNC=true Include the optional runc payload"
-	@echo "  make build ADX_RELEASE_ARCHIVE=... Consume the pinned ADX release"
-	@echo "  make adx-release                    Fetch and verify the pinned ADX release"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
 	@echo "  make plan                          Terraform plan"
@@ -94,17 +91,11 @@ config:
 	if [[ -n "$(GRAFANA_ADMIN_PASSWORD)" ]]; then args+=(--grafana-admin-password "$(GRAFANA_ADMIN_PASSWORD)"); fi; \
 	./deploy/scripts/configure.sh "$${args[@]}"
 
-.PHONY: adx-release
-adx-release:
-	@python3 builder/scripts/fetch_adx_release.py \
-		--output "$(ADX_RELEASE_ARCHIVE)"
-
 .PHONY: build
-build: adx-release
+build:
 	@args=(--env "$(ENV)"); \
 	if [[ -n "$(IMAGE_REPOSITORY)" ]]; then args+=(--repository "$(IMAGE_REPOSITORY)"); fi; \
 	if [[ -n "$(IMAGE_TAG)" ]]; then args+=(--tag "$(IMAGE_TAG)"); fi; \
-	args+=(--adx-release "$(ADX_RELEASE_ARCHIVE)"); \
 	./deploy/scripts/build-image.sh "$${args[@]}"
 
 .PHONY: versions

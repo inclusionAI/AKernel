@@ -134,8 +134,6 @@ jobs:
 
       - name: Verify ADX package, standalone, Helm, and Terraform contracts
         run: |
-          python builder/scripts/test_verify_adx_release.py -v
-          python builder/scripts/test_fetch_adx_release.py -v
           python builder/scripts/test_adx_service.py -v
           python builder/scripts/test_runtime_contract.py -v
           python deploy/standalone/test_start.py -v
@@ -187,12 +185,6 @@ jobs:
           sudo modprobe br_netfilter
           test -c /dev/net/tun
           sudo sysctl -w net.bridge.bridge-nf-call-iptables=1
-
-      - name: Fetch and verify pinned Agent DX release
-        env:
-          BUILDKITE_API_TOKEN: ${{ secrets.ADX_BUILDKITE_API_TOKEN }}
-        run: |
-          make adx-release
 
       - name: Build all-in-one image
         env:

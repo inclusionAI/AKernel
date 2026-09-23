@@ -40,7 +40,16 @@ adx:
       requests:
         cpu: "${etcd_cpu}"
         memory: "${etcd_memory}"
-  control:
+  coordinator:
+    replicas: 1
+    resources:
+      limits:
+        cpu: "${master_cpu}"
+        memory: "${master_memory}"
+      requests:
+        cpu: "${master_cpu}"
+        memory: "${master_memory}"
+  ingressApi:
     replicas: 1
     resources:
       limits:
@@ -242,7 +251,7 @@ traefik:
     url: "${traefik_grafana_url}"
 %{ endif ~}
 
-master:
+coordinator:
   image:
     repository: "${master_image_repository}"
     tag: "${master_image_tag}"

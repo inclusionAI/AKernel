@@ -28,19 +28,19 @@ ensure_public_tls() (
   state_dir="$1"
   tls_dir="${state_dir}/tls"
   install -d -m 0700 "${tls_dir}"
-  if [[ -s "${tls_dir}/edge-public.pem" && -s "${tls_dir}/edge-public.key" ]]; then
+  if [[ -s "${tls_dir}/ingress-public.pem" && -s "${tls_dir}/ingress-public.key" ]]; then
     exit 0
   fi
   tmp_dir="$(mktemp -d "${state_dir}/.certs.XXXXXX")"
   trap 'rm -rf -- "${tmp_dir}"' EXIT
   openssl req -x509 -newkey rsa:2048 -nodes \
-    -keyout "${tmp_dir}/edge-public.key" -out "${tmp_dir}/edge-public.pem" \
+    -keyout "${tmp_dir}/ingress-public.key" -out "${tmp_dir}/ingress-public.pem" \
     -subj "/CN=akernel" -days 3650 \
     -addext "basicConstraints=critical,CA:FALSE" \
     -addext "extendedKeyUsage=serverAuth" \
     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
-  install -m 0600 "${tmp_dir}/edge-public.key" "${tls_dir}/edge-public.key"
-  install -m 0644 "${tmp_dir}/edge-public.pem" "${tls_dir}/edge-public.pem"
+  install -m 0600 "${tmp_dir}/ingress-public.key" "${tls_dir}/ingress-public.key"
+  install -m 0644 "${tmp_dir}/ingress-public.pem" "${tls_dir}/ingress-public.pem"
 )
 
 main() {

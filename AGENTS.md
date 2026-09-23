@@ -116,7 +116,7 @@ The build creates only the selected image reference; it does not add a second
 `akernel-all-in-one` alias. `make push` pushes that selected reference directly.
 
 The build helper performs two Docker builds. `builder/runtime.Dockerfile`
-creates the RRT-only `yr-runtime-rootfs.img` from the pinned ADX release.
+creates the EXECD-only `akernel-runtime-rootfs.img` from the pinned ADX release.
 `builder/node.Dockerfile` then compiles the node components and produces the
 AKernel all-in-one image using that runtime image. The actor-based Python
 runtime is not a build input.
@@ -207,11 +207,11 @@ even though the Pod declares a node configuration.
 
 The managed Kubernetes Redis uses its own Helm-generated authentication Secret,
 preserved by live lookup during upgrades. Its NetworkPolicy is additional
-isolation and requires CNI enforcement. Master and Gateway run in separate
+isolation and requires CNI enforcement. Coordinator and Ingress/API Server run in separate
 Deployments with independent `adxctl` supervisors and health probes. Their
 generated state is container-local, while Redis persists authoritative state.
-Node Manager uses its own state subtree under `/home/akernel/adx/run/node`;
-never start Master, Gateway, or Redis in a node Pod.
+Adxlet uses its own state subtree under `/home/akernel/adx/run/node`;
+never start Coordinator, Ingress/API Server, or Redis in a node Pod.
 
 Aliyun's aggregate Pod PID budget is configurable independently of the
 per-sandbox limit; see `deploy/terraform/aliyun/README.md#pod-pid-budget`.
@@ -356,8 +356,8 @@ with Sandbox(failover=True) as sb:
 ```
 
 The current functional integration deliberately leaves anonymous local
-checkpoint creation inside the workload through RRT's internal Unix socket.
-The node sets `ADX_RRT_CONTROL_SOCKET_PATH=/run/akernel`, making the socket
+checkpoint creation inside the workload through EXECD's internal Unix socket.
+The node sets `ADX_EXECD_CONTROL_SOCKET_PATH=/run/akernel`, making the socket
 available at `/run/akernel/rrt.sock`. Do not present that socket protocol as a
 stable public SDK interface or add public checkpoint catalog methods to the
 SDK.
@@ -417,8 +417,8 @@ export AKERNEL_TOKEN="<your_token>"
 ```
 
 ADX always keeps two public listeners: HTTPS/WSS control traffic on 443 and
-plain HTTP/WS instance data on 80. API Server and Edge may share a process, but
-their public ports remain distinct. Standalone publishes both embedded Edge
+plain HTTP/WS instance data on 80. API Server and Ingress may share a process, but
+their public ports remain distinct. Standalone publishes both embedded Ingress
 listeners directly from the `akernel-node` container:
 
 ```bash
@@ -435,7 +435,7 @@ a locally built or differently tagged image.
 Standalone GPU testing additionally requires NVIDIA Container Toolkit on the
 host and `AKERNEL_ENABLE_GPU=true`. sandboxd uses the read-only cgroup
 node-resource provider in standalone mode; Kubernetes deployments retain the
-Kubernetes provider. Standalone explicitly enables local DNAT because Edge
+Kubernetes provider. Standalone explicitly enables local DNAT because Ingress
 shares the node network namespace.
 
 Standalone uses iptables NAT by default. Set `AKERNEL_NAT_BACKEND=bpfnat` to
@@ -463,8 +463,8 @@ layout.
 
 The bundled node enables ADX local recovery points and
 stores checkpoint state under the persistent `/home/akernel/adx/checkpoints`
-mount. RRT receives
-`ADX_RRT_CONTROL_SOCKET_PATH=/run/akernel` so sandbox workloads can trigger
+mount. EXECD receives
+`ADX_EXECD_CONTROL_SOCKET_PATH=/run/akernel` so sandbox workloads can trigger
 their local checkpoint handoff through `/run/akernel/rrt.sock`. Recovery points
 follow the source sandbox lifecycle. The public SDK exposes only failover and
 reload, not checkpoint identifiers, restore, list, delete, or snapshot TTLs.

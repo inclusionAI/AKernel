@@ -1,35 +1,35 @@
-{{- if ne (int .Values.adx.master.replicas) 1 }}
-{{- fail "adx.master.replicas must be 1 while ADX uses a single active Master" }}
+{{- if ne (int .Values.adx.coordinator.replicas) 1 }}
+{{- fail "adx.coordinator.replicas must be 1 while ADX uses a single active Coordinator" }}
 {{- end }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: akernel-adx-master
+  name: akernel-adx-coordinator
   namespace: {{ .Release.Namespace }}
 spec:
   selector:
-    app: akernel-adx-master
+    app: akernel-adx-coordinator
   ports:
-    - name: master
+    - name: coordinator
       port: 19000
-      targetPort: master
+      targetPort: coordinator
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: akernel-adx-master
+  name: akernel-adx-coordinator
   namespace: {{ .Release.Namespace }}
 spec:
-  replicas: {{ .Values.adx.master.replicas }}
+  replicas: {{ .Values.adx.coordinator.replicas }}
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      app: akernel-adx-master
+      app: akernel-adx-coordinator
   template:
     metadata:
       labels:
-        app: akernel-adx-master
+        app: akernel-adx-coordinator
       annotations:
         checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
     spec:
@@ -38,11 +38,11 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: master
-          image: "{{ include "core.image" (dict "root" . "image" .Values.master.image) }}"
-          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.master.image) }}
+        - name: coordinator
+          image: "{{ include "core.image" (dict "root" . "image" .Values.coordinator.image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
           command: [/opt/adx/current/bin/adxctl]
-          args: [--config, /etc/akernel/adx-master.yaml, run]
+          args: [--config, /etc/akernel/adx-coordinator.yaml, run]
           env:
             {{- if eq .Values.adx.redis.mode "managed" }}
             - name: ADX_REDIS_PASSWORD
@@ -61,7 +61,7 @@ spec:
                   key: {{ .Values.adx.redis.external.urlKey | quote }}
               {{- end }}
           ports:
-            - name: master
+            - name: coordinator
               containerPort: 19000
             - name: metrics
               containerPort: 19090
@@ -78,11 +78,11 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
           resources:
-            {{- toYaml .Values.adx.master.resources | nindent 12 }}
+            {{- toYaml .Values.adx.coordinator.resources | nindent 12 }}
           volumeMounts:
             - name: config
-              mountPath: /etc/akernel/adx-master.yaml
-              subPath: master.yaml
+              mountPath: /etc/akernel/adx-coordinator.yaml
+              subPath: coordinator.yaml
               readOnly: true
             - name: credentials
               mountPath: /etc/adx
