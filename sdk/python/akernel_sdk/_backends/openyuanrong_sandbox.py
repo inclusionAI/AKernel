@@ -442,11 +442,22 @@ class OpenYuanRongSandboxBackend:
             )
 
     def create(self, spec: SandboxSpec) -> BackendSession:
-        if spec.elastic_resources:
-            raise UnsupportedBackendFeatureError(
-                "elastic_resources requires the openyuanrong-sdk backend"
-            )
         self._validate(spec)
+        if spec.elastic_resources:
+            # The elastic markers travel through the SAME public wire the
+            # server already normalizes (extra_config JSON carrying
+            # scheduler_elastic_resources, surfaced to the flat key at the
+            # schedule entry). The server accepts a JSON bool true or the
+            # string "true"; anything else present — including an explicit
+            # empty string or false-ish value — is a conflicting declaration
+            # and is rejected here instead of being silently overridden.
+            if "scheduler_elastic_resources" in spec.extra_config:
+                marker = spec.extra_config["scheduler_elastic_resources"]
+                if marker is not True and marker != "true":
+                    raise ValueError(
+                        "extra_config conflicts with elastic_resources: "
+                        f"scheduler_elastic_resources={marker!r}"
+                    )
         supports_failover = _supports_keyword(yr_sandbox.Sandbox, "failover")
         supports_inherit_entrypoint = _supports_keyword(
             yr_sandbox.Sandbox, "inherit_entrypoint"
@@ -530,7 +541,15 @@ class OpenYuanRongSandboxBackend:
             xpu=spec.xpu,
             storage_mb=spec.storage_mb,
             network=network,
-            extra_config=dict(spec.extra_config),
+            extra_config=(
+                # elastic public parameter: nested marker the server-side
+                # NormalizeElasticCreateOptions surfaces and validates. Copy
+                # the caller's mapping first and write the canonical marker
+                # LAST so no user value can override it, and the caller's
+                # object is never mutated.
+                {**spec.extra_config, "scheduler_elastic_resources": "true"}
+                if spec.elastic_resources else dict(spec.extra_config)
+            ),
             create_timeout=create_timeout,
         )
         if supports_failover:

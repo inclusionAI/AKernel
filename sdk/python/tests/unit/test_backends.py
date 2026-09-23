@@ -153,13 +153,83 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         self.assertEqual(os.environ["YR_TOKEN"], "secret")
 
     def test_runtime_identifier_without_explicit_rootfs_is_forwarded(self):
-    def test_elastic_resources_cannot_be_silently_ignored(self):
+        native = MagicMock()
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox", native):
+            self.backend.create(_spec(runtime="gvisor-next"))
+        kwargs = native.call_args.kwargs
+        self.assertEqual(kwargs.get("runtime"), "gvisor-next")
+
+    def test_elastic_resources_marker_and_limits_travel_the_public_wire(self):
+        native = MagicMock()
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox", native):
+            self.backend.create(_spec(elastic_resources=True, cpu=500,
+                                      memory=128, cpu_limit=500, mem_limit=512))
+        kwargs = native.call_args.kwargs
+        self.assertEqual(
+            kwargs["extra_config"].get("scheduler_elastic_resources"), "true")
+        self.assertEqual(kwargs["cpu_limit"], 500)
+        self.assertEqual(kwargs["mem_limit"], 512)
+
+    def test_elastic_false_keeps_extra_config_untouched(self):
+        native = MagicMock()
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox", native):
+            self.backend.create(_spec(elastic_resources=False))
+        kwargs = native.call_args.kwargs
+        self.assertNotIn("scheduler_elastic_resources", kwargs["extra_config"])
+
+    def test_elastic_conflicting_extra_config_marker_is_rejected(self):
         with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox") as native:
             with self.assertRaisesRegex(
-                UnsupportedBackendFeatureError, "elastic_resources"
+                ValueError, "scheduler_elastic_resources='false'"
             ):
-                self.backend.create(_spec(elastic_resources=True))
+                self.backend.create(_spec(
+                    elastic_resources=True,
+                    extra_config={"scheduler_elastic_resources": "false"}))
         native.assert_not_called()
+
+    def test_elastic_json_true_marker_is_accepted_not_stringified(self):
+        # the server contract accepts JSON bool true as well as "true":
+        # str() would turn True into "True" and wrongly reject it
+        native = MagicMock()
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox", native):
+            self.backend.create(_spec(
+                elastic_resources=True,
+                extra_config={"scheduler_elastic_resources": True}))
+        kwargs = native.call_args.kwargs
+        self.assertEqual(
+            kwargs["extra_config"].get("scheduler_elastic_resources"), "true")
+
+    def test_elastic_empty_string_marker_is_a_conflict_not_absence(self):
+        # key-presence distinguishes absent from illegal: an explicit empty
+        # string must be rejected, never silently replaced
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox") as native:
+            with self.assertRaisesRegex(
+                ValueError, "scheduler_elastic_resources=''"
+            ):
+                self.backend.create(_spec(
+                    elastic_resources=True,
+                    extra_config={"scheduler_elastic_resources": ""}))
+        native.assert_not_called()
+
+    def test_elastic_does_not_mutate_caller_extra_config(self):
+        original = {"unrelated": "value"}
+        frozen = MappingProxyType({**original})
+        native = MagicMock()
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox", native):
+            self.backend.create(_spec(elastic_resources=True,
+                                      extra_config=frozen))
+        self.assertNotIn("scheduler_elastic_resources", frozen)
+
+    def test_elastic_user_extra_config_without_marker_is_preserved(self):
+        native = MagicMock()
+        with patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox", native):
+            self.backend.create(_spec(
+                elastic_resources=True,
+                extra_config={"unrelated": "kept"}))
+        kwargs = native.call_args.kwargs
+        self.assertEqual(kwargs["extra_config"].get("unrelated"), "kept")
+        self.assertEqual(
+            kwargs["extra_config"].get("scheduler_elastic_resources"), "true")
 
     def test_kata_without_explicit_rootfs_passes_runtime_config_override(self):
         native = MagicMock()
