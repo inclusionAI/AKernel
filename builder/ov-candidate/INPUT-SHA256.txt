@@ -1,3 +1,46 @@
+CURRENT CANDIDATE ov19 (2026-09-23/24). Complete 349-file input manifest with
+SHA256 per file (four programs + their full loaded-library trees, sandboxd,
+wrappers, elasticity.env, install.sh, Dockerfile): INPUT-SHA256-ov19-full.txt.
+Key identities:
+
+a593ce0fb623a7395b681de5aeb9fdcce1d11d47d7614ab1075caea10d06f4de  /data/images/ov19-staging/function-agent/function_agent
+3e727bfe56cf39041a7ebfbe21d860cfef91452e030bbe544b2e7a8d4360de59  /data/images/ov19-staging/function-master/function_master
+79d3fa673ec3d80d95c7852d6fe33ce8508b1010dbd5a5cdb4dbc58ce3298a14  /data/images/ov19-staging/function-proxy/function_proxy
+2f1c16f666a47617683647a2b6b48f911198e7ad63d3b5f38a1a83d4bcabf193  /data/images/ov19-staging/runtime-manager/runtime_manager
+e456294519d662b9e17238f2d85894fc79af5d6f8ec1650336a8599de2c3b877  /data/images/ov19-staging/sandboxd/sandboxd
+826e100ba0db02a6d663253631cbb41ac64a93d584d0f5f1079e9321f59b1aeb8  /data/images/ov19-staging/sandboxd/sandbox-logger
+4af5c4b19230d8d3131f62f3520b77c6db2af71f019e944203b724ddb669c8c2  /data/images/ov19-staging/Dockerfile
+d23f5718ebd8474b1ec378fd5a7142224363dfc5f22a195a815eff4a30555ceb  /data/images/ov19-staging/scripts/install.sh
+
+Sources of the ov19 staged inputs (BM1 /data/images/ov19-staging):
+  function-proxy/     -> functionsystem @ 4b4b8a097fd2d66ab3b1a0bb2b03b81a4c32353d
+                         third-round Release (evidence release-resize3-verdict-independent-2106Z);
+                         the RUNNING /proc/236/exe equals the staged bytes
+                         (79d3fa67..., verified 2026-09-24)
+  function-agent/ function-master/ runtime-manager/ -> same Release build trees
+                         (complete lib/ sets recorded in the full manifest)
+  sandboxd/           -> unchanged sandboxd @ 537ca54a release build
+                         (e4562945... / 826e100b..., byte-identical to ov17)
+  wrapper-* elasticity.env install.sh -> byte-identical to the ov17 canonical
+                         config below
+  base                -> akernel-bm1/all-in-one:canon-8c53bdd-rebuild1
+                         (09-20, runsc pinned; unchanged since ov17)
+  chart inputs (current deployment) -> /data/chart/deploy/akernel:
+                         values.yaml aafb197c65948d37c5a1fbb99662451bb2dd2db45b7e753f9d4eefdc799a9741,
+                         Chart.yaml d2a435ab148bedd879f5ce18a899ddf74a397f435bebadc09c9bc9d5f122dc0e;
+                         helm revision 17 at deploy time (helm-ov19.log)
+Built image: canon-8c53bdd-ov19, K8s imageID
+  sha256:4a6b46e97ad16623305ddedee133b403f8877b9780b9f820f97ab5da2c32114c
+  (the image actually running on node akernel-node-l62cx).
+Runtime process audit: startup-ov19-verdict-independent-2112Z (nine target
+processes, 107 loaded-library paths, 61 distinct byte identities).
+Pending: distill-fs/runsc/Kata artifact pins and remaining dependency sources
+to be reconciled from the base-image build records at final freeze.
+
+---
+
+HISTORICAL ov17 (superseded by ov19 above; kept for the failure trail):
+
 62ac4f555d44c7a73df84515294afdd114f3ec556a53c383bb3bb4bddf73291d  /data/images/ov17-staging/config/wrapper-function-agent
 fc75d0f8d6530c906f0af50c6b2da8f682385f988a92c4e8a991fa8572217a28  /data/images/ov17-staging/config/wrapper-function-master
 61d4d84e28bfc6019b4dbc757d7ea06d186cbb417b8b76f527125214a4dd3ec9  /data/images/ov17-staging/config/wrapper-function-proxy
