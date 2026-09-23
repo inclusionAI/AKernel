@@ -65,6 +65,22 @@ compile and makes no local-build claim):
 sandboxd source (both ov17/ov19): 537ca54aa154e2f101c1e619829e614042b6226b
   (branch codex/bm1-memory-elasticity-20260909; runtime sources unchanged
   after the test-file-only format commit)
+RRT runtime (the sandbox process manager serving process.start/poll/wait):
+  running binary: official openYuanRong OBS release
+    https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/release/0.10.2rc4/linux/amd64/rrt-runtime-amd64
+    SHA256 38844a96e7b641e1209afd907fa25611dd5afbae77c763bd812191cb7e6348bf
+    (base build log ARG RRT_RUNTIME_SHA256; nine in-sandbox exe readings match)
+  inspected source (READ-ONLY, for the elastic exit -1 diagnosis): pinned
+  yuanrong mirror submodule initialized at
+  bdcceb012415dc1dd37eb2fffbe70ea512b254ef (github.com/openYuanrong-mirror/yuanrong),
+  api/rust/rrt-daemon/src/runtime/cmd.rs:183 — the background cmd_start
+  waiter maps ExitStatus::code() via unwrap_or(-1): a process KILLED BY A
+  SIGNAL has code()==None and is reported as -1 (entrypoint.rs:552 instead
+  encodes 128+signal — inconsistent paths). Observed consequence: PY_EXIT=0
+  with handle -1 means the wrapper SHELL died by signal (or wait() failed);
+  a bare -1 is NOT a real exit code. Whether the running 0.10.2rc4 release
+  binary corresponds byte-for-byte to the mirror's bdcceb01 source is NOT
+  yet established — no local rebuild, no candidate change.
 Pending at final freeze: distill-fs/Kata/virtiofsd artifact pins, the
 remaining inherited dependency sources from the base-image build records,
 and the canonical chart/working-values correspondence for
