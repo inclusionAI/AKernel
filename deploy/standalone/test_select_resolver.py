@@ -37,7 +37,11 @@ class SelectResolverTest(unittest.TestCase):
     def test_rejects_mapped_loopback_and_scoped_link_local(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "invalid.conf"
-            for address in ("::ffff:127.0.0.11", "fe80::1%eth0"):
+            for address in (
+                "::ffff:127.0.0.11",
+                "::ffff:169.254.1.1",
+                "fe80::1%eth0",
+            ):
                 with self.subTest(address=address):
                     source.write_text(f"nameserver {address}\n")
                     with self.assertRaisesRegex(ValueError, "another network namespace"):

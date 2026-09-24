@@ -37,7 +37,10 @@ def read_usable_resolver(path: Path) -> bytes:
             address.is_loopback
             or address.is_unspecified
             or address.is_link_local
-            or (mapped is not None and (mapped.is_loopback or mapped.is_unspecified))
+            or (
+                mapped is not None
+                and (mapped.is_loopback or mapped.is_unspecified or mapped.is_link_local)
+            )
             or (isinstance(address, ipaddress.IPv6Address) and address.scope_id)
         ):
             raise ValueError(f"resolver is local to another network namespace: {address}")
