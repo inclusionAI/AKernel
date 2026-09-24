@@ -30,6 +30,8 @@ enable_cache_in_stock_mode=true
 
 [plugin.runtime]
 image_lib_dir="/home/akernel/images"
+# When runc is enabled, start.sh replaces this with a non-loopback host-upstream
+# resolver file. Verify its reachability from a newly created runc sandbox.
 resolv_conf_path="/etc/resolv.conf"
 # A configured size creates a loop-backed bounded filestore. ext4 is used by
 # default; set filestore_xfs_enabled=true to select XFS.

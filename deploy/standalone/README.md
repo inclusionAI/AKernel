@@ -76,6 +76,18 @@ objects.
 `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
 starting the pooled-TAP runtimes. Runc retains its separate veth network path.
 
+### Runc DNS in a Docker-based node
+
+When runc is enabled, the launcher selects a host upstream resolver from `/run/systemd/resolve/resolv.conf` or `/etc/resolv.conf`, rejects loopback nameservers such as Docker's `127.0.0.11`, and copies the selected file into the standalone data directory before starting the node. Sandboxd then mounts that file into runc sandboxes. Docker's embedded resolver is valid in the node container network namespace but not in each sandbox's separate namespace. If neither default file contains a usable resolver, provide an absolute host file with reachable nameservers:
+
+```bash
+AKERNEL_ENABLE_RUNC=true \
+  AKERNEL_RUNC_RESOLV_CONF=/path/to/approved-upstream-resolv.conf \
+  ./start.sh
+```
+
+Use an approved internal resolver when private domains are needed; the launcher does not silently substitute a public DNS server. The generated file is a startup snapshot of the host configuration. To update it, drain sandboxes and restart standalone, then verify DNS from a new runc sandbox. Do not restart the node while a sandbox or nested VM is running.
+
 ### Network backend
 
 Standalone uses the iptables NAT backend by default. Nodes without the
