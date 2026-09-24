@@ -66,6 +66,7 @@ help:
 	@echo "  make print-env                     Print SDK environment exports"
 	@echo "  make sdk-check                     Lint, type-check, and test the Python SDK"
 	@echo "  make deploy-script-check           Check deployment script syntax"
+	@echo "  make deploy-standalone-test        Test standalone deployment helpers"
 	@echo "  make e2e                           Run the basic SDK e2e example"
 	@echo "  make destroy                       Destroy cloud resources"
 
@@ -180,6 +181,10 @@ deploy-script-check:
 	git ls-files -z -- 'deploy/**/*.py' | \
 		xargs -0 -r python3 -c \
 		'import pathlib, sys; [compile(pathlib.Path(path).read_bytes(), path, "exec") for path in sys.argv[1:]]'
+
+.PHONY: deploy-standalone-test
+deploy-standalone-test:
+	@python3 -m unittest discover -s deploy/standalone -p 'test_*.py'
 
 .PHONY: destroy
 destroy:
