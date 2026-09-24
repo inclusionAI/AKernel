@@ -30,8 +30,8 @@ enable_cache_in_stock_mode=true
 
 [plugin.runtime]
 image_lib_dir="/home/akernel/images"
-# When runc is enabled, start.sh replaces this with a non-loopback host-upstream
-# resolver file. Verify its reachability from a newly created runc sandbox.
+# Node resolver for the managed DNS proxy and non-runc runtimes. Keep this
+# independent of the runc-specific resolver below.
 resolv_conf_path="/etc/resolv.conf"
 # A configured size creates a loop-backed bounded filestore. ext4 is used by
 # default; set filestore_xfs_enabled=true to select XFS.
@@ -68,6 +68,7 @@ logger_binary="/usr/local/bin/sandbox-logger"
 state_root="/run/sandboxd/runc"
 shim_binary="/usr/local/bin/runc-shim"
 kvm_device="/dev/kvm"
+# AKERNEL_RUNC_RESOLVER
 
 # image-manager config. root holds image-manager runtime state and is wiped
 # on pod change; input configs live under /home/akernel/sandboxd/config/ so the

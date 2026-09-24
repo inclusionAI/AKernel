@@ -268,9 +268,9 @@ configure_network() {
         sed_args+=(
             -e 's|^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$|runc="/usr/local/bin/runc"|'
         )
-        if ! grep -q '^[[:space:]]*resolv_conf_path[[:space:]]*=' \
+        if ! grep -q '^[[:space:]]*# AKERNEL_RUNC_RESOLVER[[:space:]]*$' \
             "${CONFIG_DIR}/sandboxd_config.toml"; then
-            log_error "AKERNEL_ENABLE_RUNC requires resolv_conf_path in sandboxd_config.toml"
+            log_error "AKERNEL_ENABLE_RUNC requires the # AKERNEL_RUNC_RESOLVER marker in sandboxd_config.toml"
             exit 1
         fi
         local resolver_args=(--output "${DATA_DIR}/sandboxd/config/runc-resolv.conf")
@@ -279,7 +279,7 @@ configure_network() {
         fi
         python3 "${SCRIPT_DIR}/select-resolver.py" "${resolver_args[@]}"
         sed_args+=(
-            -e 's|^[[:space:]]*resolv_conf_path[[:space:]]*=.*|resolv_conf_path="/home/akernel/sandboxd/config/runc-resolv.conf"|'
+            -e 's|^[[:space:]]*# AKERNEL_RUNC_RESOLVER[[:space:]]*$|resolv_conf_path="/home/akernel/sandboxd/config/runc-resolv.conf"|'
         )
     fi
     if [[ -n "${AKERNEL_CHUNK_DB_SIZE}" ]]; then

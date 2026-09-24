@@ -3,7 +3,11 @@
 # Copyright (c) 2026 Ant Group Corporation.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""Select a host resolver usable from a standalone runc network namespace."""
+"""Select a host resolver usable from a standalone runc network namespace.
+
+Automatic selection is deliberately disabled for systemd-resolved hosts: its
+flat resolv.conf cannot represent per-link domain routing or VPN DNS policy.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +19,8 @@ import tempfile
 
 
 MAX_RESOLVER_BYTES = 1024 * 1024
-DEFAULT_SOURCES = (Path("/run/systemd/resolve/resolv.conf"), Path("/etc/resolv.conf"))
+SYSTEMD_RESOLVED_FILE = Path("/run/systemd/resolve/resolv.conf")
+DEFAULT_SOURCES = (Path("/etc/resolv.conf"),)
 
 
 def read_usable_resolver(path: Path) -> bytes:
@@ -50,9 +55,19 @@ def read_usable_resolver(path: Path) -> bytes:
     return content
 
 
-def select_resolver(explicit_source: Path | None, defaults=DEFAULT_SOURCES) -> bytes:
+def select_resolver(
+    explicit_source: Path | None,
+    defaults=DEFAULT_SOURCES,
+    systemd_resolved_file: Path = SYSTEMD_RESOLVED_FILE,
+) -> bytes:
     if explicit_source is not None:
         return read_usable_resolver(explicit_source)
+    if systemd_resolved_file.exists():
+        raise ValueError(
+            "systemd-resolved may use per-link or split DNS; automatic resolver "
+            "selection cannot preserve that policy. Set AKERNEL_RUNC_RESOLV_CONF "
+            "to an approved resolver file reachable from runc sandboxes"
+        )
     failures = []
     for source in defaults:
         try:

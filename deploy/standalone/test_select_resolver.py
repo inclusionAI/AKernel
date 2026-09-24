@@ -47,14 +47,30 @@ class SelectResolverTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "another network namespace"):
                         resolver.select_resolver(source)
 
-    def test_falls_back_from_systemd_stub(self):
+    def test_falls_back_from_local_stub(self):
         with tempfile.TemporaryDirectory() as directory:
             stub = Path(directory) / "stub.conf"
             upstream = Path(directory) / "upstream.conf"
             stub.write_text("nameserver 127.0.0.53\n")
             upstream.write_text("nameserver 100.100.2.136\n")
             self.assertEqual(
-                resolver.select_resolver(None, (stub, upstream)), upstream.read_bytes()
+                resolver.select_resolver(
+                    None, (stub, upstream), Path(directory) / "no-systemd-resolved"
+                ),
+                upstream.read_bytes(),
+            )
+
+    def test_requires_explicit_resolver_when_systemd_resolved_is_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            systemd = Path(directory) / "systemd-resolved.conf"
+            systemd.write_text("nameserver 192.0.2.53\n")
+            candidate = Path(directory) / "resolv.conf"
+            candidate.write_text("nameserver 192.0.2.53\n")
+            with self.assertRaisesRegex(ValueError, "split DNS"):
+                resolver.select_resolver(None, (candidate,), systemd)
+            self.assertEqual(
+                resolver.select_resolver(candidate, (candidate,), systemd),
+                candidate.read_bytes(),
             )
 
     def test_rejects_missing_nameserver(self):
