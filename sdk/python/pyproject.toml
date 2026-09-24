@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akernel-sdk"
-version = "0.1.6rc6"
+version = "0.1.6rc7"
 description = "Python SDK and CLI for AKernel remote sandboxes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -29,7 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "idna>=3,<4",
-    "openyuanrong-sandbox==0.10.2rc10",
+    "openyuanrong-sandbox==0.10.2rc11",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
 ]
