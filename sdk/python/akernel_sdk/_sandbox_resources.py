@@ -37,8 +37,8 @@ def normalize_xpu(value: str | None) -> str | None:
     if len(fields) != 3:
         raise ValueError("xpu must contain exactly three fields: type:model:count")
     xpu_type, model, count_text = (field.strip().lower() for field in fields)
-    if xpu_type != "gpu":
-        raise ValueError("xpu type must be gpu")
+    if xpu_type not in {"gpu", "npu"}:
+        raise ValueError("xpu type must be gpu or npu")
     if not model:
         raise ValueError("xpu model must be non-empty")
     if not _XPU_MODEL_PATTERN.fullmatch(model):

@@ -33,6 +33,7 @@ install_dragonfly_override=""
 chunk_db_size_override=""
 enable_runc_override=""
 schedule_placement_policy_override=""
+enable_ascend_override=""
 grafana_public_access_override=""
 grafana_admin_password_override=""
 iam_seed_hex_override=""
@@ -129,6 +130,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --schedule-placement-policy)
       schedule_placement_policy_override="$2"
+      shift 2
+      ;;
+    --enable-ascend)
+      enable_ascend_override="$2"
       shift 2
       ;;
     --grafana-public-access)
@@ -251,6 +256,7 @@ set_or_prompt enable_runc "Enable the optional runc runtime (true/false)" "false
 set_or_prompt schedule_placement_policy \
   "YuanRong schedule placement policy (binpack/spread)" "spread" \
   "${schedule_placement_policy_override}"
+set_or_prompt enable_ascend "Enable Ascend 310P3 or 910 A2/A3 NPUs (true/false)" "false" "${enable_ascend_override}"
 set_or_prompt grafana_public_access "Expose Grafana LoadBalancer (true/false)" "true" "${grafana_public_access_override}"
 set_or_prompt grafana_admin_password \
   "Grafana admin password (empty to generate)" "" \
@@ -262,6 +268,10 @@ install_monitor="$(normalize_bool "${install_monitor}")"
 install_dragonfly="$(normalize_bool "${install_dragonfly}")"
 enable_runc="$(normalize_bool "${enable_runc}")"
 schedule_placement_policy="$(normalize_schedule_placement_policy "${schedule_placement_policy}")"
+enable_ascend="$(normalize_bool "${enable_ascend}")"
+if [[ "${enable_ascend}" == "true" && "${enable_runc}" != "true" ]]; then
+  die "Ascend NPU support requires enable_runc=true"
+fi
 grafana_public_access="$(normalize_bool "${grafana_public_access}")"
 
 dir="$(state_dir "${env_name}")"
@@ -385,6 +395,7 @@ install_dragonfly = ${install_dragonfly}
 chunk_db_size     = "${chunk_db_size}"
 enable_runc       = ${enable_runc}
 schedule_placement_policy = "${schedule_placement_policy}"
+enable_ascend     = ${enable_ascend}
 EOF
     ;;
   huaweicloud)
@@ -441,6 +452,7 @@ install_dragonfly = ${install_dragonfly}
 chunk_db_size     = "${chunk_db_size}"
 enable_runc       = ${enable_runc}
 schedule_placement_policy = "${schedule_placement_policy}"
+enable_ascend     = ${enable_ascend}
 EOF
     ;;
 esac
@@ -464,6 +476,7 @@ INSTALL_DRAGONFLY=${install_dragonfly}
 CHUNK_DB_SIZE=${chunk_db_size}
 AKERNEL_ENABLE_RUNC=${enable_runc}
 SCHEDULE_PLACEMENT_POLICY=${schedule_placement_policy}
+AKERNEL_ENABLE_ASCEND=${enable_ascend}
 EOF
 
 chmod 600 "${tfvars_file}" "${config_file}"

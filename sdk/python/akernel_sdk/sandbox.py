@@ -230,9 +230,9 @@ class Sandbox:
             inherit_entrypoint: Start the OCI image's effective ENTRYPOINT and
                 CMD as the sandbox workload. Valid only with ``image``.
             xpu: Experimental whole-device accelerator request in
-                ``type:model:count`` format. Currently only exact-model NVIDIA
-                GPU requests are supported. The backend validates runtime
-                compatibility.
+                ``type:model:count`` format. Exact-model NVIDIA GPU and Ascend
+                NPU requests are supported; the backend validates runtime and
+                node compatibility.
             storage_mb: Experimental writable root filesystem quota in MiB.
                 When omitted, the configured default is used. Explicit quotas
                 are validated against the selected runtime by the backend.
