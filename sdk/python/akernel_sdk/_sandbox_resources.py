@@ -72,6 +72,21 @@ def validate_storage_mb(value: int | None) -> None:
         raise ValueError(f"storage_mb must not exceed {MAX_STORAGE_MB}")
 
 
+def validate_storage_limit_mb(value: int, storage_mb: int | None = None) -> None:
+    """Validate the requested hard writable-layer quota in MiB."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("storage_limit_mb must be an integer")
+    if value < 0:
+        raise ValueError("storage_limit_mb must not be negative")
+    if value > MAX_STORAGE_MB:
+        raise ValueError(f"storage_limit_mb must not exceed {MAX_STORAGE_MB}")
+    if storage_mb is not None and value and value < storage_mb:
+        raise ValueError(
+            "storage_limit_mb must be 0 or greater than or equal to storage_mb"
+        )
+
+
 def storage_bytes(value: int) -> float:
     """Convert a validated MiB quota to YuanRong's byte-valued scalar."""
 
