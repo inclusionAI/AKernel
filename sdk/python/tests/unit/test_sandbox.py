@@ -77,6 +77,7 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(dict(spec.env), {})
         self.assertIsNone(spec.xpu)
         self.assertIsNone(spec.storage_mb)
+        self.assertEqual(spec.storage_limit_mb, 0)
         self.assertFalse(spec.failover)
         self.assertFalse(spec.inherit_entrypoint)
         self.assertIsNone(spec.network_policy)
@@ -319,6 +320,34 @@ class SandboxTest(unittest.TestCase):
         for value in (True, 0, -1, 1.5):
             with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
                 Sandbox(storage_mb=value)
+        self.backend.create.assert_not_called()
+
+    def test_storage_limit_is_delegated_to_backend(self):
+        sandbox = Sandbox(storage_mb=4096, storage_limit_mb=30720)
+        spec = self.backend.create.call_args.args[0]
+        self.assertEqual(spec.storage_mb, 4096)
+        self.assertEqual(spec.storage_limit_mb, 30720)
+        sandbox.kill()
+
+    def test_storage_limit_can_be_used_as_the_only_storage_value(self):
+        sandbox = Sandbox(storage_limit_mb=30720)
+        spec = self.backend.create.call_args.args[0]
+        self.assertIsNone(spec.storage_mb)
+        self.assertEqual(spec.storage_limit_mb, 30720)
+        sandbox.kill()
+
+    def test_storage_limit_validation(self):
+        invalid = (
+            (True, TypeError),
+            (-1, ValueError),
+            (1.5, TypeError),
+            (False, TypeError),
+        )
+        for value, error_type in invalid:
+            with self.subTest(value=value), self.assertRaises(error_type):
+                Sandbox(storage_limit_mb=value)
+        with self.assertRaisesRegex(ValueError, "greater than or equal"):
+            Sandbox(storage_mb=4096, storage_limit_mb=2048)
         self.backend.create.assert_not_called()
 
     def test_block_network_policy_is_passed_to_backend(self):

@@ -299,6 +299,12 @@ class OpenYuanRongSdkBackend:
         _impl.ensure_initialized()
 
     def create(self, spec: SandboxSpec) -> BackendSession:
+        if spec.storage_limit_mb:
+            raise UnsupportedBackendFeatureError(
+                "Backend 'openyuanrong-sdk' does not support "
+                "storage_limit_mb. Use the default 'openyuanrong-sandbox' "
+                "backend."
+            )
         if spec.inherit_entrypoint:
             raise UnsupportedBackendFeatureError(
                 "Backend 'openyuanrong-sdk' does not support inheriting image "

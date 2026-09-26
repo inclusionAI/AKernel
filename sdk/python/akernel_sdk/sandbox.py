@@ -28,7 +28,11 @@ from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_e
 from ._backends.base import BackendSession, SandboxSpec
 from ._backends.registry import load_backend
 from ._dockerfile_launch import DockerfileLaunch
-from ._sandbox_resources import normalize_xpu, validate_storage_mb
+from ._sandbox_resources import (
+    normalize_xpu,
+    validate_storage_limit_mb,
+    validate_storage_mb,
+)
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
 from .pty import Pty
@@ -196,6 +200,7 @@ class Sandbox:
         inherit_entrypoint: bool = False,
         xpu: str | None = None,
         storage_mb: int | None = None,
+        storage_limit_mb: int = 0,
         network_policy: NetworkPolicy | None = None,
         dockerfile: DockerfileLaunch | None = None,
         extra_config: Mapping[str, object] | None = None,
@@ -236,6 +241,11 @@ class Sandbox:
             storage_mb: Experimental writable root filesystem quota in MiB.
                 When omitted, the configured default is used. Explicit quotas
                 are validated against the selected runtime by the backend.
+            storage_limit_mb: Optional hard writable root filesystem limit in
+                MiB. Zero follows ``storage_mb`` or the cluster default. A
+                positive limit may exceed the scheduling reservation in
+                ``storage_mb``; when that request is omitted, the limit is
+                reserved for scheduling by the backend.
             network_policy: Optional creation-time network policy. Omitting it
                 leaves sandbox networking unrestricted.
             dockerfile: Supported Dockerfile direct-launch configuration.
@@ -278,6 +288,7 @@ class Sandbox:
             raise ValueError("runtime must be a non-empty string")
         normalized_xpu = normalize_xpu(xpu)
         validate_storage_mb(storage_mb)
+        validate_storage_limit_mb(storage_limit_mb, storage_mb)
         if network_policy is not None and not isinstance(network_policy, NetworkPolicy):
             raise TypeError("network_policy must be a NetworkPolicy or None")
         _validate_integer("cpu", cpu, minimum=1)
@@ -380,6 +391,7 @@ class Sandbox:
             node_id=node_id,
             xpu=normalized_xpu,
             storage_mb=storage_mb,
+            storage_limit_mb=storage_limit_mb,
             network_policy=(
                 None
                 if network_policy is None or network_policy.is_empty

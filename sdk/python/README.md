@@ -107,6 +107,7 @@ Sandbox(
     *,
     xpu: str | None = None,
     storage_mb: int | None = None,
+    storage_limit_mb: int = 0,
     network_policy: NetworkPolicy | None = None,
     dockerfile: DockerfileLaunch | None = None,
     extra_config: Mapping[str, object] | None = None,
@@ -128,17 +129,21 @@ supported. The bundled backend currently requires the gVisor `runsc` runtime
 and a node configured for gVisor nvproxy. Runtime compatibility is validated
 by the backend rather than the SDK.
 
-Set the writable root filesystem quota in MiB:
+Set the scheduling reservation and writable root filesystem limit in MiB:
 
 ```python
-with Sandbox(storage_mb=20 * 1024) as sandbox:
+with Sandbox(storage_mb=4 * 1024, storage_limit_mb=20 * 1024) as sandbox:
     print(sandbox.commands.run("df -h /").stdout)
 ```
 
-The bundled backend currently requires `runsc` for an explicit `storage_mb`
+`storage_mb` is the storage amount reserved for scheduling. The optional
+`storage_limit_mb` sets the hard writable-root quota independently; zero
+follows `storage_mb`, or the cluster default when the request is omitted. If
+only a positive limit is given, the backend reserves that limit for scheduling.
+The bundled backend currently requires `runsc` for an explicit writable storage
 quota and uses sandboxd's disk-backed XFS filestore. Runtime compatibility is
-validated by the backend. When `storage_mb` is omitted, sandboxd retains its
-configured default 10 GiB memory-backed writable overlay. See
+validated by the backend. If `storage_limit_mb` is not supported by the
+selected backend, a nonzero value fails explicitly. See
 [`examples/gpu_sandbox.py`](./examples/gpu_sandbox.py) and
 [`examples/storage_sandbox.py`](./examples/storage_sandbox.py).
 
