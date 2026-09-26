@@ -363,6 +363,12 @@ with Sandbox(cpu=2000, memory=4096) as sb:
     print(result.stdout)
 ```
 
+`storage_mb` sets the storage scheduling quota, while `storage_limit_mb` sets
+the actual writable-root hard limit. A zero limit follows the scheduling
+quota or cluster default. A positive limit without an explicit scheduling
+quota also reserves that amount for scheduling. Keep this distinction in SDK
+documentation and examples; see `sdk/python/README.md` for runtime support.
+
 Same-node failover and explicit rollback retain the logical sandbox identity:
 
 ```python

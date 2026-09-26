@@ -66,6 +66,7 @@ def _spec(**overrides):
         "node_id": None,
         "xpu": None,
         "storage_mb": None,
+        "storage_limit_mb": 0,
         "network_policy": None,
         "extra_config": MappingProxyType({}),
     }
@@ -202,6 +203,36 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
 
         self.assertEqual(sandbox_type.call_args.kwargs["runtime"], "runsc")
         self.assertIsNone(sandbox_type.call_args.kwargs["rootfs"])
+        self.assertEqual(sandbox_type.call_args.kwargs["storage_limit_mb"], 0)
+
+    def test_storage_limit_is_forwarded_to_native_sdk(self):
+        native = MagicMock()
+        native.id = "limited-storage"
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox,
+            "Sandbox",
+            return_value=native,
+        ) as sandbox_type:
+            self.backend.create(
+                _spec(storage_mb=4096, storage_limit_mb=30720)
+            )
+
+        self.assertEqual(sandbox_type.call_args.kwargs["storage_mb"], 4096)
+        self.assertEqual(sandbox_type.call_args.kwargs["storage_limit_mb"], 30720)
+
+    def test_storage_limit_requires_native_sdk_support(self):
+        class OldSandbox:
+            def __init__(self, image=None):
+                self.id = "old-sdk"
+
+        with (
+            patch.object(openyuanrong_sandbox.yr_sandbox, "Sandbox", OldSandbox),
+            self.assertRaisesRegex(
+                UnsupportedBackendFeatureError,
+                "does not support storage_limit_mb",
+            ),
+        ):
+            self.backend.create(_spec(storage_limit_mb=30720))
 
     def test_extra_config_is_forwarded_to_native_sdk(self):
         native = MagicMock()
@@ -739,6 +770,17 @@ class OpenYuanRongSdkBackendTest(unittest.TestCase):
             ),
         ):
             self.backend.create(_spec(failover=True))
+        build_options.assert_not_called()
+
+    def test_storage_limit_is_explicitly_unsupported(self):
+        with (
+            patch.object(openyuanrong_sdk._impl, "build_options") as build_options,
+            self.assertRaisesRegex(
+                UnsupportedBackendFeatureError,
+                "does not support storage_limit_mb",
+            ),
+        ):
+            self.backend.create(_spec(storage_limit_mb=30720))
 
         build_options.assert_not_called()
 
