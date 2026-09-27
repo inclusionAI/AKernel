@@ -1,3 +1,42 @@
+CURRENT CANDIDATE ov21 (2026-09-27, ASSEMBLED, image ID
+sha256:517429ddd3fa1f50b78fa23029eb5ab755e7eaa34ab26356981e2accd7f15402,
+NOT deployed; pending deployment-byte review). Complete 352-file input
+manifest: INPUT-SHA256-ov21-full.txt (manifest SHA256
+f47637d1a32ed56d3248268b395df6b11ed55470be4de05b5756d77f13b11bc9).
+
+Differences from the preserved first-round ov20 (4fab35061aee, whose
+recipe had the committed diff-control-flow defect and whose rootfs came
+from manual steps — kept as-is, not overwritten):
+- yr-runtime-rootfs.img is the output of the COMMITTED, executable
+  remake-rrt-rootfs.sh (platform commit
+  1f60219f65f4e9113904e7ce57d98bfed5057a48): SHA256
+  79e3c4e14a43960856caf7429989b3ac1e8f97748b5d68e019348fbf553e669a,
+  content-identical to ov20's manual 2208e228… (erofs embeds a build
+  timestamp; byte-equality across runs is impossible and not claimed).
+  Same single-file delta vs the fixed old rootfs aef38c4a…: only
+  usr/local/bin/rrt-runtime 38844a96… -> 19b28bae….
+- scripts/yr_node_bootstrap.sh added (SHA256
+  4f9b952211d5a2f3bae19b7159fee4b9e41e6056219c29da4e742afc99664c39):
+  canon bootstrap (1861bdabe39d03881bae0f74df657ebd906ff22672e7e752eb65918a61cfd619)
+  plus the EXISTING CLI parameter --fs_log_level DEBUG on the node-branch
+  yr start — makes the collector's DEBUG 503 line visible in the merged
+  function_proxy log. Node-scoped; canon builder file untouched.
+- Dockerfile FROM pins the base RepoDigest
+  akernel-bm1/all-in-one@sha256:f34b68d262639da84bc6617f7338b0462a944dc3d3cc3aabfa2189b1c856130e
+  instead of the mutable rebuild1 tag.
+- Unchanged, byte-for-byte from ov20 staging: the four functionsystem
+  1bfe1bb9 third-round Release binaries, their 124-entry lib trees,
+  sandboxd 12fcc53 artifacts, wrappers, elasticity.env, install.sh.
+
+Effective-config wiring riding the chart (deploy-time, this repo):
+charts/core/values.yaml [plugin.node_resource] now sets
+enable_observation_fault=true and
+observation_fault_path=/home/akernel/sandboxd/observation-fault.json
+(facility compiled default-off in sandboxd 12fcc53). Deployment audit
+must confirm the rendered config carries both fields and that the proxy
+log actually contains DEBUG lines.
+
+--------------------------------------------------------------------------
 CURRENT CANDIDATE ov20 (2026-09-27, ASSEMBLED, image built 4fab35061aee,
 NOT deployed; pending deployment-byte review). Complete 351-file input
 manifest with SHA256 per file (four programs + their full loaded-library
