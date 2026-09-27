@@ -1,3 +1,80 @@
+CURRENT CANDIDATE ov20 (2026-09-27, ASSEMBLED, image built 4fab35061aee,
+NOT deployed; pending deployment-byte review). Complete 351-file input
+manifest with SHA256 per file (four programs + their full loaded-library
+trees, sandboxd, wrappers, elasticity.env, install.sh, Dockerfile, and the
+remade yr-runtime-rootfs.img): INPUT-SHA256-ov20-full.txt
+(manifest SHA256 0393000800b686160a41e5b4eaa7147c04cd7a585170691f726695b8fbc74d29).
+Key identities:
+
+743f18ee833889f44a0a2d2a993843d39db82c2b174605c7761c338e5c6cb9af  /data/images/ov20-staging/function-proxy/function_proxy
+6c04c0f4cee0d5e9e9fa2de736b2cf3ba2fb3eb2a3f749960c3fb87cc8718ebb  /data/images/ov20-staging/function-master/function_master
+2f1c16f666a47617683647a2b6b48f911198e7ad63d3b5f38a1a83d4bcabf193  /data/images/ov20-staging/runtime-manager/runtime_manager
+a593ce0fb623a7395b681de5aeb9fdcce1d11d47d7614ab1075caea10d06f4de  /data/images/ov20-staging/function-agent/function_agent
+875a32fc27ca640ba34125b1670b368e11d56956023e1c7bf7272af96811eb42  /data/images/ov20-staging/sandboxd/sandboxd
+e916b639514957c8f9a5b0a0a37dcf78d6e8210c2f8ecda267916a61d695f1b1  /data/images/ov20-staging/sandboxd/sandbox-logger
+2208e228c480282482a1a5726b42490ed15206dca4b23ab6d36cedca6f341325  /data/images/ov20-staging/yr-runtime-rootfs.img
+
+Sources of the ov20 staged inputs (BM1 /data/images/ov20-staging):
+  function-proxy/ function-master/ runtime-manager/ function-agent/
+      binaries -> functionsystem @ 1bfe1bb981e5699dbac1e9659e229a8fc0730bab
+      third-round Release (evidence
+      docs/checks/evidence/20260927T0335Z-baseline-supervision/
+      fs-release-1bfe1bb9-third-verdict.json; container 8e156d11f266, rc 0).
+      runtime_manager and function_agent are byte-identical to the ov19
+      staging copies (same SHAs); function_proxy and function_master
+      changed with the structured rejection-log + branch-carried reason
+      source delta.
+  */lib/ (124 entries each) -> inherited byte-for-byte from ov19 staging.
+      Verified for ov20: all four NEW binaries have DT_NEEDED/RPATH sets
+      identical to the old ones (199 entries compared), and every one of
+      the 84 regular files in the staged lib tree is byte-identical in the
+      1bfe1bb9 build output (83 by name in the build tree; libyaml_tool.so
+      additionally matches the stripped install output
+      functionsystem/output/lib/libyaml_tool.so at 90a04321d0c877ffcb…).
+  sandboxd/ -> sandboxd @ 12fcc53e57f50df7daad869b91d0ccaba9275e3a
+      (accepted release artifacts, go1.25.5; sandboxd dynamically linked
+      against libc.so.6 with interpreter /lib64/ld-linux-x86-64.so.2,
+      sandbox-logger static — see
+      sandboxd-release-12fcc53-toolchain-independent.json; glibc
+      compatibility inherited from the canon-8c53bdd-rebuild1 base).
+  yr-runtime-rootfs.img -> remade from the FIXED existing rootfs
+      aef38c4aba794559a01ec7efa21de286c321a67ae1b20217424b3c664ff5e2d8
+      (identical bytes in akernel-runtime:canon-8c53bdd-rebuild1
+      sha256:2bfa19cf4661… and at /home/yuanrong/yr-runtime-rootfs.img in
+      the all-in-one base f34b68d26263) by replacing EXACTLY ONE file,
+      usr/local/bin/rrt-runtime
+        38844a96e7b641e1200afd907fa25611dd5afbae77c763bd812191cb7e6348bf
+     -> 19b28bae612959912243ff01c83256985a891eb1b87c685d86390672e4b2a615
+      (static musl, x86-64, no INTERP/NEEDED). Recipe:
+      remake-rrt-rootfs.sh (content-level diff proven both before mkfs and
+      after remounting the produced image; erofs-utils 1.7.1-1build2 inside
+      ubuntu:24.04@sha256:008173c2…, mkfs.erofs -E noinline_data + fsck.erofs
+      per builder/runtime.Dockerfile).
+      RRT source: 6640371feb9abecde918bad8bf23175c73209505 on branch
+      scheduler/rrt-wait-diagnosis (worktree components/AKernel/src/yuanrong).
+      This is a DIAGNOSTIC candidate identity — the platform gitlink for
+      src/yuanrong stays at bdcceb012415dc1dd37eb2fffbe70ea512b254ef and
+      is NOT advanced to the diagnostic branch.
+  config/ scripts/ -> inherited byte-for-byte from ov19 staging (verified
+      against INPUT-SHA256-ov19-full.txt).
+  Base image: akernel-bm1/all-in-one:canon-8c53bdd-rebuild1
+      (image ID f34b68d26263, RepoDigest sha256:f34b68d2…).
+
+Built image: akernel-bm1/all-in-one:canon-8c53bdd-ov20 (image ID
+4fab35061aee, legacy docker build on BareMetal1 2026-09-27). In-image
+verification: /home/yuanrong/yr-runtime-rootfs.img == 2208e228…,
+/opt/akernel-scheduler/* four binaries == staged SHAs,
+/usr/local/bin/sandboxd == 875a32fc…, wrapper installed at the YR bin path
+with the .wheel original preserved. NOT loaded into kind, NOT deployed.
+
+Open for this candidate: enable_observation_fault/observation_fault_path
+wiring in the EFFECTIVE node config at deployment time (the facility is
+compiled default-off), C++ DEBUG log visibility for the collector 503
+line, deployment-byte audit of all roles, and the pre-execution review of
+the unknown-observation driver before any physical case.
+
+Previous candidates and failures remain recorded below and in git history.
+--------------------------------------------------------------------------
 CURRENT CANDIDATE ov19 (2026-09-23/24). Complete 349-file input manifest with
 SHA256 per file (four programs + their full loaded-library trees, sandboxd,
 wrappers, elasticity.env, install.sh, Dockerfile): INPUT-SHA256-ov19-full.txt.

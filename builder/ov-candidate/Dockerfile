@@ -1,4 +1,5 @@
 FROM akernel-bm1/all-in-one:canon-8c53bdd-rebuild1
+COPY yr-runtime-rootfs.img /home/yuanrong/yr-runtime-rootfs.img
 COPY function-proxy /opt/akernel-scheduler/function-proxy
 COPY function-master /opt/akernel-scheduler/function-master
 COPY runtime-manager /opt/akernel-scheduler/runtime-manager
