@@ -7,11 +7,14 @@
 # rootfs, config, bootstrap, all four functionsystem program dirs — is
 # inherited unchanged.
 #
-# Startup-chain evidence: the .so ships in the image (mtime = image build
-# time, Sep 20) and is NOT written at pod start; the frontend goruntime
-# loads it via YR_FUNCTION_LIB_PATH=/home/yuanrong/faas/faasfrontend/ and
-# plugin file offset 0x20c in maps matches the on-disk file — no zip
-# rewrite, no other directory to patch. faasfrontend_meta.json is
-# descriptive metadata; the meta is not consulted by the loader path.
+# Startup-chain observations (scoped, not guarantees): the live frontend
+# goruntime maps /home/yuanrong/faas/faasfrontend/faasfrontend.so (the
+# 00:20c field in maps is the DEVICE number, not a file offset) and its
+# YR_FUNCTION_LIB_PATH points at this exact directory; the on-disk mtime
+# matches the image build time. These prove the RUNNING process uses this
+# path — they do NOT alone prove no startup rewrite (a cp can preserve
+# mtime); the startup/prepare chain still needs reading, and after any
+# deployment the actually-mapped bytes must be re-verified against the
+# full 6224dd7c... SHA.
 FROM akernel-bm1/all-in-one@sha256:081dd48c2886bf70255bc28d459b70edfbb6c9ad6a525fc144c174f939921e27
 COPY faasfrontend.so /home/yuanrong/faas/faasfrontend/faasfrontend.so
