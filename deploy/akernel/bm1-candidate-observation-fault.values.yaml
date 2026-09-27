@@ -1,8 +1,14 @@
-# BareMetal1 scheduler-line candidate overlay (helm -f).
-# Enables the DEFAULT-OFF sandboxd observation fault facility for the
-# unknown-observation physical cases on this deployment only. Core chart
-# defaults stay off/omitted. sandboxd.config is a single string value, so
-# the whole config is repeated here with the two fields added.
+# BareMetal1 scheduler-line candidate overlay (helm -f, applied AFTER the
+# existing deployment values). Enables the DEFAULT-OFF sandboxd
+# observation fault facility for the unknown-observation physical cases
+# on this deployment only; charts/core/values.yaml stays default-off.
+#
+# sandboxd.config is a single string value, so this overlay repeats the
+# WHOLE config. Base = the deployment's EXISTING effective string
+# (captured from helm get values rev 17; it differs from the repo
+# default by exactly one line, memory_high_ratio=0.9, which is
+# therefore preserved) with the two fields added under
+# [plugin.node_resource].
 core:
   node:
     config:
@@ -29,6 +35,7 @@ core:
           interface_cache_size=1000
           cgroup_root_name="/akernel"
           max_instance_num=1000
+          memory_high_ratio=0.9
           enable_cache_in_stock_mode=true
           
           [plugin.runtime]
@@ -90,7 +97,8 @@ core:
           provider="kubernetes"
           sock_path="/var/run/resource.sock"
           # scheduler-line candidate: /resource observation fault control
-          # (sandboxd test facility, DEFAULT-OFF in code; this overlay is the
-          # ONLY place it is enabled, for BareMetal1 unknown-observation cases)
+          # (sandboxd test facility, DEFAULT-OFF in code and in chart defaults;
+          # this overlay is the only place it is enabled, for BareMetal1
+          # unknown-observation physical cases)
           enable_observation_fault=true
           observation_fault_path="/home/akernel/sandboxd/observation-fault.json"
