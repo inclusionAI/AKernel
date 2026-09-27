@@ -1,0 +1,96 @@
+# BareMetal1 scheduler-line candidate overlay (helm -f).
+# Enables the DEFAULT-OFF sandboxd observation fault facility for the
+# unknown-observation physical cases on this deployment only. Core chart
+# defaults stay off/omitted. sandboxd.config is a single string value, so
+# the whole config is repeated here with the two fields added.
+core:
+  node:
+    config:
+      sandboxd:
+        config: |
+          rootDir="/home/akernel/sandboxd/root"
+          storeDir="/home/akernel/sandboxd/store"
+          
+          [plugin]
+          disable_tcp_service=false
+          stream_idle_timeout=""
+          stream_server_address=""
+          stream_server_port=""
+          
+          [plugin.network]
+          ip_range="10.88.0.1/16"
+          nat_backend="iptables"
+          enable_network_acl=true
+          
+          [plugin.resource]
+          cgroup_cache_size=800
+          pids_max=4096
+          netns_cache_size=1000
+          interface_cache_size=1000
+          cgroup_root_name="/akernel"
+          max_instance_num=1000
+          enable_cache_in_stock_mode=true
+          
+          [plugin.runtime]
+          image_lib_dir="/home/akernel/images"
+          resolv_conf_path="/etc/resolv_akernel.conf"
+          # A configured size creates a loop-backed bounded filestore. ext4 is
+          # used by default; set filestore_xfs_enabled=true to select XFS.
+          filestore_dir="/home/akernel/filestore"
+          filestore_dir_size="200G"
+          filestore_xfs_enabled=false
+          loop_device_dir="/dev"
+          overlay_tmpfs_size="10G"
+          
+          [plugin.runtime.basic_spec]
+          runsc="/home/akernel/images/config.json"
+          runc=""
+          firecracker="/home/akernel/images/config.json"
+          
+          [plugin.runtime.runtime_binary]
+          runsc="/usr/local/bin/runsc"
+          kata="/usr/local/bin/containerd-shim-kata-v2"
+          firecracker="/usr/local/bin/firecracker"
+          # AKERNEL_RUNTIME_RUNC
+          
+          [plugin.runtime.firecracker]
+          virtiofs_enabled=true
+          virtiofsd_path="/usr/local/bin/virtiofsd"
+          writable_io_engine="AsyncDirect"
+          writable_cache_type="Writeback"
+          
+          [plugin.runtime.kata]
+          config_path="/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-dragonball.toml"
+          kvm_device="/dev/kvm"
+          dan_config_dir="/run/kata-containers/dans"
+          logger_binary="/usr/local/bin/sandbox-logger"
+          
+          [plugin.runtime.runc]
+          state_root="/run/sandboxd/runc"
+          shim_binary="/usr/local/bin/runc-shim"
+          kvm_device="/dev/kvm"
+          
+          # image-manager config. root holds image-manager runtime state
+          # (daemons/, mount_records.db) and is wiped on pod change; input
+          # configs live under /home/akernel/sandboxd/config/ so the wipe never
+          # hits the read-only bind-mounted config files.
+          [plugin.image]
+          root="/home/akernel/sandboxd/image_manager"
+          distill_fs_bin="/usr/local/bin/distill_fs"
+          oss_template="/home/akernel/sandboxd/config/oss.json"
+          nydus_template="/home/akernel/sandboxd/config/registry.json"
+          nydus_suffix="_nydus_v3"
+          oss_auths_path="/home/akernel/sandboxd/config/oss_auths.json"
+          registry_auths_path="/home/akernel/sandboxd/config/registry_auths.json"
+          cgroup_memory_limit="64GiB"
+          
+          # node-resource config. sock_path matches what yuanrong's C++
+          # external_system_collector reads, so it must stay /var/run/...
+          [plugin.node_resource]
+          provider="kubernetes"
+          sock_path="/var/run/resource.sock"
+          # scheduler-line candidate: /resource observation fault control
+          # (sandboxd test facility, DEFAULT-OFF in code; this overlay is the
+          # ONLY place it is enabled, for BareMetal1 unknown-observation cases)
+          enable_observation_fault=true
+          observation_fault_path="/home/akernel/sandboxd/observation-fault.json"
