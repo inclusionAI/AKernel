@@ -42,7 +42,15 @@ resolve_node_ip() {
 
 YR_NODE_IP="$(resolve_node_ip)"
 echo "Using ${YR_NODE_IP} as the YuanRong node address"
-CHECKPOINT_DIR="/home/akernel/checkpoints"
+# sandboxd (internal/server/checkpoint.go resolveManagedCheckpointDir) only
+# accepts checkpoint directories BELOW <rootDir>/checkpoints =
+# /home/akernel/sandboxd/root/checkpoints; the historical
+# /home/akernel/checkpoints value made every CheckpointIfGeneration fail
+# with "checkpoint directory must be below ..." (first physical ov24b
+# Plan A case, 2026-09-28). The deploy scripts must point --checkpoint_dir
+# at a subdirectory of that managed root, per the source comment in
+# sandboxd_checkpoint_orchestrator.cpp:114-115.
+CHECKPOINT_DIR="/home/akernel/sandboxd/root/checkpoints"
 mkdir -p "${CHECKPOINT_DIR}"
 
 # Select the legacy etcd registry or the FunctionMaster HTTP provider.
