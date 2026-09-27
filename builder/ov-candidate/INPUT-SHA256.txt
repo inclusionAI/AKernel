@@ -1,3 +1,37 @@
+CURRENT CANDIDATE ov22 (2026-09-27, ASSEMBLED FROM THE COMMITTED ARCHIVE,
+NOT deployed; pending deployment-byte review). Image ID
+sha256:55749a0201641ec8326b51e2658c8075e0a9bd7cabf59b5b83e08d5d78ac190a.
+
+Formal provenance chain (fixing the earlier workspace-file flow):
+- platform commit 8fe4255eeef49ab3a8b27233d073a3e6afd1581d archived with
+  git archive (archive SHA256
+  235fac56833ae773bc3e752c96c0f997b604091cf7c3ad468141629547386b27),
+  extracted on BareMetal1 at /data/images/platform-archive-8fe4255;
+  recipe files verified byte-identical to the commit.
+- yr-runtime-rootfs.img is the FORMAL output of the archived
+  remake-rrt-rootfs.sh in a dedicated directory (/data/assembly-rrt-rootfs/
+  formal-8fe4255), rc 0: SHA256
+  290f866350793d75e6a5c92110e56febe590266d40b1401de61f8de759565575.
+  Content = the exact single-file delta vs the fixed old rootfs aef38c4a…
+  (rrt-runtime 38844a96… -> 19b28bae…), machine-verified pre-mkfs and
+  post-mount. Earlier runs (preflight 79e3c4e1…, manual 2208e228…) are
+  content-identical and preserved; erofs build timestamps make byte-
+  equality across runs impossible.
+- bootstrap overlay + Dockerfile + BM1 values overlay taken from the same
+  archive (bootstrap 4f9b9522… with --fs_log_level DEBUG, node branch).
+- Observation-fault enablement is DEFAULT-OFF in charts/core/values.yaml
+  (restored byte-identical to pre-1f60219); it is enabled ONLY via the
+  committed deployment overlay
+  deploy/akernel/bm1-candidate-observation-fault.values.yaml (render-
+  verified: with overlay both fields present in the ConfigMap; without,
+  zero occurrences).
+- Manifest INPUT-SHA256-ov22-full.txt: 351 content entries, manifest
+  files themselves EXCLUDED (the ov21 manifest had a self-inclusion
+  defect — its own line carried a stale hash; kept as-is in git history),
+  generated via a temp file OUTSIDE the staging dir. Manifest SHA256
+  31ee0a59eae40e51ca1938b309f3e89fe8a722b31249ad2380f6bb972de05397.
+
+--------------------------------------------------------------------------
 CURRENT CANDIDATE ov21 (2026-09-27, ASSEMBLED, image ID
 sha256:517429ddd3fa1f50b78fa23029eb5ab755e7eaa34ab26356981e2accd7f15402,
 NOT deployed; pending deployment-byte review). Complete 352-file input
