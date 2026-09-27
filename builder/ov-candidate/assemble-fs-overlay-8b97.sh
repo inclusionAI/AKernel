@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assemble the fs-overlay-8b97 build context from the FORMAL Release
-# output of functionsystem commit 8b977422d5fe794e21d20d32d2dc3ed08581.
+# output of functionsystem commit 8b97a668c70e92dc1b9c1babff1083bfb1a971a9.
 #
 # The formal output is FLAT (bin/ + lib/): regular files PLUS symlinks (38 in
 # the 8b97 release). This script materializes the verified four-program
@@ -38,7 +38,7 @@ OUT_DIR="${1:?usage: assemble-fs-overlay-8b97.sh <formal-output-dir> <dest-dir> 
 DEST_DIR="${2:?missing dest-dir}"
 OUT_SHA="${3:?missing output-files.sha}"
 
-readonly COMMIT=8b977422d5fe794e21d20d32d2dc3ed08581
+readonly COMMIT=8b97a668c70e92dc1b9c1babff1083bfb1a971a9
 readonly PROGS=(
   "function-proxy:function_proxy"
   "function-master:function_master"
