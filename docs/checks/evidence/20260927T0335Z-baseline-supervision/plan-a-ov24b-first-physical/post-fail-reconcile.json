@@ -1,0 +1,27 @@
+{
+ "akernel-node-grb4n": {
+  "sandboxes": 0
+ },
+ "akernel-node-r6h2s": {
+  "sandboxes": 0
+ },
+ "akernel-node-wtnzv": {
+  "sandboxes": 0
+ },
+ "budget": {
+  "instance_count": 0,
+  "entries": []
+ },
+ "snapshot_store_all": [],
+ "proxy_identity": {
+  "status": "ok",
+  "exe_sha": "8b9ca50b5d42df1050c5b8d3e737b3df3f3fc22cb103777702249acefa44089e",
+  "processes": [
+   {
+    "pid": "237",
+    "starttime": "79283465",
+    "exe_sha": "8b9ca50b5d42df1050c5b8d3e737b3df3f3fc22cb103777702249acefa44089e"
+   }
+  ]
+ }
+}

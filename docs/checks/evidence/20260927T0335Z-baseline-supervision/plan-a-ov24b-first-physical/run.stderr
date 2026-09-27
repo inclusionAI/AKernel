@@ -1,0 +1,2 @@
+/data/work/plan-a-pc-snapshot-ov24b-1/sdk_lifecycle.py:2004: SyntaxWarning: "\$" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\$"? A raw string is also an option.
+  *rrt*|*runtime*) st=$(awk "{print \$22}" "$c/stat" 2>/dev/null);

@@ -1,0 +1,92 @@
+{
+ "abort": "create_snapshot_failed_no_snapshot_found",
+ "api_class": "yr_sandbox.sandbox_api.Sandbox (native)",
+ "case": "pc-snapshot-ov24b-1",
+ "cleanup_errors": [],
+ "create_called": false,
+ "create_snapshot_error": "sandbox snapshot result is uncertain (requestId=snapshot-b7df1753-918e-4028-80f0-b9d92c7656b0): HTTP 503: {\"code\":503,\"message\":\"kill failed, code: ERR_INNER_COMMUNICATION, message: reusable snapshot LOCAL_READY failed without checkpointNotStarted pr",
+ "final_phase": null,
+ "finally_source_kill": {
+  "code": 0
+ },
+ "finished_unix": 1790526996.0817952,
+ "helper_pins": {
+  "checkpoint_restore_case": {
+   "actual": "e932e0393c893a643943c336902408e22472a50ea4de3c9145a1d81ffc23f80d",
+   "commit": "e50b41f895962d31242cdf1622959f271f634099",
+   "expected": "e932e0393c893a643943c336902408e22472a50ea4de3c9145a1d81ffc23f80d",
+   "ok": true,
+   "resolved_path": "/data/work/plan-a-pc-snapshot-ov24b-1/checkpoint_restore_case.py"
+  },
+  "collect_stats": {
+   "actual": "153b1a23beacccb3ff762bc6b0df40d959acd63e42b5f42e0a0d7321cac6c5af",
+   "commit": "48ddfe98f69ec5bdb6b35089dc0cfebe7ea8e38b",
+   "expected": "153b1a23beacccb3ff762bc6b0df40d959acd63e42b5f42e0a0d7321cac6c5af",
+   "ok": true,
+   "resolved_path": "/data/work/plan-a-pc-snapshot-ov24b-1/collect_stats.py"
+  },
+  "sdk_lifecycle": {
+   "actual": "a7411ef132726347414e43d1407bac13e3755fc9db4edc5f8eec79300bb3ac6d",
+   "commit": "48ddfe98f69ec5bdb6b35089dc0cfebe7ea8e38b",
+   "expected": "a7411ef132726347414e43d1407bac13e3755fc9db4edc5f8eec79300bb3ac6d",
+   "ok": true,
+   "resolved_path": "/data/work/plan-a-pc-snapshot-ov24b-1/sdk_lifecycle.py"
+  }
+ },
+ "memstate_baseline": {
+  "buffer_sha256": "b1dd6d99e0f322b69fb3a185da96fd91c3e2a245df6a743341aeef00eabacd5a",
+  "cmd": "identity",
+  "counter": 1,
+  "pid": 11,
+  "starttime": "29"
+ },
+ "memstate_mkdir": {
+  "rc": 0
+ },
+ "memstate_protocol": {
+  "late_results": "reply_timeout (discarded after post-return deadline checks; never accepted, never hard-cancelled)",
+  "logical_budget_s": 20.0,
+  "sdk_http_timeout_config": "max(timeout+30, 300) \u2014 the SDK's HTTP timeout CONFIGURATION value; phased transport waits mean it is not a strict total wall-clock bound"
+ },
+ "memstate_start": {
+  "out": "probe-started",
+  "rc": 0
+ },
+ "node": "akernel-node-grb4n",
+ "plan": "A",
+ "pre_state": {
+  "data_file": "pc-snapshot-ov24b-1-1790526985613-marker"
+ },
+ "restored_name": "sched-ckA-pc-snapshot-ov24b-1-restored",
+ "snapshot_reconciliation": {
+  "matches": [],
+  "note": "no snapshot under the unique name after a complete page walk; NOT a claim that creation never happened",
+  "pages_walked": 1,
+  "reason": null,
+  "status": "ok"
+ },
+ "source_bind": {
+  "generation": "d8e640d8-b81c-438e-87ba-67cd6f4d939a",
+  "ok": true,
+  "runtime": "runtime-default-sched-ckA-pc-snapshot-ov24b-1-96caddd318e0",
+  "sandbox": "sbox-04b1508a-1619-41fa-8d1b-9f1cd9860b06",
+  "state": ""
+ },
+ "source_id_contract": {
+  "actual": "default-sched-ckA-pc-snapshot-ov24b-1",
+  "expected": "default-sched-ckA-pc-snapshot-ov24b-1",
+  "match": true
+ },
+ "source_ids": {
+  "facade": "default-sched-ckA-pc-snapshot-ov24b-1",
+  "native": "default-sched-ckA-pc-snapshot-ov24b-1"
+ },
+ "source_instance": "default-sched-ckA-pc-snapshot-ov24b-1",
+ "source_name": "sched-ckA-pc-snapshot-ov24b-1",
+ "started_unix": 1790526970.7968307,
+ "strict_checks": {
+  "memstate_started": true
+ },
+ "unexpected_error": "SandboxError:sandbox snapshot result is uncertain (requestId=snapshot-b7df1753-918e-4028-80f0-b9d92c7656b0): HTTP 503: {\"code\":503,\"message\":\"kill failed, code: ERR_INNER_COMMUNICATION, message: reusable snapshot LOCAL_READY failed without checkpointNotStarted pr",
+ "verdict": "fail"
+}

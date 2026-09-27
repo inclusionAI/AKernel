@@ -1,0 +1,1 @@
+{"case": "pc-snapshot-ov24b-1", "verdict": "fail", "checks": {"memstate_started": true}, "abort": "create_snapshot_failed_no_snapshot_found", "create_called": false, "cleanup_errors": []}

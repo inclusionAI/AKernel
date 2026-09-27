@@ -1,0 +1,24 @@
+{
+ "case": "pc-snapshot-ov24b-1",
+ "request_id": "snapshot-b7df1753-918e-4028-80f0-b9d92c7656b0",
+ "instance": "default-sched-ckA-pc-snapshot-ov24b-1",
+ "runtime": "runtime-default-sched-ckA-pc-snapshot-ov24b-1-96caddd318e0",
+ "sandbox": "sbox-04b1508a-1619-41fa-8d1b-9f1cd9860b06",
+ "failure": {
+  "stage": "named-snapshot LOCAL_READY (agent typed checkpoint)",
+  "proxy_error": "reusable snapshot LOCAL_READY failed without checkpointNotStarted proof; PUBLISHING record kept (8eb8d13a uncertainty classification working as designed)",
+  "root_cause": "sandboxd resolveManagedCheckpointDir rejected the directory BEFORE any physical checkpoint: runtime_manager passed /home/akernel/checkpoints/ckpt-... but the deployed sandboxd (12fcc53, checkpoint.go:95-98 first validation) requires below /home/akernel/sandboxd/root/checkpoints; grpc code 80034"
+ },
+ "physical_not_executed_proof": {
+  "basis": "resolveManagedCheckpointDir is the first validation, returned ErrInvalidArgument before InspectAt/sandbox lookup/runsc invocation",
+  "corroboration": "no runsc checkpoint lines for the sbox; gvisor-checkpoints empty; /home/akernel/checkpoints empty"
+ },
+ "publishing_record_state": {
+  "list_snapshots_all": "empty",
+  "budget": "instance_count=0 entries=[]",
+  "local_dirs": "all empty",
+  "cgroup": "release success line for /akernel/TdiRAtzsfqoL at 00:36:32"
+ },
+ "exit_code_evidence_gap": "case launched with bare backgrounding; no wrapper wrote run.rc; real python rc not recorded; future cases must use persistent wrapper",
+ "fix": "platform bootstrap 5f7afb9d3d2d1e72a7be49efb23831afe576fd32: --checkpoint_dir -> /home/akernel/sandboxd/root/checkpoints (deployment-config only; no C++ rebuild; sandboxd validation and UNKNOWN rules untouched)"
+}
