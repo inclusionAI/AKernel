@@ -1,4 +1,4 @@
-FROM akernel-bm1/all-in-one:canon-8c53bdd-rebuild1
+FROM akernel-bm1/all-in-one@sha256:f34b68d262639da84bc6617f7338b0462a944dc3d3cc3aabfa2189b1c856130e
 COPY yr-runtime-rootfs.img /home/yuanrong/yr-runtime-rootfs.img
 COPY function-proxy /opt/akernel-scheduler/function-proxy
 COPY function-master /opt/akernel-scheduler/function-master
@@ -15,5 +15,6 @@ RUN set -e  && for n in function_proxy function_master runtime_manager function_
     done  && rm -rf /tmp/wrappers
 COPY scripts/install.sh /home/yuanrong/functionsystem/deploy/install.sh
 COPY config/elasticity.env /home/yuanrong/functionsystem/deploy/elasticity.env
+COPY scripts/yr_node_bootstrap.sh /home/yuanrong/yr_node_bootstrap.sh
 COPY sandboxd/sandboxd /usr/local/bin/sandboxd
 COPY sandboxd/sandbox-logger /usr/local/bin/sandbox-logger

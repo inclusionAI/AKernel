@@ -538,6 +538,12 @@ node:
         [plugin.node_resource]
         provider="kubernetes"
         sock_path="/var/run/resource.sock"
+        # DEFAULT-OFF /resource observation fault control (sandboxd test
+        # facility, 12fcc53). The scheduler-line unknown-observation
+        # physical cases arm it per-case via the control file at
+        # observation_fault_path; production configs never set these.
+        enable_observation_fault=true
+        observation_fault_path="/home/akernel/sandboxd/observation-fault.json"
 
 traefik:
   enabled: false
