@@ -205,9 +205,10 @@ for i in d['items']:
 }
 role_pod_images > "$PARENT/role-pod-images.txt"
 ROLE_BAD=0
-grep -q "akernel-frontend-.* akernel-bm1/all-in-one:canon-df2e-yr-signalfix-term$" "$PARENT/role-pod-images.txt" || ROLE_BAD=1
-grep -q "akernel-master-0 akernel-bm1/all-in-one:canon-df2e-yr-signalfix-term-m1$" "$PARENT/role-pod-images.txt" || ROLE_BAD=1
-[ "$(grep -c 'akernel-node-.* akernel-bm1/all-in-one:canon-df2e-yr-signalfix-node-splitfsr-v2$' "$PARENT/role-pod-images.txt")" -ge 1 ] || ROLE_BAD=1
+# pod image 可能带 docker.io/ 前缀(kubelet 规范化), 以可选前缀匹配
+grep -qE "akernel-frontend-.* (docker\.io/)?akernel-bm1/all-in-one:canon-df2e-yr-signalfix-term$" "$PARENT/role-pod-images.txt" || ROLE_BAD=1
+grep -qE "akernel-master-0 (docker\.io/)?akernel-bm1/all-in-one:canon-df2e-yr-signalfix-term-m1$" "$PARENT/role-pod-images.txt" || ROLE_BAD=1
+[ "$(grep -cE 'akernel-node-.* (docker\.io/)?akernel-bm1/all-in-one:canon-df2e-yr-signalfix-node-splitfsr-v2$' "$PARENT/role-pod-images.txt")" -ge 1 ] || ROLE_BAD=1
 echo "$ROLE_BAD" > "$PARENT/role-base-match.rc"
 [ "$ROLE_BAD" -eq 0 ] || { echo 91 > "$FINAL"; exit 91; }
 
