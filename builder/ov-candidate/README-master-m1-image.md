@@ -43,10 +43,13 @@ b82986cfaf1f14cea7ddfbf45cd9a785d23c0cd464353a8c7d3deea40e7f3c98,
 3. 镜像内该文件 SHA =
    b82986cfaf1f14cea7ddfbf45cd9a785d23c0cd464353a8c7d3deea40e7f3c98;
 4. 隔离加载(--network none,LD_LIBRARY_PATH=实际部署 lib 目录):
-   function_master --help 实际运行并输出完整 flag 帮助
-   (gflags --help 惯例退出码 2,容器终态已记录);
-   镜像环境 ldd rc=0、"not found" 0 处、依赖解析 54 项。
-   上述不代替部署后真实运行验收。
+   function_master --help 退出码 2,容器 ExitCode=2——根读原件判定为
+   **缺必需 ip 参数**(进入 main 参数解析即退出)。此为**有限加载证据**:
+   证明 ELF 与初始动态库加载成功并到达 main 参数解析;不称"--help
+   成功/退出 0/完整启动通过"。容器 fs-m1-loadcheck-20260928T021219Z
+   终态原样保留。镜像环境 ldd(独立探针,--rm 容器未保留已登记):
+   rc=0、"not found" 0 处、依赖解析 54 项。实际主控启动仍待部署后
+   验收,不以任何方式改二进制凑退出码。
 
 ## 边界
 
