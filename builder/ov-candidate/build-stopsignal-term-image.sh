@@ -1,15 +1,24 @@
 #!/bin/bash
-# Build the per-role STOPSIGNAL(SIGTERM) image variant.
-#
-# Contract (root-authorized 2026-09-28):
-#   - base: the FULL digest-pinned canon-df2e-yr-signalfix image as recorded
-#     in chart-of-record.json (resolved at runtime, never hand-typed);
-#   - the variant adds ONLY `STOPSIGNAL SIGTERM` — no file/library may be
-#     replaced (verified post-build: identical RootFS.diff_ids chain, plus a
-#     single 0B metadata layer in history, plus an explicit config key diff);
-#   - node keeps the original image (SIGRTMIN+3 for systemd PID1);
-#   - build runs inside a commit-exclusive directory created from a clean
-#     `git archive` of the recipe commit; every step logs fully with real rc.
+# Build + verify + serial-import the per-role STOPSIGNAL(SIGTERM) variant.
+# v2 (root review fixes, 2026-09-28):
+#   - image config comparison reads the REAL OCI config blobs from the
+#     containerd content store (/var/lib/containerd/io.containerd.content.
+#     v1.content/blobs/sha256), not `docker image inspect` (which has no
+#     History and reports RootFS.Layers, not diff_ids);
+#   - runtime-config equality is STRICT: every config key must be equal,
+#     only stop_signal may differ (no Image/Container-style whitelists);
+#     rootfs diff_ids chain must be identical; history may only append one
+#     empty layer;
+#   - kind cluster name comes from `kind get clusters` (NOT the kubectl
+#     context name);
+#   - import is per-explicit-node SERIAL with ionice; the save pipe is
+#     pv-limited to 64m. The kind-load READ path is NOT rate limited and
+#     ionice is not guaranteed to be inherited by the daemon side — keep
+#     imports serial, no concurrent large copies, wait for io PSI to
+#     recover before deploying. (Registered boundary, do not backfill.)
+# The d307f769 candidate already exists from recipe f35db282; v2 exists so
+# the next reproduction matches the audited interface. Do not rebuild the
+# same tag to fake a fresh build.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -17,88 +26,87 @@ BASE_TAG=akernel-bm1/all-in-one:canon-df2e-yr-signalfix
 NEW_TAG=akernel-bm1/all-in-one:canon-df2e-yr-signalfix-term
 REPO=akernel-bm1/all-in-one
 CHART_RECORD=/root/akernel-bm1/chart-of-record.json
+CONTENT_STORE=/var/lib/containerd/io.containerd.content.v1.content/blobs/sha256
 BUILD_LOG="$HERE/build.log"
 exec > >(tee -a "$BUILD_LOG") 2>&1
-
-echo "== build-stopsignal-term-image.sh $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "== recipe Dockerfile sha256:"
-sha256sum "$HERE/stopsignal-term.Dockerfile"
+echo "== build-stopsignal-term-image.sh v2 $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # 1) target must not exist
-if docker image inspect "$NEW_TAG" >/dev/null 2>&1; then
-    echo "FATAL: target tag already exists: $NEW_TAG" >&2
-    exit 10
-fi
+docker image inspect "$NEW_TAG" >/dev/null 2>&1 && { echo "FATAL: target exists: $NEW_TAG" >&2; exit 10; }
 
-# 2) resolve base digest and cross-check against chart-of-record
+# 2) base digest cross-check (resolved, never hand-typed)
 BASE_REPO_DIGEST=$(docker image inspect "$BASE_TAG" --format '{{index .RepoDigests 0}}')
-BASE_DIGEST=${BASE_REPO_DIGEST#*@}
 CHART_DIGEST=$(python3 -c "import json;print(json.load(open('$CHART_RECORD'))['image']['manifest_digest'])")
-echo "base resolved : $BASE_REPO_DIGEST"
-echo "chart-of-record: $CHART_DIGEST"
-if [ "$BASE_DIGEST" != "$CHART_DIGEST" ]; then
-    echo "FATAL: base digest != chart-of-record manifest digest" >&2
-    exit 11
-fi
-DOCKERFILE_DIGEST=$(awk '$1=="FROM"{print $2}' "$HERE/stopsignal-term.Dockerfile")
-if [ "$DOCKERFILE_DIGEST" != "$BASE_REPO_DIGEST" ]; then
-    echo "FATAL: Dockerfile FROM ($DOCKERFILE_DIGEST) != resolved base ($BASE_REPO_DIGEST)" >&2
-    exit 12
-fi
+[ "${BASE_REPO_DIGEST#*@}" = "$CHART_DIGEST" ] || { echo "FATAL: base != chart-of-record" >&2; exit 11; }
+awk -v b="$BASE_REPO_DIGEST" '$1=="FROM" && $2!=b {print "FATAL: Dockerfile FROM mismatch"; exit 1}' \
+    "$HERE/stopsignal-term.Dockerfile" || exit 12
 
-# 3) build (single metadata layer; minimal context = the Dockerfile alone)
-CTX=$(mktemp -d)
-cp "$HERE/stopsignal-term.Dockerfile" "$CTX/"
-docker build --file "$CTX/stopsignal-term.Dockerfile" --tag "$NEW_TAG" "$CTX"
-rm -rf "$CTX"
+# 3) build (minimal context)
+CTX=$(mktemp -d); cp "$HERE/stopsignal-term.Dockerfile" "$CTX/"
+docker build --file "$CTX/stopsignal-term.Dockerfile" --tag "$NEW_TAG" "$CTX"; rm -rf "$CTX"
 
-# 4) verification ---------------------------------------------------------
-python3 - "$BASE_TAG" "$NEW_TAG" <<'PY'
-import json, subprocess, sys
-base_tag, new_tag = sys.argv[1], sys.argv[2]
-def inspect(tag):
-    return json.loads(subprocess.run(["docker","image","inspect",tag],
-                        capture_output=True, text=True, check=True).stdout)[0]
-base, new = inspect(base_tag), inspect(new_tag)
+# 4) verification against REAL OCI config blobs ----------------------------
+python3 - "$BASE_TAG" "$NEW_TAG" "$CONTENT_STORE" <<'PY'
+import hashlib, json, os, subprocess, sys
+base_tag, new_tag, store = sys.argv[1:4]
+def config_blob_path(tag):
+    cfg_digest = subprocess.run(["docker","image","inspect",tag,"--format","{{.Id}}"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+    d = cfg_digest.split(":",1)[1]
+    p = os.path.join(store, d)
+    if not os.path.isfile(p):
+        sys.exit(f"config blob not in content store: {p}")
+    raw = open(p,"rb").read()
+    if hashlib.sha256(raw).hexdigest() != d:
+        sys.exit(f"content-store blob hash mismatch: {p}")
+    return json.loads(raw), cfg_digest
+base, bd = config_blob_path(base_tag)
+new, nd = config_blob_path(new_tag)
 errs = []
-# 4a) StopSignal values
-if new["Config"].get("StopSignal") != "SIGTERM":
-    errs.append(f'new StopSignal={new["Config"].get("StopSignal")!r} != SIGTERM')
-if base["Config"].get("StopSignal") != "SIGRTMIN+3":
-    errs.append(f'base StopSignal changed: {base["Config"].get("StopSignal")!r}')
-# 4b) filesystem identical: RootFS diff_ids chain must be byte-equal
-if base["RootFS"] != new["RootFS"]:
-    errs.append("RootFS differs (diff_ids chain changed — files were touched)")
-# 4c) history: variant = base history + exactly one 0B STOPSIGNAL layer
-h = new["History"]; bh = base["History"]
-extra = h[len(bh):]
-if h[:len(bh)] != bh or len(extra) != 1 or extra[0].get("empty_layer") is not True \
-        or "STOPSIGNAL SIGTERM" not in extra[0].get("created_by", ""):
+# strict runtime-config equality: only stop_signal may differ
+bc, nc = base.get("config",{}), new.get("config",{})
+keys = set(bc) | set(nc)
+diffs = sorted(k for k in keys if bc.get(k) != nc.get(k))
+if diffs != ["stop_signal"]:
+    errs.append(f"config diffs beyond stop_signal: {diffs}")
+elif bc.get("stop_signal") != "SIGRTMIN+3" or nc.get("stop_signal") != "SIGTERM":
+    errs.append(f"stop_signal values wrong: {bc.get('stop_signal')} -> {nc.get('stop_signal')}")
+# rootfs identical (diff_ids chain, from the real OCI config)
+if base.get("rootfs") != new.get("rootfs"):
+    errs.append("rootfs diff_ids chain differs — filesystem was touched")
+# history: only one appended empty STOPSIGNAL layer
+bh, nh = base.get("history",[]), new.get("history",[])
+extra = nh[len(bh):]
+if nh[:len(bh)] != bh or len(extra) != 1 or not extra[0].get("empty_layer") \
+        or "STOPSIGNAL SIGTERM" not in json.dumps(extra[0]):
     errs.append(f"history delta unexpected: {json.dumps(extra)[:200]}")
-# 4d) config key diff — list EVERY differing key; allowed set only
-skip = {"StopSignal", "Image", "Container", "ContainerConfig", "DockerVersion",
-        "Id", "Created"}
-diffs = {k for k in set(base["Config"]) | set(new["Config"])
-         if base["Config"].get(k) != new["Config"].get(k)}
-bad = diffs - skip
-if bad:
-    errs.append(f"unexpected config diffs: {sorted(bad)}")
-print("config key diffs:", sorted(diffs))
-print("rootfs diff_ids count:", len(new["RootFS"]["diff_ids"]),
-      "identical to base:", base["RootFS"] == new["RootFS"])
+# arch/os
+for k in ("architecture","os","os.version","variant"):
+    if base.get(k) != new.get(k):
+        errs.append(f"{k} differs")
+print(f"base config: {bd}\nnew  config: {nd}")
+print("config key diffs:", diffs)
+print("rootfs identical:", base.get("rootfs") == new.get("rootfs"))
 if errs:
-    print("VERIFY_FAILED:", *errs, sep="\n  ")
-    sys.exit(20)
-print("VERIFY_OK: only StopSignal differs; filesystem unchanged")
+    print("VERIFY_FAILED:", *errs, sep="\n  "); sys.exit(20)
+print("VERIFY_OK: runtime config identical except stop_signal; filesystem unchanged")
 PY
-[ $? -eq 0 ] || exit 20
 
-# 5) record digests + save tar (serial copy)
-docker image inspect "$NEW_TAG" --format 'id={{.Id}}' | tee "$HERE/image-id.txt"
-docker manifest inspect "$NEW_TAG" > "$HERE/manifest-inspect.json" 2>&1 || true
-docker save "$NEW_TAG" | gzip > "$HERE/${NEW_TAG##*:}.tar.gz"
-sha256sum "$HERE/${NEW_TAG##*:}.tar.gz" | tee "$HERE/image-tar.sha256"
+# 5) save (ionice + pv 64m on the write path) ------------------------------
+TAR="$HERE/${NEW_TAG##*:}.image.tar"
+ionice -c 3 docker save "$NEW_TAG" | pv -L 64m > "$TAR" 2>"$HERE/save-pv.log"
+sha256sum "$TAR" | tee "$HERE/image-tar.sha256"
 
-# 6) kind import (serial, full log; pipefail propagates real rc)
-kind load docker-image "$NEW_TAG" --name kind-akernel-bm1 2>&1 | tee "$HERE/kind-load.log"
+# 6) serial per-explicit-node import (cluster name from kind, not context) --
+CLUSTER=$(kind get clusters | head -1)
+[ -n "$CLUSTER" ] || { echo "FATAL: no kind cluster" >&2; exit 30; }
+for n in $(kubectl get nodes -o json | python3 -c \
+        'import json,sys;print(" ".join(i["metadata"]["name"] for i in json.load(sys.stdin)["items"]))'); do
+    echo "-- node $n $(date -u +%H:%M:%S)"
+    ionice -c 3 kind load image-archive "$TAR" --name "$CLUSTER" --nodes "$n" \
+        > "$HERE/kind-load-$n.log" 2>&1
+    echo $? > "$HERE/kind-load-$n.rc"
+    docker exec "$n" ctr -n k8s.io images ls 2>/dev/null | grep "${NEW_TAG##*:}" \
+        > "$HERE/kind-load-verify-$n.txt" || true
+done
 echo "ALL_STEPS_DONE $(date -u +%Y-%m-%dT%H:%M:%SZ)"
