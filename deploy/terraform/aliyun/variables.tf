@@ -918,7 +918,7 @@ variable "master_resources" {
 variable "node_resources" {
   description = "Resource requests/limits for akernel-node."
   type = object({
-    ephemeral_storage = optional(string, "1Gi")
+    ephemeral_storage = optional(string, "50Gi")
   })
   default = {}
 }
