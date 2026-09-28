@@ -54,7 +54,9 @@ BRC=$?
 set -e
 echo "$BRC" > "$OUT/build.rc"
 [ "$BRC" -eq 0 ] || { echo "BUILD FAILED rc=$BRC" >&2; exit "$BRC"; }
-docker image inspect "$TAG" --format "config-digest={{.Id}}" > "$OUT/image-id.txt"
+# 本后端 .Id 即 OCI manifest digest;存 inspect_id,真实 config digest
+# 稍后从已校验 manifest 的 config.digest 取得(见 verify 步)。
+docker image inspect "$TAG" --format "inspect_id={{.Id}}" > "$OUT/image-id.txt"
 
 # 4) 保存 tar(pipefail 管道,真实 rc,非 0 即退;限速)
 set +e
@@ -114,6 +116,18 @@ if sorted(files) != sorted([(k, 0o755, v) for k, v in EXPECT.items()]):
     errs.append(f"new regular files mismatch: {files}")
 if others:
     errs.append(f"non-file non-dir entries in new layers: {others}")
+# 5d) manifest 交叉核对:tar index manifest digest 必须等于 inspect .Id
+#     (本后端 .Id=OCI manifest);真实 config digest 从该 manifest 的
+#     config.digest 取得并记录。
+idx = json.load(t.extractfile("index.json"))
+md = idx["manifests"][0]["digest"]
+iid = cand["Id"]
+if "sha256:" + md.split(":")[1] != iid and md != iid:
+    errs.append(f"manifest digest {md} != inspect Id {iid}")
+inner = json.load(t.extractfile("manifest.json"))[0]
+cfg_digest = "sha256:" + inner["Config"].split("/")[-1]
+print("inspect_id:", iid)
+print("manifest digest:", md, "true config digest:", cfg_digest)
 print(f"base diff_ids={len(bl)} candidate={len(cl)} (+{len(cl)-len(bl)})")
 print("runtime-config canonical: base", bc[:16], "cand", cc[:16])
 print("new regular files:", [(p, oct(m), h[:16]) for (p, m, h) in files])
