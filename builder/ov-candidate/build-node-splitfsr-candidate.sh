@@ -60,7 +60,7 @@ docker image inspect "$TAG" --format "inspect_id={{.Id}}" > "$OUT/image-id.txt"
 
 # 4) 保存 tar(pipefail 管道,真实 rc,非 0 即退;限速)
 set +e
-ionice -c 3 sh -c "docker save '$TAG' | pv -L 64m | gzip > '$OUT/node-candidate.tar.gz'"
+ionice -c 3 docker save "$TAG" | pv -L 64m | gzip > "$OUT/node-candidate.tar.gz"
 SRC_RC=$?
 set -e
 echo "$SRC_RC" > "$OUT/save.rc"
@@ -163,4 +163,4 @@ if [ "$R2" -ne 0 ]; then
   echo "FATAL: sandboxd -h rc=$R2" >&2; exit 1
 fi
 
-echo "NODE CANDIDATE READY: $TAG (config-digest in image-id.txt)"
+echo "NODE CANDIDATE READY: $TAG (inspect/manifest id in image-id.txt; true config digest in verify.txt)"
