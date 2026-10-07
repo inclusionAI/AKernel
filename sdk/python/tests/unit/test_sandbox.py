@@ -263,10 +263,12 @@ class SandboxTest(unittest.TestCase):
         self.backend.create.assert_not_called()
 
     def test_runtime_identifier_is_normalized_and_passed_to_backend(self):
-        sandbox = Sandbox(runtime=" gvisor-next ")
-        spec = self.backend.create.call_args.args[0]
-        self.assertEqual(spec.runtime, "gvisor-next")
-        sandbox.kill()
+        for runtime in ("gvisor-next", "firecracker-pvm"):
+            with self.subTest(runtime=runtime):
+                sandbox = Sandbox(runtime=f" {runtime} ")
+                spec = self.backend.create.call_args.args[0]
+                self.assertEqual(spec.runtime, runtime)
+                sandbox.kill()
 
     def test_runtime_identifier_validation(self):
         for value in (None, 1):

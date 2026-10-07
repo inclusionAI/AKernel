@@ -176,20 +176,20 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
         )
 
     def test_runtime_identifier_without_explicit_rootfs_is_forwarded(self):
-        native = MagicMock()
-        native.id = "default-gvisor-next"
-        with patch.object(
-            openyuanrong_sandbox.yr_sandbox,
-            "Sandbox",
-            return_value=native,
-        ) as sandbox_type:
-            self.backend.create(_spec(runtime="gvisor-next"))
+        for runtime in ("gvisor-next", "firecracker-pvm"):
+            with self.subTest(runtime=runtime):
+                native = MagicMock()
+                native.id = f"default-{runtime}"
+                with patch.object(
+                    openyuanrong_sandbox.yr_sandbox,
+                    "Sandbox",
+                    return_value=native,
+                ) as sandbox_type:
+                    self.backend.create(_spec(runtime=runtime))
 
-        # YuanRong applies this runtime as a configuration override to the
-        # deployed default rootfs; the adapter does not build a filesystem
-        # overlay.
-        self.assertEqual(sandbox_type.call_args.kwargs["runtime"], "gvisor-next")
-        self.assertIsNone(sandbox_type.call_args.kwargs["rootfs"])
+                # YuanRong applies this runtime to the deployed default rootfs.
+                self.assertEqual(sandbox_type.call_args.kwargs["runtime"], runtime)
+                self.assertIsNone(sandbox_type.call_args.kwargs["rootfs"])
 
     def test_runsc_without_explicit_rootfs_passes_runtime_config_override(self):
         native = MagicMock()
