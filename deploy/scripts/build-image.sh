@@ -15,6 +15,12 @@ tag=""
 env_name=""
 runtime_image=""
 runtime_profile="${RUNTIME_PROFILE:-rrt}"
+# Preserve an explicitly selected candidate before loading default pins.
+# A partial override must never mix candidate and default release fields.
+candidate_firecracker_release="${FIRECRACKER_RELEASE:-}"
+candidate_firecracker_url="${FIRECRACKER_AMD64_URL:-}"
+candidate_firecracker_sha256="${FIRECRACKER_AMD64_SHA256:-}"
+firecracker_kernel_profile="${FIRECRACKER_KERNEL_PROFILE:-kvm}"
 runtime_versions_file="${ROOT}/src/sandboxd/third_party/runtime-versions.env"
 if [[ ! -f "${runtime_versions_file}" ]]; then
   die "missing runtime version manifest: ${runtime_versions_file}"
@@ -33,6 +39,18 @@ gvisor_amd64_url="${GVISOR_AMD64_URL:-}"
 firecracker_release="${FIRECRACKER_RELEASE:-}"
 firecracker_amd64_sha256="${FIRECRACKER_AMD64_SHA256:-}"
 firecracker_amd64_url="${FIRECRACKER_AMD64_URL:-}"
+if [[ -n "${candidate_firecracker_release}${candidate_firecracker_url}${candidate_firecracker_sha256}" ]]; then
+  [[ -n "${candidate_firecracker_release}" && -n "${candidate_firecracker_url}" &&
+     "${candidate_firecracker_sha256}" =~ ^[0-9a-f]{64}$ ]] ||
+    die "candidate FIRECRACKER_RELEASE, FIRECRACKER_AMD64_URL, and a SHA-256 digest must be set together"
+  firecracker_release="${candidate_firecracker_release}"
+  firecracker_amd64_url="${candidate_firecracker_url}"
+  firecracker_amd64_sha256="${candidate_firecracker_sha256}"
+fi
+case "${firecracker_kernel_profile}" in
+  kvm|pvm) ;;
+  *) die "FIRECRACKER_KERNEL_PROFILE must be kvm or pvm" ;;
+esac
 open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
 open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
 rrt_runtime_url="${RRT_RUNTIME_URL:-}"
@@ -228,6 +246,7 @@ node_build_args+=(
   --build-arg "FIRECRACKER_RELEASE=${firecracker_release}"
   --build-arg "FIRECRACKER_AMD64_URL=${firecracker_amd64_url}"
   --build-arg "FIRECRACKER_AMD64_SHA256=${firecracker_amd64_sha256}"
+  --build-arg "FIRECRACKER_KERNEL_PROFILE=${firecracker_kernel_profile}"
 )
 if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; then
   if [[ -z "${open_yr_core_wheel_url}" || -z "${open_yr_core_wheel_sha256}" ]]; then

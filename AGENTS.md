@@ -147,10 +147,21 @@ also excludes virtiofsd.
 
 The sandboxd submodule's runtime manifest is the source of truth for the
 gVisor and Firecracker releases used by both sandboxd E2E and AKernel
-packaging. Test an unreleased runtime by checking out the sandboxd commit that
-pins it rather than overriding manifest fields from the AKernel build. Keep
+packaging. For an unreleased Firecracker candidate, the build helper accepts
+an explicit complete release/URL/SHA-256 override and verifies
+`FIRECRACKER_KERNEL_PROFILE` against the bundle manifest. Partial overrides
+fail. Keep default pins unchanged until the exact candidate passes sandboxd
+and AKernel validation and is promoted. Keep
 sandboxd's pooled-TAP contract and the matching gVisor compatibility patches
 validated together when upgrading.
+
+PVM is an experimental opt-in node profile. Standalone selects
+`AKERNEL_FIRECRACKER_BACKEND=pvm`; Helm selects
+`node.config.sandboxd.firecrackerBackend=pvm`. This selects `firecracker-pvm`,
+removes Kata from that profile, and requires the validated PVM guest bundle
+and separately prepared PVM host. Sandboxd verifies the actual backend before
+advertising it. Keep default KVM behavior unchanged; see
+`deploy/pvm-runtime.md` for build, placement, restore and rollout boundaries.
 
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all

@@ -85,6 +85,8 @@ spec:
           value: "oci"
         - name: AKERNEL_ROLE
           value: "node"
+        - name: AKERNEL_FIRECRACKER_BACKEND
+          value: {{ .Values.node.config.sandboxd.firecrackerBackend | default "kvm" | quote }}
         - name: RUNSC_AKERNEL
           value: "1"
         - name: YR_RRT_CONTROL_SOCKET_PATH

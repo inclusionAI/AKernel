@@ -14,6 +14,18 @@ data:
 
   sandboxd_config.toml: |
 {{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
+{{- $firecrackerBackend := .Values.node.config.sandboxd.firecrackerBackend | default "kvm" }}
+{{- if not (has $firecrackerBackend (list "kvm" "pvm")) }}
+{{- fail "node.config.sandboxd.firecrackerBackend must be kvm or pvm" }}
+{{- end }}
+{{- if eq $firecrackerBackend "pvm" }}
+{{- if not (and (contains "[plugin.runtime.firecracker]" $sandboxdConfig) (contains "firecracker=\"/usr/local/bin/firecracker\"" $sandboxdConfig)) }}
+{{- fail "PVM selection requires the standard Firecracker config section and binary entry" }}
+{{- end }}
+{{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)firecracker=" $sandboxdConfig "${1}firecracker-pvm=" }}
+{{- $sandboxdConfig = replace "[plugin.runtime.firecracker]" "[plugin.runtime.firecracker_pvm]" $sandboxdConfig }}
+{{- $sandboxdConfig = regexReplaceAll "(?m)^[\\t ]*kata=.*$" $sandboxdConfig "# Kata is disabled on the PVM node profile." }}
+{{- end }}
 {{- $runcMarker := "# AKERNEL_RUNTIME_RUNC" }}
 {{- if .Values.node.config.sandboxd.enableRunc }}
 {{- if not (contains $runcMarker $sandboxdConfig) }}

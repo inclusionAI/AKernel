@@ -40,6 +40,8 @@ One all-in-one image, multiple deployment targets — deploy in under 10 minutes
 - **Same-node recovery**: Checkpoint runsc and Firecracker workloads and reload
   the same logical sandbox
 
+PVM is available as an opt-in `firecracker-pvm` runtime on dedicated PVM hosts. The [PVM integration guide](./deploy/pvm-runtime.md) covers the host kernel, guest bundle, node configuration, and checkpoint compatibility requirements.
+
 \* Planned for an open-source release and not available in AKernel v0.1.0.
 
 ### AI-Native Development and Operations

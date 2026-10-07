@@ -66,6 +66,8 @@ Terraform registers the runtime with sandboxd. Direct Helm users must likewise
 build with `AKERNEL_ENABLE_RUNC=true` and set
 `node.config.sandboxd.enableRunc=true`.
 
+PVM-backed Firecracker is an experimental opt-in node profile. It needs a separately prepared PVM host and validated guest bundle, and advertises `firecracker-pvm`. Standalone selects `AKERNEL_FIRECRACKER_BACKEND=pvm`; Helm selects `node.config.sandboxd.firecrackerBackend=pvm`. The default remains hardware KVM. See [PVM node setup, validation, and restore boundaries](./pvm-runtime.md) before preparing a dedicated pool.
+
 The iptables sandbox NAT backend remains the default. Terraform deployments
 can set `sandboxd_nat_backend = "bpfnat"` to use sandboxd's experimental
 embedded TC eBPF backend on nodes without iptables NAT or conntrack modules.
