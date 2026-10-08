@@ -659,7 +659,12 @@ to run integration and reload coverage against an OCI/Nydus image root. This
 also verifies that two sandboxes using the same image have private writes.
 Test both an ordinary OCI image and a Nydus image resolved through the deployed
 image manager. The pinned distill-fs supports RAFS v5; use
-`nydusify convert --fs-version 5` when preparing Nydus test images.
+`nydusify convert --fs-version 5` when preparing Nydus test images. Select
+`AKERNEL_TEST_RUNTIME=firecracker-pvm` for a PVM-enabled node. For isolated
+network verification, set `AKERNEL_TEST_NETWORK_URL` to a reachable private
+HTTP endpoint and use a test image with curl and CA certificates preinstalled.
+The image integration checks include network policy replacement while retaining
+SDK control-plane access.
 
 ## Maintenance Rules
 

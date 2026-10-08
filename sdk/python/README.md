@@ -739,12 +739,20 @@ PYTHONPATH=sdk/python \
   python -m unittest discover -s sdk/python/tests/integration -t sdk/python -v
 ```
 
-Set `AKERNEL_TEST_RUNTIME=firecracker` and `AKERNEL_TEST_IMAGE=ubuntu:24.04`
-to exercise the same suite, including checkpoint/reload, against a virtio-fs
-image root. `AKERNEL_TEST_IMAGE` also accepts a Nydus image reference and
-enables a check that writes stay private to each sandbox sharing the image.
-The test image must provide an Ubuntu/Debian userspace with `apt-get` for the
-checkpoint test's curl and CA certificate installation. Omit
+Set `AKERNEL_TEST_RUNTIME=firecracker` or `firecracker-pvm` and
+`AKERNEL_TEST_IMAGE=ubuntu:24.04` to exercise the same suite, including
+checkpoint/reload, against a virtio-fs image root. `AKERNEL_TEST_IMAGE` also
+accepts a Nydus image reference and enables checks for private writes and
+network policy replacement. Use immutable digest references when qualifying a
+runtime release, and run both OCI and Nydus images. The pinned distill-fs
+requires Nydus RAFS v5.
+
+The network checks use `https://example.com/` by default. Set
+`AKERNEL_TEST_NETWORK_URL` to an HTTP endpoint reachable from the sandbox to
+verify an isolated deployment without external network access. The suite checks
+access before blocking new flows, SDK command execution while blocked, and
+access after removing the policy. Images can include `curl` and CA certificates
+in advance; otherwise the suite installs them using `apt-get`. Omit
 `AKERNEL_TEST_IMAGE` to test the deployed default EROFS root.
 
 Load and transfer benchmarks live under [`benchmarks/`](./benchmarks) and are
