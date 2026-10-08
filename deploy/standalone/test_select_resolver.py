@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Ant Group Corporation.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the standalone runc resolver selection."""
+"""Tests for standalone direct-DNS resolver selection."""
 
 import importlib.util
 from pathlib import Path

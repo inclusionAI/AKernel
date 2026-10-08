@@ -268,18 +268,26 @@ configure_network() {
         sed_args+=(
             -e 's|^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$|runc="/usr/local/bin/runc"|'
         )
-        if ! grep -q '^[[:space:]]*# AKERNEL_RUNC_RESOLVER[[:space:]]*$' \
-            "${CONFIG_DIR}/sandboxd_config.toml"; then
-            log_error "AKERNEL_ENABLE_RUNC requires the # AKERNEL_RUNC_RESOLVER marker in sandboxd_config.toml"
+        if ! awk '
+            /^[[:space:]]*\[/ {
+                in_runtime = ($0 ~ /^[[:space:]]*\[plugin\.runtime\][[:space:]]*(#.*)?$/)
+            }
+            /^[[:space:]]*# AKERNEL_DIRECT_RESOLVER[[:space:]]*$/ {
+                count++
+                if (!in_runtime) invalid = 1
+            }
+            END { exit !(count == 1 && !invalid) }
+        ' "${CONFIG_DIR}/sandboxd_config.toml"; then
+            log_error "AKERNEL_ENABLE_RUNC requires exactly one # AKERNEL_DIRECT_RESOLVER marker under [plugin.runtime] in sandboxd_config.toml"
             exit 1
         fi
-        local resolver_args=(--output "${DATA_DIR}/sandboxd/config/runc-resolv.conf")
+        local resolver_args=(--output "${DATA_DIR}/sandboxd/config/direct-resolv.conf")
         if [[ -n "${AKERNEL_RUNC_RESOLV_CONF:-}" ]]; then
             resolver_args+=(--source "${AKERNEL_RUNC_RESOLV_CONF}")
         fi
         python3 "${SCRIPT_DIR}/select-resolver.py" "${resolver_args[@]}"
         sed_args+=(
-            -e 's|^[[:space:]]*# AKERNEL_RUNC_RESOLVER[[:space:]]*$|resolv_conf_path="/home/akernel/sandboxd/config/runc-resolv.conf"|'
+            -e 's|^[[:space:]]*# AKERNEL_DIRECT_RESOLVER[[:space:]]*$|direct_resolv_conf_path="/home/akernel/sandboxd/config/direct-resolv.conf"|'
         )
     fi
     if [[ -n "${AKERNEL_CHUNK_DB_SIZE}" ]]; then

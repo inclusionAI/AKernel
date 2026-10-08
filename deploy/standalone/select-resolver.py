@@ -3,7 +3,7 @@
 # Copyright (c) 2026 Ant Group Corporation.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""Select a host resolver usable from a standalone runc network namespace.
+"""Select a host resolver usable from standalone direct-DNS sandboxes.
 
 Automatic selection is deliberately disabled for systemd-resolved hosts: its
 flat resolv.conf cannot represent per-link domain routing or VPN DNS policy.
@@ -66,7 +66,7 @@ def select_resolver(
         raise ValueError(
             "systemd-resolved may use per-link or split DNS; automatic resolver "
             "selection cannot preserve that policy. Set AKERNEL_RUNC_RESOLV_CONF "
-            "to an approved resolver file reachable from runc sandboxes"
+            "to an approved resolver file reachable from direct-DNS sandboxes"
         )
     failures = []
     for source in defaults:
@@ -101,7 +101,7 @@ def main() -> None:
         content = select_resolver(args.source)
         write_resolver(args.output, content)
     except (OSError, UnicodeError, ValueError) as exc:
-        parser.exit(1, f"standalone runc resolver: {exc}\n")
+        parser.exit(1, f"standalone direct DNS resolver: {exc}\n")
 
 
 if __name__ == "__main__":
