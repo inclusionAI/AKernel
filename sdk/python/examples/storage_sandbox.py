@@ -12,28 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify an experimental gVisor writable root filesystem quota."""
+"""Verify gVisor writable storage limits with equal and smaller scheduling quotas."""
 
 from akernel_sdk import Sandbox
 
-STORAGE_MB = 256
+HARD_LIMIT_MB = 256
+SCHEDULING_QUOTA_MB = 64
+
+
+def verify_hard_limit(sandbox: Sandbox, *, successful_write_mb: int) -> None:
+    capacity = sandbox.commands.run("df -m /")
+    assert capacity.exit_code == 0, capacity.stderr
+    print(capacity.stdout)
+
+    # Write real data and flush it so this checks the writable layer's quota.
+    successful_write = sandbox.commands.run(
+        "dd if=/dev/zero of=/root/quota-ok bs=1M "
+        f"count={successful_write_mb} conv=fsync"
+    )
+    assert successful_write.exit_code == 0, successful_write.stderr
+
+    oversized_write = sandbox.commands.run(
+        "dd if=/dev/zero of=/root/quota-over bs=1M "
+        f"count={HARD_LIMIT_MB + 64} conv=fsync"
+    )
+    assert oversized_write.exit_code != 0, "storage hard limit was not enforced"
+    assert "No space left on device" in oversized_write.stderr, oversized_write.stderr
 
 
 def main() -> None:
-    with Sandbox(storage_mb=STORAGE_MB, cpu=1000, memory=2048) as sandbox:
-        small_write = sandbox.commands.run(
-            "dd if=/dev/zero of=/root/quota-ok bs=1M count=32 conv=fsync"
-        )
-        assert small_write.exit_code == 0, small_write.stderr
+    with Sandbox(storage_mb=HARD_LIMIT_MB, cpu=1000, memory=2048) as sandbox:
+        verify_hard_limit(sandbox, successful_write_mb=32)
+        print(f"Omitted hard limit follows the {HARD_LIMIT_MB} MiB scheduling quota")
 
-        oversized_write = sandbox.commands.run(
-            "dd if=/dev/zero of=/root/quota-over bs=1M count=320 conv=fsync"
+    with Sandbox(
+        storage_mb=SCHEDULING_QUOTA_MB,
+        storage_limit_mb=HARD_LIMIT_MB,
+        cpu=1000,
+        memory=2048,
+    ) as sandbox:
+        verify_hard_limit(sandbox, successful_write_mb=2 * SCHEDULING_QUOTA_MB)
+        print(
+            f"Wrote beyond the {SCHEDULING_QUOTA_MB} MiB scheduling quota; "
+            f"the {HARD_LIMIT_MB} MiB hard limit was enforced"
         )
-        assert oversized_write.exit_code != 0, "storage quota was not enforced"
-        assert "No space left on device" in oversized_write.stderr, (
-            oversized_write.stderr
-        )
-        print(f"Writable rootfs quota enforced at {STORAGE_MB} MiB")
 
 
 if __name__ == "__main__":

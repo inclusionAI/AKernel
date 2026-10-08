@@ -107,6 +107,7 @@ Sandbox(
     *,
     xpu: str | None = None,
     storage_mb: int | None = None,
+    storage_limit_mb: int = 0,
     network_policy: NetworkPolicy | None = None,
     dockerfile: DockerfileLaunch | None = None,
     extra_config: Mapping[str, object] | None = None,
@@ -128,17 +129,32 @@ supported. The bundled backend currently requires the gVisor `runsc` runtime
 and a node configured for gVisor nvproxy. Runtime compatibility is validated
 by the backend rather than the SDK.
 
-Set the writable root filesystem quota in MiB:
+Set the storage scheduling quota and actual writable root filesystem hard limit
+in MiB:
 
 ```python
-with Sandbox(storage_mb=20 * 1024) as sandbox:
+with Sandbox(storage_mb=4 * 1024, storage_limit_mb=20 * 1024) as sandbox:
     print(sandbox.commands.run("df -h /").stdout)
 ```
 
-The bundled backend currently requires `runsc` for an explicit `storage_mb`
-quota and uses sandboxd's disk-backed XFS filestore. Runtime compatibility is
-validated by the backend. When `storage_mb` is omitted, sandboxd retains its
-configured default 10 GiB memory-backed writable overlay. See
+`storage_mb` is the scheduling quota: the storage amount reserved when placing
+the sandbox. `storage_limit_mb` is the actual hard limit on writable-root
+capacity. In this example, scheduling reserves 4 GiB while the writable root
+can grow up to 20 GiB. Reserving less than the hard limit permits storage
+overcommit; the limit does not guarantee that the node has enough physical
+space for all sandboxes to reach their limits simultaneously.
+
+`storage_limit_mb=0` follows `storage_mb`, or the cluster default when the
+scheduling quota is omitted. If only a positive limit is given, the backend
+also reserves that amount for scheduling. A positive limit must be at least
+the explicit scheduling quota. Limits must be nonnegative integers; booleans
+are rejected.
+
+Explicit writable storage quotas are supported by `runsc` and Firecracker
+and use sandboxd's disk-backed filestore (ext4 in the bundled standalone
+deployment, XFS in the Terraform-managed Aliyun profile). Runtime compatibility
+is validated by the backend. If `storage_limit_mb` is not supported by the
+selected backend, a nonzero value fails explicitly. See
 [`examples/gpu_sandbox.py`](./examples/gpu_sandbox.py) and
 [`examples/storage_sandbox.py`](./examples/storage_sandbox.py).
 

@@ -470,6 +470,9 @@ class OpenYuanRongSandboxBackend:
         supports_inherit_entrypoint = _supports_keyword(
             yr_sandbox.Sandbox, "inherit_entrypoint"
         )
+        supports_storage_limit = _supports_keyword(
+            yr_sandbox.Sandbox, "storage_limit_mb"
+        )
         if spec.failover and not supports_failover:
             raise UnsupportedBackendFeatureError(
                 "The installed openyuanrong-sandbox backend does not support "
@@ -481,6 +484,12 @@ class OpenYuanRongSandboxBackend:
                 "The installed openyuanrong-sandbox backend does not support "
                 "inheriting image ENTRYPOINT and CMD. Upgrade it to 0.10.2rc1 "
                 "or newer."
+            )
+        if spec.storage_limit_mb and not supports_storage_limit:
+            raise UnsupportedBackendFeatureError(
+                "The installed openyuanrong-sandbox backend does not support "
+                "storage_limit_mb. Upgrade it to a version with writable "
+                "storage limit support."
             )
         rootfs = None
         if spec.rootfs is not None:
@@ -552,6 +561,8 @@ class OpenYuanRongSandboxBackend:
             extra_config=dict(spec.extra_config),
             create_timeout=create_timeout,
         )
+        if supports_storage_limit:
+            create_args["storage_limit_mb"] = spec.storage_limit_mb
         if supports_failover:
             create_args["failover"] = spec.failover
         if supports_inherit_entrypoint:
