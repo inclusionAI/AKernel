@@ -74,15 +74,10 @@ spec:
           args:
             - --configFile=/etc/traefik/traefik.yml
           ports:
-            {{- if .Values.traefik.enableWebEntrypoint }}
             - name: websecure
               containerPort: {{ .Values.traefik.ports.websecure }}
             - name: web
               containerPort: {{ .Values.traefik.ports.web }}
-            {{- else }}
-            - name: tcp
-              containerPort: {{ .Values.traefik.ports.tcp }}
-            {{- end }}
             - name: dashboard
               containerPort: {{ .Values.traefik.ports.dashboard }}
           livenessProbe:
@@ -113,7 +108,7 @@ spec:
               mountPath: /var/logs
             {{- if .Values.traefik.tls.enabled }}
             - name: tls-cert
-              mountPath: /openyuanrong/cert
+              mountPath: /etc/akernel/tls
               readOnly: true
             {{- end }}
         {{- if .Values.traefik.internalStats.enabled }}

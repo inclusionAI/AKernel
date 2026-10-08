@@ -1,7 +1,7 @@
 [Unit]
 Description=sandboxd.service
 After=network-online.target
-Before=yuanrong.service
+Before=adx.service
 
 [Service]
 PIDFile=/var/run/sandboxd.pid

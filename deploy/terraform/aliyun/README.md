@@ -53,9 +53,9 @@ make print-env
 ```
 
 The helper keeps generated local files under `.akernel/default/`, including
-`terraform.tfvars`, `iam-seed`, `terraform.tfstate`, `terraform.tfplan`, and
-the generated kubeconfig. Pass `ENV=<name>` for multiple independent deployment
-profiles.
+`terraform.tfvars`, `terraform.tfstate`, `terraform.tfplan`, the generated
+kubeconfig, and mode-0600 SDK credential files after `make print-env`. Pass
+`ENV=<name>` for multiple independent deployment profiles.
 
 For non-interactive agent usage:
 
@@ -186,29 +186,26 @@ image registry settings before applying the plan.
 
 ## Public endpoint model
 
-The default cloud deployment uses a split frontend plus a two-entrypoint
-Traefik LoadBalancer:
+The default cloud deployment uses ADX API Server with embedded Edge behind a
+two-entrypoint Traefik LoadBalancer:
 
-- `websecure:443` routes frontend API and exec websocket traffic over TLS.
+- `websecure:443` routes the Sandbox API and exec websocket traffic over TLS.
 - `web:80` routes function port-forwarding traffic over plain HTTP/WS.
 
 Use the Traefik LoadBalancer host or IP directly with the SDK:
 
 ```bash
 export AKERNEL_SERVER_ADDRESS=<traefik-load-balancer-ip>
+export AKERNEL_GATEWAY_ADDRESS=http://<traefik-load-balancer-ip>
 ```
 
 `traefik_tls_enabled` is only for mounting a custom default certificate. It is
 not required for the `websecure` router on port 443; Traefik serves its default
 certificate when the variable is `false`.
 
-To use the legacy single-entrypoint mode, set
-`traefik_enable_web_entrypoint=false` and configure `traefik_tcp_port`. In that
-mode SDK clients must include the port explicitly:
-
-```bash
-export AKERNEL_SERVER_ADDRESS=<traefik-load-balancer-ip>:<port>
-```
+`traefik_enable_web_entrypoint=false` selects the legacy single-entrypoint mode
+only when the legacy control plane is deployed. ADX deployments always expose
+the separate `websecure` control and `web` data ports.
 
 Enable OSS auth injection for AKernel node secret:
 
@@ -226,8 +223,6 @@ terraform apply \
 - `node_pool_key_name` and `node_pool_login_password` are mutually exclusive. Set only one.
 - If neither SSH key nor login password is set, Terraform passes `password = null` to node pool creation.
 - `kubeconfig_output_path` controls where the generated kubeconfig is written when `create_cluster=true`.
-- `iam_litebus_data_key` passes a stable JWT signing seed to the AKernel core chart. Set it when you want to generate SDK tokens locally from the same seed.
-- `master_public_access_8888` controls whether akernel-master is exposed via LoadBalancer; when `false` the service is kept as `ClusterIP`.
 - `oss_auths` and `registry_auths` accept strongly typed credential maps; keep
   their generated `terraform.tfvars` private.
 - `dragonfly_chart_repository` and `dragonfly_chart_version` select the

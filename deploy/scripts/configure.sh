@@ -35,7 +35,6 @@ enable_runc_override=""
 schedule_placement_policy_override=""
 grafana_public_access_override=""
 grafana_admin_password_override=""
-iam_seed_hex_override=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -137,10 +136,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --grafana-admin-password)
       grafana_admin_password_override="$2"
-      shift 2
-      ;;
-    --iam-seed-hex)
-      iam_seed_hex_override="$2"
       shift 2
       ;;
     *)
@@ -268,7 +263,6 @@ dir="$(state_dir "${env_name}")"
 mkdir -p "${dir}"
 chmod 700 "${dir}"
 
-seed_file="${dir}/iam-seed"
 tfvars_file="${dir}/terraform.tfvars"
 config_file="${dir}/config.env"
 kubeconfig_file="${dir}/kubeconfig"
@@ -280,9 +274,6 @@ if [[ "${force}" -ne 1 && ( -f "${tfvars_file}" || -f "${config_file}" ) ]]; the
   fi
   echo "Local AKernel profile already exists: ${dir}"
   echo "This will overwrite config.env and terraform.tfvars."
-  if [[ -f "${seed_file}" ]]; then
-    echo "The existing iam-seed will be reused so previously generated tokens stay compatible."
-  fi
   read -r -p "Overwrite this profile? [y/N]: " overwrite
   case "$(printf '%s' "${overwrite}" | tr '[:upper:]' '[:lower:]')" in
     y | yes)
@@ -293,23 +284,6 @@ if [[ "${force}" -ne 1 && ( -f "${tfvars_file}" || -f "${config_file}" ) ]]; the
   esac
 fi
 
-if [[ -n "${iam_seed_hex_override}" ]]; then
-  iam_seed_hex_override="$(printf '%s' "${iam_seed_hex_override}" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
-  if [[ ! "${iam_seed_hex_override}" =~ ^[0-9A-F]+$ || $(( ${#iam_seed_hex_override} % 2 )) -ne 0 ]]; then
-    die "--iam-seed-hex must be an even-length hex string"
-  fi
-  printf '%s\n' "${iam_seed_hex_override}" > "${seed_file}"
-  chmod 600 "${seed_file}"
-elif [[ ! -s "${seed_file}" ]]; then
-  generate_hex_seed > "${seed_file}"
-  chmod 600 "${seed_file}"
-fi
-iam_seed="$(tr -d '[:space:]' < "${seed_file}" | tr '[:lower:]' '[:upper:]')"
-if [[ ! "${iam_seed}" =~ ^[0-9A-F]+$ || $(( ${#iam_seed} % 2 )) -ne 0 ]]; then
-  die "${seed_file} must contain an even-length hexadecimal seed"
-fi
-printf '%s\n' "${iam_seed}" > "${seed_file}"
-chmod 600 "${seed_file}"
 printf '%s\n' "${grafana_admin_password}" > "${grafana_password_file}"
 chmod 600 "${grafana_password_file}"
 
@@ -356,12 +330,6 @@ master_image_repository = "${image_repository}"
 master_image_tag        = "${image_tag}"
 node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
-iam_litebus_data_key    = "${iam_seed}"
-
-frontend_enabled  = true
-frontend_replicas = 1
-frontend_cpu      = "1"
-frontend_memory   = "2Gi"
 
 traefik_enabled               = true
 install_traefik               = true
@@ -413,12 +381,6 @@ master_image_repository = "${image_repository}"
 master_image_tag        = "${image_tag}"
 node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
-iam_litebus_data_key    = "${iam_seed}"
-
-frontend_enabled  = true
-frontend_replicas = 1
-frontend_cpu      = "1"
-frontend_memory   = "2Gi"
 
 install_traefik                  = true
 traefik_public_access            = true
@@ -453,7 +415,6 @@ ENV_NAME=${env_name}
 REGION=${region}
 CLUSTER_NAME=${cluster_name}
 TFVARS_FILE=${tfvars_file}
-IAM_SEED_FILE=${seed_file}
 GRAFANA_PASSWORD_FILE=${grafana_password_file}
 KUBECONFIG_PATH=${kubeconfig_file}
 IMAGE_REPOSITORY=${image_repository}
@@ -475,7 +436,6 @@ fi
 
 info "wrote ${config_file}"
 info "wrote ${tfvars_file}"
-info "wrote ${seed_file}"
 info "wrote ${grafana_password_file}"
 echo
 echo "Next:"

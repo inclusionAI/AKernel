@@ -116,4 +116,4 @@ spec:
           name: prometheus-config
       - name: prometheus-storage
         persistentVolumeClaim:
-          claimName: prometheus-pvc-ssd
+          claimName: {{ .Values.prometheusServer.persistence.claimName | default "prometheus-pvc-ssd" }}

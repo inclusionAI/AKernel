@@ -14,6 +14,7 @@
 
 import http.server
 import os
+import shlex
 import socketserver
 import threading
 import time
@@ -27,23 +28,30 @@ _ENABLED = (
     and bool(os.environ.get("AKERNEL_TOKEN"))
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
-_IMAGE = os.environ.get("AKERNEL_TEST_IMAGE") or None
-
-_INSTALL_CURL_COMMAND = (
-    "apt-get update && "
-    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "
-    "curl ca-certificates"
+_IMAGE = (
+    os.environ.get("AKERNEL_TEST_INTEGRATION_IMAGE")
+    or os.environ.get("AKERNEL_TEST_IMAGE")
+    or None
 )
 
+_INSTALL_CURL_COMMAND = (
+    "command -v curl >/dev/null || ("
+    "apt-get update && "
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "
+    "curl ca-certificates)"
+)
+
+_CHECKPOINT_SOCKET = shlex.quote(
+    os.environ.get("AKERNEL_TEST_CHECKPOINT_SOCKET", "/run/akernel/execd.sock")
+)
 _CHECKPOINT_COMMAND = (
     "curl --fail-with-body --silent --show-error "
-    "--unix-socket /run/akernel/rrt.sock "
+    f"--unix-socket {_CHECKPOINT_SOCKET} "
     "--request POST http://localhost/checkpoint"
 )
 
 _REVERSE_TUNNEL_PROBE = (
-    "curl --fail --silent --show-error --max-time 10 "
-    "http://127.0.0.1:8766/health"
+    "curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8766/health"
 )
 
 
@@ -118,9 +126,11 @@ class SandboxIntegrationTest(unittest.TestCase):
         with self.sandbox.pty.create(on_data=output.extend) as session:
             session.send_stdin(b"printf 'AKERNEL_PTY_OK\\n'\n")
             session.resize(rows=40, cols=120)
+            session.send_stdin(b"stty size\n")
             session.send_stdin(b"exit 7\n")
             self.assertEqual(session.wait(timeout=30), 7)
         self.assertIn(b"AKERNEL_PTY_OK", output)
+        self.assertIn(b"40 120", output)
 
     def test_pty_sessions_are_independent(self):
         first_output = bytearray()

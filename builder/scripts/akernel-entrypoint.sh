@@ -27,15 +27,14 @@ fi
 
 case "${role}" in
     master|frontend)
-        /usr/local/bin/ensure-component-cert
-        exec /bin/bash /home/yuanrong/entrypoint.sh "$@"
+        exec /usr/local/bin/adx-service run
         ;;
     node)
         /bin/bash /root/prepare_node.sh
         exec /usr/sbin/init "$@"
         ;;
     standalone)
-        /usr/local/bin/ensure-component-cert
+        systemctl enable adx.service >/dev/null
         exec /usr/sbin/init "$@"
         ;;
     *)

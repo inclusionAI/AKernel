@@ -15,6 +15,9 @@ data:
         cluster: {{ .Values.prometheusServer.config.clusterName | quote }}
         environment: {{ .Values.prometheusServer.config.environment | quote }}
 
+    rule_files:
+      - /etc/prometheus/adx-rules.yaml
+
     scrape_configs:
       # Prometheus self-monitoring endpoint
       - job_name: 'prometheus'
@@ -418,3 +421,16 @@ data:
 
   pushgateways.json: |
     {{ .Values.prometheusServer.config.pushgateways | toJson | indent 4 }}
+
+  adx-rules.yaml: |
+    groups:
+      - name: adx-dashboard-compatibility
+        interval: 15s
+        rules:
+          # The copied ADX overview uses the deployment-level sandbox_running name.
+          # Count Running environments, with an explicit zero for registered nodes.
+          - record: sandbox_running
+            expr: >-
+              sum by (adx_env, node_id) (adx_coordinator_environments{state="Running"})
+              or on (adx_env, node_id)
+              (max by (adx_env, node_id) (adx_coordinator_node_reachable) * 0)

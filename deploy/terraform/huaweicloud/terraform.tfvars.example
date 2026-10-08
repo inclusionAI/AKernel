@@ -76,8 +76,6 @@ monitor_storage_class = "csi-disk"
 
 # --- Component images ---
 # Override image repository/tag for each component.
-# etcd_image_repository    = "public.ecr.aws/bitnami/etcd"
-# etcd_image_tag           = "3.6.8"
 master_image_repository   = "swr.cn-north-4.myhuaweicloud.com/akernel/all-in-one"
 master_image_tag          = "<release-tag>"
 node_image_repository     = "swr.cn-north-4.myhuaweicloud.com/akernel/all-in-one"
@@ -87,7 +85,6 @@ node_image_tag            = "<release-tag>"
 
 # Generate a unique seed for each deployment. Guided `make config` writes this
 # automatically; direct Terraform users can use `openssl rand -hex 32`.
-# iam_litebus_data_key = "<64-character-hex-seed>"
 
 # Optional host-kernel runc runtime. The node image must be built with the
 # matching AKERNEL_ENABLE_RUNC=true profile setting.
@@ -146,23 +143,9 @@ schedule_placement_policy = "spread"
 # dragonfly_scheduler_resources   = { replicas = 1, cpu_request = "500m", memory_request = "512Mi", cpu_limit = "2", memory_limit = "4Gi" }
 # dragonfly_seed_client_resources = { cpu_request = "500m", memory_request = "512Mi", cpu_limit = "2", memory_limit = "4Gi" }
 
-# Optional: expose akernel-master port 8888 through public LoadBalancer.
 # Set true to enable public access.
-# master_public_access_8888 = true
 # Optional: or specify the Service EIP as loadBalancerIP.
-# master_service_loadbalancer_ip = "1.2.3.4"
 # Optional: extra service annotations.
-# master_service_annotations = {}
-
-# Optional: master replicas (for HA when frontend is enabled).
-# master_replicas = 1
-
-# Optional: enable frontend Deployment (splits from master for independent scaling).
-# When enabled, Traefik routes API traffic to akernel-frontend instead of akernel-master.
-# frontend_enabled = false
-# frontend_replicas = 2
-# frontend_cpu      = "4"
-# frontend_memory   = "8Gi"
 
 # Optional: traefik replicas.
 # traefik_replicas = 1

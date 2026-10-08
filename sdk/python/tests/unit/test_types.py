@@ -52,8 +52,6 @@ assert 'dockerfile_parse' not in sys.modules
 assert 'yr' not in sys.modules
 assert 'yr_sandbox' not in sys.modules
 assert 'akernel_sdk._backends.openyuanrong_sandbox' not in sys.modules
-assert 'akernel_sdk._backends.openyuanrong_sdk' not in sys.modules
-assert 'akernel_sdk._backends.openyuanrong_sdk_impl' not in sys.modules
 assert get_type_hints(Sandbox.__init__)['dockerfile'] == DockerfileLaunch | None
 from akernel_sdk._dockerfile import DockerfileLaunch as CompatDockerfileLaunch
 assert CompatDockerfileLaunch is DockerfileLaunch

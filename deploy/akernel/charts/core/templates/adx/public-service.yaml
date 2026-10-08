@@ -1,0 +1,26 @@
+{{- if .Values.adx.ingressApi.publicService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: akernel-adx-public
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.adx.ingressApi.publicService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.adx.ingressApi.publicService.type }}
+  externalTrafficPolicy: {{ .Values.adx.ingressApi.publicService.externalTrafficPolicy }}
+  {{- if and (eq .Values.adx.ingressApi.publicService.type "LoadBalancer") .Values.adx.ingressApi.publicService.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.adx.ingressApi.publicService.loadBalancerIP | quote }}
+  {{- end }}
+  selector:
+    app: akernel-adx-ingress-api
+  ports:
+    - name: control
+      port: 443
+      targetPort: control
+    - name: data
+      port: 80
+      targetPort: data
+{{- end }}

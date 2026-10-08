@@ -16,7 +16,13 @@
 
 import shlex
 
-from akernel_sdk import NetworkPolicy, NetworkRule, PortRange, Sandbox
+from akernel_sdk import (
+    BackendOperationError,
+    NetworkPolicy,
+    NetworkRule,
+    PortRange,
+    Sandbox,
+)
 
 
 def tcp_connection(host: str, port: int) -> str:
@@ -26,6 +32,15 @@ def tcp_connection(host: str, port: int) -> str:
 
 def direct_connection() -> str:
     return tcp_connection("1.1.1.1", 53)
+
+
+def assert_connection_denied(sandbox: Sandbox, command: str, timeout: int) -> None:
+    try:
+        result = sandbox.commands.run(command, timeout=timeout)
+    except BackendOperationError as error:
+        assert "timed out" in str(error).lower(), error
+    else:
+        assert result.exit_code != 0
 
 
 def main() -> None:
@@ -40,8 +55,7 @@ def main() -> None:
         control = blocked.commands.run("printf 'control plane works'")
         assert control.exit_code == 0, control.stderr
 
-        external = blocked.commands.run(direct_connection(), timeout=10)
-        assert external.exit_code != 0
+        assert_connection_denied(blocked, direct_connection(), timeout=10)
         print("Block policy denied an external connection.")
 
         blocked.files.write("/tmp/acl.txt", "RuntimeRPC fallback")
@@ -50,10 +64,9 @@ def main() -> None:
 
     dns_policy = NetworkPolicy.deny_dns("github.com", "*.github.com")
     with Sandbox(network_policy=dns_policy) as dns_filtered:
-        denied = dns_filtered.commands.run(
-            tcp_connection("github.com", 443), timeout=30
+        assert_connection_denied(
+            dns_filtered, tcp_connection("github.com", 443), timeout=30
         )
-        assert denied.exit_code != 0
 
         allowed = dns_filtered.commands.run(
             tcp_connection("example.com", 443), timeout=30
@@ -82,26 +95,22 @@ def main() -> None:
         )
         assert allowed.exit_code == 0, allowed.stderr
 
-        denied = restricted.commands.run(tcp_connection("example.com", 443), timeout=10)
-        assert denied.exit_code != 0
+        assert_connection_denied(
+            restricted, tcp_connection("example.com", 443), timeout=10
+        )
         print("Generic egress allowlist enforced domain and port rules.")
     with Sandbox() as dynamic:
         dynamic.update_network_policy(NetworkPolicy.block())
-        denied = dynamic.commands.run(direct_connection(), timeout=10)
-        assert denied.exit_code != 0
+        assert_connection_denied(dynamic, direct_connection(), timeout=10)
 
         dynamic.update_network_policy(
             NetworkPolicy.deny_dns("github.com", "*.github.com")
         )
-        allowed = dynamic.commands.run(
-            tcp_connection("example.com", 443), timeout=30
-        )
+        allowed = dynamic.commands.run(tcp_connection("example.com", 443), timeout=30)
         assert allowed.exit_code == 0, allowed.stderr
 
         dynamic.update_network_policy(None)
-        cleared = dynamic.commands.run(
-            tcp_connection("github.com", 443), timeout=30
-        )
+        cleared = dynamic.commands.run(tcp_connection("github.com", 443), timeout=30)
         assert cleared.exit_code == 0, cleared.stderr
         print("Dynamic policy replacement and clearing succeeded.")
 

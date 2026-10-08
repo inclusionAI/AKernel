@@ -1,0 +1,180 @@
+# ADX control-role collection: local metrics and shared file logs.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+  prometheus/adx:
+    config:
+      scrape_configs:
+      - job_name: ${env:ADX_METRICS_COMPONENT}
+        scrape_interval: 15s
+        static_configs:
+        - targets:
+          - ${env:ADX_METRICS_TARGET}
+          labels:
+            component_name: ${env:ADX_METRICS_COMPONENT}
+  filelog/adx:
+    include:
+    - /logs/*.log
+    - /logs/*.log.[0-9]*
+    exclude:
+    - '**/*.gz'
+    - '**/*.tmp'
+    start_at: beginning
+    storage: file_storage
+    include_file_name: true
+    include_file_path: true
+    fingerprint_size: 128
+    max_log_size: 1MiB
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0s
+    operators:
+    - type: json_parser
+      if: body matches '^[[:space:]]*[{]'
+      parse_to: body
+      on_error: send
+    - type: regex_parser
+      parse_from: attributes["log.file.name"]
+      regex: ^(?P<component_name>.+)\.log(?:\.[0-9]{20})?$
+    - type: move
+      from: attributes.component_name
+      to: resource["component_name"]
+    - type: copy
+      from: resource["component_name"]
+      to: resource["service.name"]
+extensions:
+  file_storage:
+    directory: /collector-state
+    create_directory: true
+processors:
+  transform/adx_log_body:
+    error_mode: ignore
+    log_statements:
+    - context: log
+      conditions:
+      - IsMap(body) and IsMap(body["fields"]) and (IsString(body["fields"]["message"]) or IsString(body["fields"]["event"]))
+      statements:
+      - merge_maps(attributes, body, "upsert")
+      - merge_maps(attributes, body["fields"], "upsert")
+      - delete_key(attributes, "fields")
+      - set(severity_text, attributes["level"]) where IsString(attributes["level"])
+      - set(severity_number, SEVERITY_NUMBER_TRACE) where severity_text == "TRACE"
+      - set(severity_number, SEVERITY_NUMBER_DEBUG) where severity_text == "DEBUG"
+      - set(severity_number, SEVERITY_NUMBER_INFO) where severity_text == "INFO"
+      - set(severity_number, SEVERITY_NUMBER_WARN) where severity_text == "WARN"
+      - set(severity_number, SEVERITY_NUMBER_ERROR) where severity_text == "ERROR"
+      - set(time, Time(attributes["timestamp"], "%Y-%m-%dT%H:%M:%S.%fZ")) where IsString(attributes["timestamp"])
+      - set(body, attributes["event"]) where not IsString(attributes["message"]) and IsString(attributes["event"])
+      - set(body, attributes["message"]) where IsString(attributes["message"])
+      - delete_key(attributes, "message")
+  batch:
+    timeout: 5s
+    send_batch_size: 200
+    send_batch_max_size: 200
+  memory_limiter:
+    limit_mib: 128
+    spike_limit_mib: 32
+    check_interval: 1s
+  transform/adx:
+    error_mode: ignore
+    log_statements:
+    - context: resource
+      statements:
+      - set(attributes["component_name"], "adx-coordinator") where attributes["component_name"]
+        == "coordinator"
+      - set(attributes["component_name"], "adx-apiserver") where attributes["component_name"]
+        == "apiserver"
+      - set(attributes["component_name"], "adx-ingress") where attributes["component_name"]
+        == "ingress"
+      - set(attributes["component_name"], "adx-relay") where attributes["component_name"]
+        == "relay"
+      - set(attributes["service.name"], attributes["component_name"]) where attributes["component_name"]
+        != nil
+    metric_statements:
+    - context: resource
+      statements:
+      - set(attributes["component_name"], attributes["process.executable.name"]) where
+        attributes["process.executable.name"] != nil
+  resource:
+    attributes:
+    - key: akernel_env
+      value: ${env:AKERNEL_ENV:-default}
+      action: upsert
+    - key: adx_env
+      value: ${env:AKERNEL_ENV:-default}
+      action: upsert
+    - key: k8s.namespace.name
+      value: ${env:POD_NAMESPACE:-standalone}
+      action: upsert
+    - key: k8s.pod.name
+      value: ${env:POD_NAME:-standalone}
+      action: upsert
+    - key: k8s.node.name
+      value: ${env:NODE_NAME:-standalone}
+      action: upsert
+exporters:
+  otlphttp/loki:
+    endpoint: http://${env:LOKI_ENDPOINT:-loki:3100}/otlp
+    tls:
+      insecure: true
+  otlp/tempo:
+    endpoint: ${env:TEMPO_ENDPOINT:-tempo:4317}
+    tls:
+      insecure: true
+  prometheusremotewrite:
+    endpoint: http://${env:PROMETHEUS_ENDPOINT:-prometheus:9090}/api/v1/write
+    tls:
+      insecure: true
+    resource_to_telemetry_conversion:
+      enabled: true
+service:
+  extensions:
+  - file_storage
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      readers:
+      - pull:
+          exporter:
+            prometheus:
+              host: 127.0.0.1
+              port: 18889
+  pipelines:
+    logs:
+      receivers:
+      - filelog/adx
+      - otlp
+      processors:
+      - memory_limiter
+      - resource
+      - transform/adx
+      - transform/adx_log_body
+      - batch
+      exporters:
+      - otlphttp/loki
+    traces:
+      receivers:
+      - otlp
+      processors:
+      - memory_limiter
+      - resource
+      - batch
+      exporters:
+      - otlp/tempo
+    metrics:
+      receivers:
+      - otlp
+      - prometheus/adx
+      processors:
+      - memory_limiter
+      - resource
+      - transform/adx
+      - batch
+      exporters:
+      - prometheusremotewrite

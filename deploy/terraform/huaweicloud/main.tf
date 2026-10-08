@@ -44,17 +44,6 @@ locals {
 
   # When auto-creating ELB on Huawei Cloud CCE, inject required annotations
   # so the cloud-controller-manager provisions the ELB automatically.
-  huaweicloud_master_elb_annotations = var.master_public_access_8888 ? {
-    "kubernetes.io/elb.class" = "union"
-    "kubernetes.io/elb.autocreate" = jsonencode({
-      type                 = "public"
-      bandwidth_name       = "${var.cluster_name}-master-elb"
-      bandwidth_chargemode = var.master_elb_bandwidth_charge_mode
-      bandwidth_size       = var.master_elb_bandwidth_size
-      bandwidth_sharetype  = "PER"
-      eip_type             = var.master_elb_eip_type
-    })
-  } : {}
   huaweicloud_traefik_elb_annotations = var.traefik_public_access ? {
     "kubernetes.io/elb.class" = "union"
     "kubernetes.io/elb.autocreate" = jsonencode({
@@ -98,8 +87,6 @@ locals {
   ]) : local.node_pool_bootstrap_script
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
-    etcd_image_repository          = var.etcd_image_repository
-    etcd_image_tag                 = var.etcd_image_tag
     master_image_repository        = var.master_image_repository
     master_image_tag               = var.master_image_tag
     schedule_placement_policy      = var.schedule_placement_policy
@@ -107,11 +94,7 @@ locals {
     node_image_tag                 = var.node_image_tag
     traefik_image_repository       = var.traefik_image_repository
     traefik_image_tag              = var.traefik_image_tag
-    iam_litebus_data_key           = var.iam_litebus_data_key
     enable_kruise                  = var.install_prereqs
-    master_service_type            = var.master_public_access_8888 ? var.master_service_type : "ClusterIP"
-    master_service_annotations     = merge(local.huaweicloud_master_elb_annotations, var.master_service_annotations)
-    master_service_loadbalancer_ip = var.master_public_access_8888 ? var.master_service_loadbalancer_ip : ""
     sandboxd_nat_backend           = var.sandboxd_nat_backend
     chunk_db_size                  = var.chunk_db_size
     enable_runc                    = var.enable_runc
@@ -124,7 +107,6 @@ locals {
 
     etcd_cpu         = var.etcd_resources.cpu
     etcd_memory      = var.etcd_resources.memory
-    etcd_ephemeral   = var.etcd_resources.ephemeral_storage
     etcd_pvc_size    = var.etcd_resources.pvc_size
     master_cpu       = var.master_resources.cpu
     master_memory    = var.master_resources.memory
@@ -142,11 +124,6 @@ locals {
     monitor_namespace = var.monitor_namespace
     akernel_env       = length(var.akernel_env) > 0 ? var.akernel_env : var.cluster_name
 
-    master_replicas   = var.master_replicas
-    frontend_enabled  = var.frontend_enabled
-    frontend_replicas = var.frontend_replicas
-    frontend_cpu      = var.frontend_cpu
-    frontend_memory   = var.frontend_memory
 
     install_traefik                 = var.install_traefik
     traefik_replicas                = var.traefik_replicas
@@ -679,6 +656,25 @@ resource "null_resource" "ensure_monitor_namespace" {
   depends_on = [local_sensitive_file.kubeconfig, huaweicloud_cce_node_pool.default, huaweicloud_nat_snat_rule.node_subnet, huaweicloud_nat_snat_rule.pod_subnet]
 }
 
+resource "null_resource" "ensure_adx_secret" {
+  triggers = {
+    always = timestamp()
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      "${path.module}/../../scripts/ensure-adx-secret.sh" \
+        --namespace "${var.core_namespace}" \
+        --name akernel-adx-tls \
+        --kubeconfig "${local.kubeconfig_path}"
+    EOT
+  }
+
+  depends_on = [null_resource.ensure_core_namespace]
+}
+
 # On re-apply, OpenKruise webhooks may exist from a previous run but the
 # kruise-manager pods may be unreachable (crash, node drain, etc.). The API
 # server still routes DaemonSet/StatefulSet mutations through these stale
@@ -775,7 +771,7 @@ resource "helm_release" "akernel_core" {
     value = sha256(join("", [for f in fileset("${path.module}/../../akernel/charts/core", "**") : filesha256("${path.module}/../../akernel/charts/core/${f}")]))
   }
 
-  depends_on = [local_sensitive_file.kubeconfig, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_kruise_webhooks_healthy, null_resource.cleanup_orphaned_helm_releases]
+  depends_on = [local_sensitive_file.kubeconfig, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.ensure_kruise_webhooks_healthy, null_resource.cleanup_orphaned_helm_releases]
 }
 
 resource "helm_release" "akernel_monitor" {

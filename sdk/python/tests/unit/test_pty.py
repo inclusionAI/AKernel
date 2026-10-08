@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import json
 import unittest
+import weakref
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -64,9 +66,7 @@ class PtyTest(unittest.TestCase):
             on_done=lambda: None,
         )
         connection._handle_control(
-            json.dumps(
-                {"version": 1, "type": "started", "session_id": "session-1"}
-            )
+            json.dumps({"version": 1, "type": "started", "session_id": "session-1"})
         )
         self.assertEqual(connection.session_id, "session-1")
         connection._handle_control(
@@ -128,22 +128,66 @@ class PtyTest(unittest.TestCase):
         with self.assertRaisesRegex(PtyError, "broken"):
             session.wait(timeout=1)
 
-    @patch.dict(
-        "os.environ",
-        {
-            "AKERNEL_TOKEN": "token",
-            "AKERNEL_SERVER_ADDRESS": "127.0.0.1:8080",
-        },
-        clear=False,
-    )
-    @patch("akernel_sdk.pty._PtyConnection")
-    def test_manager_waits_for_started_connection(self, connection_type):
-        connection = connection_type.return_value
+    def test_wait_releases_completed_session_but_not_pending_session(self):
+        driver = MagicMock()
+        driver.create.return_value.done = False
+        manager = Pty("sandbox", driver=driver)
+        session = manager.create(["/bin/sh"])
+        driver.create.return_value.wait.side_effect = TimeoutError("still running")
+        with self.assertRaises(TimeoutError):
+            session.wait(0.1)
+        self.assertIn(session, manager._sessions)
+        driver.create.return_value.wait.side_effect = None
+        driver.create.return_value.wait.return_value = 0
+        self.assertEqual(session.wait(1), 0)
+        self.assertNotIn(session, manager._sessions)
+
+    def test_factory_does_not_own_unreferenced_session_wrappers(self):
+        driver = MagicMock()
+        driver.create.return_value.done = False
+        manager = Pty("sandbox", driver=driver)
+        session = manager.create(["/bin/sh"])
+        reference = weakref.ref(session)
+        del session
+        gc.collect()
+        self.assertIsNone(reference())
+        self.assertEqual(len(manager._sessions), 0)
+
+    @patch("akernel_sdk.pty.load_backend")
+    def test_manager_resolves_backend_for_detached_instance(self, load_backend):
+        connection = load_backend.return_value.pty_for.return_value.create.return_value
         connection.session_id = "session-4"
         session = Pty("sandbox-4").create(["/bin/bash"], timeout=2)
 
-        connection.start.assert_called_once_with(2.0)
+        load_backend.return_value.pty_for.assert_called_once_with("sandbox-4")
+        load_backend.return_value.pty_for.return_value.create.assert_called_once_with(
+            ["/bin/bash"], rows=24, cols=80, on_data=None, timeout=2
+        )
         self.assertEqual(session.session_id, "session-4")
+
+    def test_manager_delegates_to_backend_native_pty(self):
+        driver = MagicMock()
+        native = MagicMock()
+        native.session_id = "session-native"
+        driver.create.return_value = native
+
+        session = Pty("sandbox-native", driver=driver).create(
+            ["/bin/bash", "-lc", "printf ok"],
+            rows=40,
+            cols=120,
+            timeout=3,
+        )
+
+        driver.create.assert_called_once_with(
+            ["/bin/bash", "-lc", "printf ok"],
+            rows=40,
+            cols=120,
+            on_data=None,
+            timeout=3,
+        )
+        self.assertEqual(session.session_id, "session-native")
+        session.close()
+        native.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

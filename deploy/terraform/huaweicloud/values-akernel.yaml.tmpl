@@ -1,9 +1,6 @@
 kruise:
   enabled: ${enable_kruise}
 
-auth:
-  litebusDataKey: "${iam_litebus_data_key}"
-
 monitoring:
   akernelEnv: "${akernel_env}"
 %{ if install_monitor ~}
@@ -12,61 +9,43 @@ monitoring:
   tempoEndpoint: "http://tempo.${monitor_namespace}.svc:3200"
 %{ endif ~}
 
-etcd:
-  image:
-    repository: "${etcd_image_repository}"
-    tag: "${etcd_image_tag}"
-  persistence:
-    enabled: true
-    storageClassName: "csi-disk"
-    size: "${etcd_pvc_size}"
-    accessModes:
-      - "ReadWriteOnce"
-  resources:
-    limits:
-      cpu: "${etcd_cpu}"
-      memory: "${etcd_memory}"
-      ephemeral-storage: "${etcd_ephemeral}"
-    requests:
-      cpu: "${etcd_cpu}"
-      memory: "${etcd_memory}"
-      ephemeral-storage: "${etcd_ephemeral}"
-
-master:
-  replicas: ${master_replicas}
-  schedulePlacementPolicy: "${schedule_placement_policy}"
-  image:
-    repository: "${master_image_repository}"
-    tag: "${master_image_tag}"
-  service:
-    type: "${master_service_type}"
-    annotations: ${jsonencode(master_service_annotations)}
-    loadBalancerIP: "${master_service_loadbalancer_ip}"
-  resources:
-    limits:
-      cpu: "${master_cpu}"
-      memory: "${master_memory}"
-      ephemeral-storage: "${master_ephemeral}"
-    requests:
-      cpu: "${master_cpu}"
-      memory: "${master_memory}"
-      ephemeral-storage: "${master_ephemeral}"
-%{ if frontend_enabled ~}
-
-frontend:
-  enabled: true
-  replicas: ${frontend_replicas}
-  image:
-    repository: "${master_image_repository}"
-    tag: "${master_image_tag}"
-  resources:
-    limits:
-      cpu: "${frontend_cpu}"
-      memory: "${frontend_memory}"
-    requests:
-      cpu: "${frontend_cpu}"
-      memory: "${frontend_memory}"
-%{ endif ~}
+adx:
+  tls:
+    existingSecret: akernel-adx-tls
+  redis:
+    mode: managed
+    appendfsync: everysec
+    persistence:
+      enabled: true
+      storageClassName: "csi-disk"
+      size: "${etcd_pvc_size}"
+      accessModes:
+        - "ReadWriteOnce"
+    resources:
+      limits:
+        cpu: "${etcd_cpu}"
+        memory: "${etcd_memory}"
+      requests:
+        cpu: "${etcd_cpu}"
+        memory: "${etcd_memory}"
+  coordinator:
+    replicas: 1
+    resources:
+      limits:
+        cpu: "${master_cpu}"
+        memory: "${master_memory}"
+      requests:
+        cpu: "${master_cpu}"
+        memory: "${master_memory}"
+  ingressApi:
+    replicas: 1
+    resources:
+      limits:
+        cpu: "${master_cpu}"
+        memory: "${master_memory}"
+      requests:
+        cpu: "${master_cpu}"
+        memory: "${master_memory}"
 
 node:
   image:
@@ -202,8 +181,7 @@ node:
         registry_auths_path="/home/akernel/sandboxd/config/registry_auths.json"
         cgroup_memory_limit="64GiB"
 
-        # node-resource config. sock_path matches what yuanrong's C++
-        # external_system_collector reads, so it must stay /var/run/...
+        # Node resource reports consumed by the control-plane collector.
         [plugin.node_resource]
         provider="kubernetes"
         sock_path="/var/run/resource.sock"
@@ -243,3 +221,9 @@ traefik:
 %{ if traefik_grafana_url != "" ~}
     url: "${traefik_grafana_url}"
 %{ endif ~}
+
+coordinator:
+  image:
+    repository: "${master_image_repository}"
+    tag: "${master_image_tag}"
+  schedulePlacementPolicy: "${schedule_placement_policy}"

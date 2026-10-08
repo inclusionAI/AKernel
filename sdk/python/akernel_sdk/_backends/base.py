@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Protocol
+from typing import Any, Protocol
 
 from .._addresses import Endpoint
 from ..types import (
@@ -136,6 +136,20 @@ class FilesystemDriver(Protocol):
     def copy_to_local(self, remote_path: str, local_path: str) -> None: ...
 
 
+class PtyDriver(Protocol):
+    """Backend-native PTY factory consumed by :class:`Pty`."""
+
+    def create(
+        self,
+        command: list[str],
+        *,
+        rows: int,
+        cols: int,
+        on_data: Any,
+        timeout: float,
+    ) -> Any: ...
+
+
 class BackendSession(Protocol):
     """One backend-native remote sandbox hidden behind AKernel types."""
 
@@ -147,6 +161,9 @@ class BackendSession(Protocol):
 
     @property
     def files(self) -> FilesystemDriver: ...
+
+    @property
+    def pty(self) -> PtyDriver | None: ...
 
     def is_running(self) -> bool: ...
 
@@ -174,6 +191,8 @@ class Backend(Protocol):
     capabilities: frozenset[Capability]
 
     def create(self, spec: SandboxSpec) -> BackendSession: ...
+
+    def pty_for(self, instance_id: str) -> PtyDriver: ...
 
     def delete_named(self, name: str) -> None: ...
 

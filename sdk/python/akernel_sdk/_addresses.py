@@ -18,8 +18,8 @@ The public SDK accepts a compact ``AKERNEL_SERVER_ADDRESS`` value:
 
 * ``host:port``: shared-port mode.  Frontend API and exec WebSocket use the
   explicit port with TLS; public port-forward URLs use it with plain HTTP.
-* ``host:port``: shared-port mode.  Frontend API, exec WebSocket, and public
-  port-forward URLs all use the explicit port with TLS by default.
+* ``host``: control traffic uses TLS port 443; public sandbox URLs use HTTP
+  port 80.
 
 ``AKERNEL_GATEWAY_ADDRESS`` remains an explicit override for standalone or
 custom network topologies.  When it is set without a scheme, it is treated as a
@@ -121,7 +121,7 @@ def gateway_endpoint_from_env() -> Endpoint:
     """Return the public port-forwarding gateway endpoint.
 
     An explicit gateway override is parsed as plain HTTP by default because
-    standalone exposes Traefik's web entrypoint without TLS.  Without an
+    standalone exposes a plain HTTP data entrypoint.  Without an
     explicit gateway, host-only server addresses use public 80, while
     host:port server addresses reuse the API port with plain HTTP.
     """

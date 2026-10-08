@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
 done
 vendor="$(normalize_vendor "${vendor}")"
 
-require_cmd bash python3 docker terraform helm kubectl
+require_cmd bash python3 docker terraform helm kubectl openssl
 vendor_dir "${vendor}" >/dev/null
 
 info "required tools are available"

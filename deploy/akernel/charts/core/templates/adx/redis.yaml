@@ -1,0 +1,135 @@
+{{- if eq .Values.adx.redis.mode "managed" }}
+{{- $auth := lookup "v1" "Secret" .Release.Namespace "akernel-adx-redis-auth" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: akernel-adx-redis-auth
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+data:
+  {{- if $auth }}
+  password: {{ index $auth.data "password" | required "existing Redis auth Secret is missing password" | quote }}
+  {{- else }}
+  password: {{ randAlphaNum 64 | b64enc | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: akernel-adx-redis
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: akernel-adx-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: akernel-adx-redis
+  namespace: {{ .Release.Namespace }}
+spec:
+  serviceName: akernel-adx-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: akernel-adx-redis
+  template:
+    metadata:
+      labels:
+        app: akernel-adx-redis
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: "{{ include "core.image" (dict "root" . "image" .Values.image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.image) }}
+          command:
+            - /bin/bash
+            - -ec
+            - 'exec /opt/adx/current/bin/redis-server "$@" --requirepass "$REDIS_PASSWORD"'
+            - --
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: akernel-adx-redis-auth
+                  key: password
+          args:
+            - --bind
+            - 0.0.0.0
+            - --protected-mode
+            - "no"
+            - --port
+            - "6379"
+            - --dir
+            - /var/lib/redis
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - {{ .Values.adx.redis.appendfsync | quote }}
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.adx.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redis
+      {{- if not .Values.adx.redis.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+  {{- if .Values.adx.redis.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- toYaml .Values.adx.redis.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.adx.redis.persistence.size | quote }}
+        {{- if .Values.adx.redis.persistence.storageClassName }}
+        storageClassName: {{ .Values.adx.redis.persistence.storageClassName | quote }}
+        {{- end }}
+  {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: akernel-adx-redis
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: akernel-adx-redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [akernel-adx-coordinator, akernel-adx-ingress-api, node]
+      ports:
+        - protocol: TCP
+          port: 6379
+{{- end }}

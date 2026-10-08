@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Launch a sandbox from a public OCI image."""
+"""Launch a sandbox from a configured OCI image."""
+
+import os
 
 from akernel_sdk import Sandbox
 
-IMAGE = "ubuntu:24.04"
+IMAGE = os.environ.get("AKERNEL_TEST_IMAGE", "ubuntu:24.04")
 
 
 def main() -> None:

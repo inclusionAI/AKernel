@@ -27,6 +27,8 @@ from urllib.error import HTTPError, URLError
 from ._addresses import api_endpoint_from_env
 from .types import NodeInfo
 
+RESOURCE_PATH = "/api/sandbox/v1/resources"
+
 
 class ResourceAPIError(RuntimeError):
     """An authenticated resource-view request failed."""
@@ -53,7 +55,7 @@ def query_resource_view() -> dict[str, Any]:
         raise ResourceAPIError("AKERNEL_TOKEN is not set")
     endpoint = api_endpoint_from_env()
     req = request.Request(
-        f"{endpoint.base_url()}/global-scheduler/resources",
+        f"{endpoint.base_url()}{RESOURCE_PATH}",
         method="GET",
         headers={"X-Auth": token, "Type": "json"},
     )
@@ -144,31 +146,41 @@ def extract_resources(proto_resources: Any) -> dict[str, float]:
 
 
 def extract_labels(proto_labels: Any) -> dict[str, list[str]]:
-    """Convert protobuf-JSON counters to label value lists."""
+    """Convert current and legacy label encodings to value lists."""
 
     if not isinstance(proto_labels, Mapping):
         return {}
     result: dict[str, list[str]] = {}
     for raw_key, counter in proto_labels.items():
-        items = counter.get("items", {}) if isinstance(counter, Mapping) else {}
-        result[str(raw_key)] = (
-            [str(item) for item in items] if isinstance(items, Mapping) else []
-        )
+        if isinstance(counter, Mapping):
+            items = counter.get("items", {})
+            values = list(items) if isinstance(items, Mapping) else []
+        elif isinstance(counter, (list, tuple)):
+            values = list(counter)
+        elif counter is None:
+            values = []
+        else:
+            values = [counter]
+        result[str(raw_key)] = [str(item) for item in values]
     return result
 
 
 def parse_resource_nodes(data: Mapping[str, Any]) -> list[NodeInfo]:
     """Convert a resource-view response into stable AKernel node values."""
 
-    resource = data.get("resource", data)
-    if not isinstance(resource, Mapping):
-        return []
-    fragment = resource.get("fragment")
-    units = (
-        list(fragment.values())
-        if isinstance(fragment, Mapping) and fragment
-        else [resource]
-    )
+    items = data.get("items")
+    if isinstance(items, list):
+        units = items
+    else:
+        resource = data.get("resource", data)
+        if not isinstance(resource, Mapping):
+            return []
+        fragment = resource.get("fragment")
+        units = (
+            list(fragment.values())
+            if isinstance(fragment, Mapping) and fragment
+            else [resource]
+        )
 
     nodes: list[NodeInfo] = []
     for unit in units:

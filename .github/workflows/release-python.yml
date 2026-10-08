@@ -29,7 +29,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: sdk/python/pyproject.toml
+          cache-dependency-path: |
+            sdk/python/pyproject.toml
+            sdk/python/adx-sdk.lock.json
 
       - name: Validate release tag
         env:
@@ -67,7 +69,15 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
+          python sdk/python/scripts/prepare_adx_dependency.py \
+            --output-dir "${RUNNER_TEMP}/adx-sdk" --install
           python -m pip install -e './sdk/python[dev]'
+
+      - name: Require published ADX SDK dependency
+        run: |
+          python -m pip download --no-deps --only-binary=:all: \
+            --dest "${RUNNER_TEMP}/adx-sdk-published" \
+            'adx-sandbox==0.1.0'
 
       - name: Check SDK
         run: |

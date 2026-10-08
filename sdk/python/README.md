@@ -4,12 +4,6 @@
 sandboxes. Applications use one stable API for commands, files, interactive
 PTYs, port forwarding, and reverse tunnels.
 
-It supports two backends:
-
-- `openyuanrong-sandbox` (default), using a RESTful API and Rust runtime.
-- `openyuanrong-sdk` (deprecated compatibility backend), using YuanRong actors
-  and a Python runtime.
-
 ## Navigation
 
 - [AKernel Python SDK](#akernel-python-sdk)
@@ -43,10 +37,17 @@ pip install akernel-sdk
 To install from source:
 
 ```bash
+python sdk/python/scripts/prepare_adx_dependency.py \
+  --output-dir .cache/adx-sdk --install
 python -m pip install ./sdk/python
 ```
 
-Configure the public AKernel entrypoint and a signed JWT token:
+The helper downloads the ADX SDK candidate pinned in `adx-sdk.lock.json` and
+verifies its SHA-256 digest before installation. This source-build path is used
+until `adx-sandbox==0.1.0` is available from the configured Python package
+index. AKernel SDK releases still require the dependency to be published.
+
+Configure the public AKernel entrypoint and the deployment token:
 
 ```bash
 export AKERNEL_SERVER_ADDRESS="akernel.example.com"
@@ -57,21 +58,12 @@ Address behavior is deterministic:
 
 - A host or IP without a port uses HTTPS/WSS on 443 for the frontend and HTTP
   on 80 for public sandbox port URLs.
-- `host:port` uses that port as a shared HTTPS/WSS endpoint.
+- `host:port` preserves shared-port behavior: control uses HTTPS/WSS and
+  public sandbox URLs use HTTP/WS on that explicit port.
 - `AKERNEL_GATEWAY_ADDRESS` overrides only the port-forwarding and reverse
-  tunnel gateway for standalone or custom topologies. An override without a
-  scheme uses HTTP/WS. Exec and file transfer continue to use
+  tunnel data endpoint for nonstandard ports or TLS gateways. An override
+  without a scheme uses HTTP/WS. Exec and file transfer continue to use
   `AKERNEL_SERVER_ADDRESS`.
-
-The actor-based `openyuanrong-sdk` backend is deprecated and retained only for
-compatibility with existing applications. New applications should use
-`openyuanrong-sandbox`. If compatibility requires the actor backend, install
-and select it before importing `akernel_sdk`:
-
-```bash
-pip install "akernel-sdk[openyuanrong-sdk]"
-export AKERNEL_BACKEND=openyuanrong-sdk
-```
 
 ## Create a sandbox
 
@@ -246,7 +238,7 @@ with Sandbox() as sandbox:
 
 The desired policy survives sandboxd restarts, explicit reloads, and same-node
 failover. Dynamic replacement is supported by the default
-`openyuanrong-sandbox` backend; the actor-based backend rejects it explicitly.
+bundled backend.
 
 For independent ingress and egress defaults, deny rules, sandbox-side port
 ranges, DNS allowlists, or stateless matching, construct the schema v2 model
@@ -378,11 +370,16 @@ Foreground commands return a backend-neutral `CommandResult`. Background
 commands return an AKernel `CommandHandle`; its lifecycle operations are
 delegated to the selected backend.
 
-With the default `openyuanrong-sandbox` backend, `handle.wait(timeout)` returns
+With the ADX backend, `handle.wait(timeout)` returns
 `CommandResult(exit_code=None, status="RUNNING", error_code="WAIT_TIMEOUT")`
 when the wait deadline expires. The command keeps running; a later `wait()` can
 observe its completion. `handle.kill()` and `sandbox.commands.kill(pid)` return
 `False` when the command does not exist or has already finished.
+
+PTY session wrappers are not retained by the factory after the caller releases
+them. A successful `wait()` also removes the completed session from its tracked
+sessions. A wait timeout keeps the session active; use `close()` or a context
+manager to terminate an interactive session explicitly.
 
 ## Filesystem
 
@@ -463,11 +460,14 @@ rollback explicitly. It returns `False` whenever the rollback is not completed,
 including when no usable local anonymous checkpoint exists, the sandbox is
 already closed, or the backend reports an operational failure. A successful
 reload preserves `sandbox.id` and the existing commands, filesystem, and PTY
-facades.
+facades. The SDK also confirms the data route with a read-only process
+listing before reporting success. A temporary route conflict is retried within
+a 10-second window; it never reissues the rollback. Other errors, explicit
+non-retryable errors, or an expired wait return `False`.
 
 Recovery points are local and follow the source sandbox lifecycle. They are
 created by sandbox workloads through RRT's internal `POST /checkpoint`
-endpoint on `/run/akernel/rrt.sock`. A successful request returns
+endpoint on `/run/akernel/execd.sock`. A successful request returns
 `{"status":"completed"}`; a concurrent checkpoint request returns HTTP 409.
 This Unix-socket protocol is experimental and is not a stable public AKernel
 SDK interface. The SDK deliberately does not expose checkpoint identifiers,
@@ -483,8 +483,7 @@ AKERNEL_TEST_RUNTIME=runsc python examples/failover_reload.py
 ```
 
 See [`examples/failover_reload.py`](./examples/failover_reload.py) for the
-internal trigger used during integration. The actor-based
-`openyuanrong-sdk` backend does not support failover or reload.
+internal trigger used during integration.
 
 ## Reverse tunnels
 
@@ -517,7 +516,7 @@ certificate verification. The sandbox application talks only to its loopback
 HTTP listener. AKernel supports one HTTP/HTTPS reverse tunnel per sandbox and
 does not expose a general TCP tunnel.
 
-The default `openyuanrong-sandbox` backend supports custom internal tunnel
+The bundled backend supports custom internal tunnel
 ports. Its frontend derives the WebSocket port from the HTTP listener, so
 `reverse_port` must equal `listen_port - 1`. Both ports are reserved inside
 that sandbox while the tunnel is active and must not also appear in
@@ -748,7 +747,10 @@ checkpoint test's curl and CA certificate installation. Omit
 `AKERNEL_TEST_IMAGE` to test the deployed default EROFS root.
 
 Load and transfer benchmarks live under [`benchmarks/`](./benchmarks) and are
-not part of the default test suite.
+not part of the default test suite. See the [performance and stability test
+plan](./benchmarks/README.md) for current coverage, measurement gaps, workload
+profiles and the proposed staged CI rollout. Proposed profiles are not yet
+implemented commands.
 
 ## Public value types
 

@@ -16,15 +16,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import math
-import ssl
-import urllib.request
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
-from ._addresses import Endpoint, api_endpoint_from_env, gateway_endpoint_from_env
+from ._addresses import gateway_endpoint_from_env
 from ._backends.base import BackendSession, SandboxSpec
 from ._backends.registry import load_backend
 from ._dockerfile_launch import DockerfileLaunch
@@ -44,7 +41,6 @@ from .types import (
     SandboxInfo,
 )
 
-_traefik_internal_ip_cache: str | None = None
 logger = logging.getLogger(__name__)
 
 
@@ -145,30 +141,6 @@ def _validate_integer(
         raise ValueError(f"{name} must be greater than or equal to {minimum}")
 
 
-def _get_traefik_internal_ip(gateway: Endpoint) -> tuple[str, int]:
-    """Resolve Traefik's direct address for ``internal=True`` URLs."""
-
-    global _traefik_internal_ip_cache
-    if _traefik_internal_ip_cache is not None:
-        return _traefik_internal_ip_cache, gateway.port
-
-    server = api_endpoint_from_env()
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(
-        f"{server.base_url()}/internal-stats",
-        timeout=5,
-        context=context,
-    ) as response:
-        payload = json.loads(response.read())
-    pod_ip = payload.get("pod_ip")
-    if not isinstance(pod_ip, str) or not pod_ip:
-        raise RuntimeError("/internal-stats response does not contain pod_ip")
-    _traefik_internal_ip_cache = pod_ip
-    return pod_ip, gateway.port
-
-
 class Sandbox:
     """A remote AKernel sandbox.
 
@@ -229,9 +201,10 @@ class Sandbox:
             reverse_tunnel: SDK-side HTTP service exposed inside the sandbox.
             detached: Keep the sandbox alive when this client closes.
             node_id: Require placement on a specific AKernel node.
-            failover: Restore the same logical sandbox on its original node
-                from the latest local anonymous checkpoint after failure.
-                Use :meth:`reload` to request the same rollback explicitly.
+            failover: Restore the same logical sandbox from its latest
+                checkpoint after failure. A shared checkpoint can move to
+                another eligible node; `node_id` still requires the specified
+                node. Use :meth:`reload` to request rollback explicitly.
             inherit_entrypoint: Start the OCI image's effective ENTRYPOINT and
                 CMD as the sandbox workload. Valid only with ``image``.
             xpu: Experimental whole-device accelerator request in
@@ -405,7 +378,7 @@ class Sandbox:
             self._id = self._session.id
             self._files = Filesystem(self._session.files)
             self._commands = Commands(self._session.commands)
-            self._pty = Pty(self._id)
+            self._pty = Pty(self._id, driver=self._session.pty)
             if dockerfile is not None and parsed_dockerfile is not None:
                 from ._dockerfile_runner import apply_dockerfile
 
@@ -551,8 +524,8 @@ class Sandbox:
 
         Args:
             port: Port included in ``port_forwardings`` at sandbox creation.
-            internal: Resolve Traefik's directly reachable address instead of
-                the public gateway address.
+            internal: Kept for caller compatibility. ADX uses the configured
+                gateway address for both internal and public access.
 
         Raises:
             ValueError: The port is invalid or was not declared.
@@ -566,15 +539,6 @@ class Sandbox:
             )
 
         gateway = gateway_endpoint_from_env()
-        if internal:
-            pod_ip, gateway_port = _get_traefik_internal_ip(gateway)
-            direct = Endpoint(
-                host=pod_ip,
-                port=gateway_port,
-                scheme=gateway.scheme,
-                explicit_port=True,
-            )
-            return f"{direct.base_url()}/{self.id}/{port}"
         return f"{gateway.base_url()}/{self.id}/{port}"
 
     def is_running(self) -> bool:
@@ -606,9 +570,7 @@ class Sandbox:
             image=info.image,
             xpu=info.xpu if info.xpu is not None else self._xpu,
             storage_mb=(
-                info.storage_mb
-                if info.storage_mb is not None
-                else self._storage_mb
+                info.storage_mb if info.storage_mb is not None else self._storage_mb
             ),
         )
 

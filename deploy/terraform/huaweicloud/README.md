@@ -2,9 +2,9 @@
 
 This Terraform module creates a Huawei Cloud CCE cluster and installs the
 AKernel core and optional monitor charts. It follows the same deployment
-contract as the Aliyun module: one all-in-one AKernel image, a generated IAM
-seed, dual-entrypoint Traefik, optional public Grafana, and local state under
-`.akernel/<env>/`.
+contract as the Aliyun module: one all-in-one AKernel image, an Agent DX
+identity Secret, managed Redis, dual-entrypoint Traefik, optional public
+Grafana, and local state under `.akernel/<env>/`.
 
 ## Pod PID budget
 
@@ -44,13 +44,14 @@ Run the repository-level workflow from the AKernel root:
 make config VENDOR=huaweicloud
 make plan VENDOR=huaweicloud
 make deploy VENDOR=huaweicloud
-make token VENDOR=huaweicloud TTL=24h
+make token VENDOR=huaweicloud
 make print-env VENDOR=huaweicloud
 ```
 
-The generated profile contains Terraform variables, state, kubeconfig, IAM
-seed, and Grafana administrator password under `.akernel/default/`. Use
-`ENV=<name>` for an independent deployment profile.
+The generated profile contains Terraform variables, state, kubeconfig, and the
+Grafana administrator password under `.akernel/default/`. After deployment,
+`make print-env` stores mode-0600 SDK credential files there. Use `ENV=<name>`
+for an independent deployment profile.
 
 For non-interactive agent usage, provide all values explicitly:
 
@@ -75,13 +76,14 @@ The generated profile enables the public CCE API endpoint and node-subnet SNAT
 so Terraform can reach the cluster and worker nodes can pull public images.
 Traefik is exposed through a public ELB with two entrypoints:
 
-- `websecure:443` serves the authenticated frontend API and exec websocket.
+- `websecure:443` serves the authenticated ADX Edge API and exec websocket.
 - `web:80` serves sandbox port-forwarding traffic.
 
-The SDK therefore needs only the Traefik ELB address:
+Configure the SDK with both logical entrypoints on the Traefik ELB:
 
 ```bash
 export AKERNEL_SERVER_ADDRESS=<traefik-elb-address>
+export AKERNEL_GATEWAY_ADDRESS=http://<traefik-elb-address>
 ```
 
 Grafana uses a separate public ELB when monitoring and public Grafana access
@@ -90,9 +92,9 @@ are enabled. Its generated administrator password is stored at
 
 ## Images
 
-Master, frontend, and node use the same configured AKernel all-in-one image.
-etcd, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox use pinned official
-public images by default. Use the component image variables or
+ADX control and node workloads use the same configured AKernel all-in-one
+image. Managed Redis, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox
+use pinned public images by default. Use the component image variables or
 `monitor_image_registry` only when the cluster requires private mirrors.
 
 ## Optional components
@@ -118,7 +120,7 @@ add their own Kruise-based overrides.
 
 The Makefile workflow is preferred because it keeps generated files outside
 the module directory. Advanced users can instead copy
-`terraform.tfvars.example`, set a unique `iam_litebus_data_key`, and provide an
+`terraform.tfvars.example` and provide an
 external state path explicitly:
 
 ```bash

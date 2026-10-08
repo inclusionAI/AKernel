@@ -18,6 +18,19 @@ runs:
       shell: bash
       run: python -m pip install 'build>=1.2,<2' 'twine>=5,<7'
 
+    - name: Prepare ADX SDK dependency
+      id: adx-dependency
+      shell: bash
+      env:
+        SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+      run: |
+        dependency_directory="$(mktemp -d "${RUNNER_TEMP}/adx-sdk.XXXXXX")"
+        wheel="$(
+          python "${SOURCE_DIRECTORY}/scripts/prepare_adx_dependency.py" \
+            --output-dir "${dependency_directory}"
+        )"
+        echo "wheel=${wheel}" >> "${GITHUB_OUTPUT}"
+
     - name: Build distributions
       id: build
       shell: bash
@@ -34,6 +47,7 @@ runs:
     - name: Test installed distributions
       shell: bash
       env:
+        ADX_DEPENDENCY_WHEEL: ${{ steps.adx-dependency.outputs.wheel }}
         SOURCE_DIRECTORY: ${{ inputs.source-directory }}
         DIST_DIRECTORY: ${{ steps.build.outputs.dist-directory }}
       run: |
@@ -52,7 +66,8 @@ runs:
         for artifact in "${DIST_DIRECTORY}"/*.whl "${DIST_DIRECTORY}"/*.tar.gz; do
           test_env="$(mktemp -d "${RUNNER_TEMP}/akernel-install.XXXXXX")"
           python -m venv "${test_env}"
-          "${test_env}/bin/python" -m pip install "${artifact}"
+          "${test_env}/bin/python" -m pip install \
+            "${ADX_DEPENDENCY_WHEEL}" "${artifact}"
           "${test_env}/bin/python" -m pip check
           "${test_env}/bin/python" -I - <<'PY'
         import os

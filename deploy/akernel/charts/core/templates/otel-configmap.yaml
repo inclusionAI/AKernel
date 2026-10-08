@@ -10,4 +10,6 @@ metadata:
 data:
   otel_config.yaml: |
 {{ .Files.Get "files/otel-collector/config.yaml" | indent 4 }}
+  control.yaml: |
+{{ .Files.Get "files/otel-collector/control.yaml" | indent 4 }}
 {{- end }}

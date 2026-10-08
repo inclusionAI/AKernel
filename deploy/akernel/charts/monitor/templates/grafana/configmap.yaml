@@ -40,6 +40,11 @@ data:
               url: {{ .Values.grafanaServer.loki.derivedField.url | quote }}
               datasourceUid: {{ .Values.grafanaServer.loki.derivedField.datasourceUid }}
               matcherType: {{ .Values.grafanaServer.loki.derivedField.matcherType }}
+            - name: trace_id
+              matcherRegex: "^trace_id$"
+              url: "$${__value.raw}"
+              datasourceUid: {{ .Values.grafanaServer.loki.derivedField.datasourceUid }}
+              matcherType: label
   {{- end }}
   {{- if .Values.grafanaServer.tempo.enabled }}
   tempo.yaml: |
