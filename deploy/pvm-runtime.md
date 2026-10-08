@@ -15,9 +15,41 @@ make -C /path/to/pinned-pvm-linux O=/path/to/new-host-build olddefconfig
 make -C /path/to/pinned-pvm-linux O=/path/to/new-host-build -j8 bzImage modules
 ```
 
+The host and guest need different configurations. The host input includes `CONFIG_KVM=m`, `CONFIG_KVM_PVM=m`, and `CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS=y`; retain the target machine's boot/storage drivers and the complete AKernel networking requirements. In particular, keep `CONFIG_IP_NF_FILTER`, `CONFIG_IP6_NF_IPTABLES`, `CONFIG_IP6_NF_FILTER`, `CONFIG_NETFILTER_XT_TARGET_CONNMARK`, and `CONFIG_NETFILTER_XT_MATCH_CONNMARK` enabled, together with conntrack, bridge filtering, ipset and TUN. The checked-in host config includes these options. Install the complete matching module tree, rather than copying only `kvm.ko` and `kvm-pvm.ko`. Omitting the legacy filter modules reproduced a standalone startup failure at `modprobe iptable_filter` even though direct PVM tests passed.
+
 Use the checksum-verified source archive pinned by the matching Firecracker PVM profile. The tested host boots with `nokaslr pti=off`. PVM requires supported FSGSBASE, RDTSCP, CMPXCHG16B and, when interception is enabled, CPUID faulting; this revision does not support host KPTI or FRED. PVM and hardware vendor modules are mutually exclusive. Prepare a dedicated node and recovery boot entry, drain workloads, stop sandboxd and all VMMs before installing kernels or changing vendor modules, and restart sandboxd to reprobe the backend before accepting workloads. Backend modules must remain fixed for a daemon's lifetime. This AKernel profile does not change host kernels, boot settings, modules, networks or existing clusters.
 
 Build the guest bundle with Firecracker's `AKERNEL_KERNEL_PROFILE=pvm` option or candidate workflow `kernel_profile=pvm` choice. The builder verifies PVM guest options and common AKernel filesystem, network and virtio requirements. Its guest config, source provenance, licenses and checksums are packaged together. Build the initrd from the consuming sandboxd revision so host and guest agent protocols match.
+
+The guest must enable `CONFIG_KVM_GUEST=y`, `CONFIG_PVM_GUEST=y`, `CONFIG_X86_PIE=y`, and `CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS=y`, plus the common AKernel guest fragment. Use Firecracker's resolved `resources/akernel/kernel/pvm-guest.config`, not an unmodified upstream minimal PVM config: the latter can omit AKernel's filesystem/virtio requirements and disable MPK. On a PKU-capable host, enabling guest MPK aligns guest and host `XCR0.PKRU`; otherwise a nested deployment can incur two intercepted `XSETBV` instructions on each guest/host transition. The tested machine reports an xstate mask of `0x2ff` in both kernels. Check the actual xstate masks on the target CPU; `0x2ff` is not a portable CPU requirement. Do not disable host PKU with `nopku` to work around a mismatch: this pinned PVM revision can fault in its `rdpkru` path. Enabling the guest xstate bit does not qualify enforcement of guest `pkey_mprotect` permissions, which remains incomplete in this PVM revision.
+
+## Optional nested-host DEBUGCTL optimization
+
+The frequently described "one-line optimization" is the removal of this unconditional save from the common host KVM `vcpu_enter_guest()` path in `arch/x86/kvm/x86.c`:
+
+```c
+vcpu->arch.host_debugctl = get_debugctlmsr();
+```
+
+The value is consumed by VMX/SVM, while PVM already saves its own host DEBUGCTL state in `pvm_vcpu_load()`. In a nested deployment, the unnecessary common-path read of `IA32_DEBUGCTL` (`0x1d9`) can cause an outer-hypervisor MSR exit for each PVM guest entry, including first-write faults during exact dirty-page tracking. The [backend-scoped reference patch](pvm/kvm-debugctl-backend-scope.patch) moves the save into both `vmx_vcpu_run()` and `svm_vcpu_run()` instead of discarding the state needed by hardware KVM. It applies to the pinned PVM source above and is a separate, optional host-kernel input; the default host config and Firecracker guest-bundle builder do not apply it.
+
+To build this variant, start with a separate, clean checkout at the pinned commit, apply the patch, and build the host kernel and modules together:
+
+```sh
+PVM_HOST_SOURCE=/path/to/separate-pinned-pvm-linux
+PVM_HOST_OUTPUT=/path/to/new-optimized-host-build
+PVM_DEBUGCTL_PATCH="$PWD/deploy/pvm/kvm-debugctl-backend-scope.patch"
+git -C "$PVM_HOST_SOURCE" apply --check "$PVM_DEBUGCTL_PATCH"
+git -C "$PVM_HOST_SOURCE" apply "$PVM_DEBUGCTL_PATCH"
+mkdir "$PVM_HOST_OUTPUT"
+cp deploy/pvm/host.config "$PVM_HOST_OUTPUT/.config"
+make -C "$PVM_HOST_SOURCE" O="$PVM_HOST_OUTPUT" olddefconfig
+make -C "$PVM_HOST_SOURCE" O="$PVM_HOST_OUTPUT" -j8 bzImage modules
+```
+
+Install the complete module tree from that build during the dedicated-node maintenance procedure above. If the host boots modules from an initramfs, rebuild that initramfs as well. Do not merely delete the save, replace it with zero, or mix a modified `kvm.ko` with stock VMX/SVM modules: hardware-KVM DEBUGCTL restoration must remain intact, including when the host uses LBR/BTS. Requalify PVM checkpoint/restore and any hardware-KVM backend the node will use before rollout; SVM hardware execution was not covered by the earlier Intel-only experiment.
+
+An earlier controlled nested microbenchmark on a Cascade Lake host measured 96 MiB first dirty writes at about 61.5 ms with guest MPK alone and 35.9 ms with MPK plus this backend-scoped patch, compared with about 50 ms for nested hardware KVM. Those are workload-specific experimental results, not an AKernel service benchmark or a guarantee for direct bare-metal hosts, where the outer MSR interception is absent. The October AKernel/SDK qualification used the unmodified pinned host source with the corrected network config; it must not be presented as qualification of this optional patched build. Record the applied patch and exact kernel/module identities separately when validating an optimized host.
 
 ## Candidate image and node selection
 
