@@ -221,9 +221,11 @@ class Sandbox:
             env: Environment variables applied to the sandbox process.
             name: Optional stable name for a detached sandbox.
             cwd: Default working directory for subsequent ``commands.run()``
-                calls that omit ``cwd``. This does not override the inherited
-                image entrypoint's working directory, which uses the image's
-                OCI WORKDIR when ``inherit_entrypoint=True``.
+                calls that omit ``cwd``. The directory and any missing parents
+                are created before the sandbox is returned. This does not
+                override the inherited image entrypoint's working directory,
+                which uses the image's OCI WORKDIR when
+                ``inherit_entrypoint=True``.
             port_forwardings: Sandbox TCP ports exposed through the gateway.
             mounts: Additional read-only OCI or S3-backed mounts.
             reverse_tunnel: SDK-side HTTP service exposed inside the sandbox.

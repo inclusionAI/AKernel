@@ -87,7 +87,11 @@ class Commands:
         timeout: int = 60,
         stdin: bool = False,
     ) -> CommandResult | CommandHandle:
-        """Execute a foreground command or start a background process."""
+        """Execute a foreground command or start a background process.
+
+        An explicit ``cwd`` must already exist inside the sandbox. When omitted,
+        commands use the default directory set by ``Sandbox(cwd=...)``.
+        """
 
         if stdin and not background:
             raise ValueError("stdin=True requires background=True")
