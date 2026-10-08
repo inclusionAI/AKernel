@@ -6,7 +6,7 @@ This profile requires the sandboxd change that adds `firecracker-pvm`, and a val
 
 ## Host and guest prerequisites
 
-The host must boot a PVM Linux kernel and load matching `kvm` and `kvm-pvm` modules. A distribution kernel cannot acquire PVM support by loading a module built for another kernel. The tested source is `virt-pvm/linux` commit `58902213f660d7f8d75eb9f08e6c3ff7e4a3721d`, Linux 6.12.33. [`pvm/host.config`](./pvm/host.config) preserves the resolved isolated-host configuration, including virtio boot devices and AKernel network/storage prerequisites. Qualify each target machine's drivers, CPU features, kernel support policy and boot process before using this reproduction input on a dedicated node.
+The host must boot a PVM Linux kernel and load matching `kvm` and `kvm-pvm` modules. Install the complete matching module tree: standalone requires IPv4/IPv6 legacy filter tables, conntrack/connmark, bridged filtering and ipset in addition to the KVM modules. A host config trimmed with `localmodconfig` can omit these modules even when direct runtime tests work with nftables. A distribution kernel cannot acquire PVM support by loading a module built for another kernel. The tested source is `virt-pvm/linux` commit `58902213f660d7f8d75eb9f08e6c3ff7e4a3721d`, Linux 6.12.33. [`pvm/host.config`](./pvm/host.config) preserves the resolved isolated-host configuration, including virtio boot devices and AKernel network/storage prerequisites. Qualify each target machine's drivers, CPU features, kernel support policy and boot process before using this reproduction input on a dedicated node.
 
 ```sh
 mkdir /path/to/new-host-build
