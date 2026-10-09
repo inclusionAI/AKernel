@@ -217,6 +217,12 @@ its only argument and must return only after the service has restarted. The
 cases create a pinned Sandbox, write a marker, restart one service, and require
 the same Sandbox ID, command access, and file contents to survive. Missing
 hooks are reported as skipped. These cases cover fast process restart.
+Crash injection for sandboxd must use SIGKILL rather than a graceful stop,
+which can deliberately delete its runtimes. A hook must confirm a new daemon
+PID and a successful RPC to that daemon before returning; systemd `active`
+alone can still describe the old process. Node-manager hooks also wait for
+reconciliation readiness. Otherwise an old Execd connection can satisfy the
+assertions before recovery has actually occurred.
 Heartbeat-expired node loss and cross-node failover use separate fault cases
 and storage fixtures below.
 
@@ -270,6 +276,12 @@ a Docker login on the test client is not a substitute. The tested image also
 included `/bin/bash` and `apt-get`, which the historical
 `runtime-integration` tests require. Set `AKERNEL_TEST_INTEGRATION_IMAGE` to
 an image with those tools when `AKERNEL_TEST_IMAGE` points to a smaller fixture.
+
+The checkpoint/reload/reverse-tunnel test in `runtime-integration` is skipped
+for Kata: its current sandboxd backend supports neither checkpoint/restore
+nor the writable-layer limit requested by that test. Command, file and PTY
+tests still run for Kata; the checkpoint contract runs with runsc and
+Firecracker. A skipped capability is not a successful checkpoint acceptance.
 
 For x86-64 OCI source tests, use a digest-pinned fixture with
 `/etc/os-release`, a shell, and a successful short-lived ENTRYPOINT.

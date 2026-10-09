@@ -186,6 +186,10 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
             f"stdout={last_result.stdout!r}, stderr={last_result.stderr!r}"
         )
 
+    @unittest.skipIf(
+        _RUNTIME == "kata",
+        "Kata does not support checkpoint/restore or writable-layer limits",
+    )
     def test_internal_checkpoint_reload_and_reverse_tunnel(self):
         server = socketserver.ThreadingTCPServer(
             ("127.0.0.1", 0),
