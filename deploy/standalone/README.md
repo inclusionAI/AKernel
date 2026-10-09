@@ -76,6 +76,22 @@ objects.
 `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
 starting the pooled-TAP runtimes. Runc retains its separate veth network path.
 
+### DNS resolver sources
+
+Sandboxd selects resolver sources by DNS mode. With the bundled ACL-enabled configuration, runsc, Kata, and Firecracker use managed DNS through the node proxy, even without a sandbox network policy. Runc uses direct DNS; disabling node ACLs selects direct DNS for every runtime. `plugin.runtime.resolv_conf_path` supplies the managed proxy upstream and generated resolver search/domain/options. The optional `plugin.runtime.direct_resolv_conf_path` supplies direct-DNS sandboxes; when empty, it inherits `resolv_conf_path`. Existing runtime-owned or explicit resolver mounts retain precedence in direct mode.
+
+When runc is enabled, the launcher copies a non-loopback resolver file to `data/sandboxd/config/direct-resolv.conf` before starting the node and sets `plugin.runtime.direct_resolv_conf_path` to its path inside the node. It preserves `plugin.runtime.resolv_conf_path`, which defaults to `/etc/resolv.conf`. Docker's embedded resolver (`127.0.0.11`) is valid in the node container network namespace but not in a direct-DNS sandbox's separate namespace. Custom configuration templates must retain exactly one `# AKERNEL_DIRECT_RESOLVER` marker under `[plugin.runtime]` and the `# AKERNEL_RUNTIME_RUNC` marker under `[plugin.runtime.runtime_binary]` when enabling runc.
+
+On hosts without systemd-resolved, the launcher can select a usable `/etc/resolv.conf` automatically. On systemd-resolved hosts, automatic selection fails closed because the flat upstream file cannot preserve per-link or VPN split-DNS routing. `AKERNEL_RUNC_RESOLV_CONF` selects the host source used when enabling runc; supply an absolute file containing resolver addresses approved for all names direct-DNS workloads must query:
+
+```bash
+AKERNEL_ENABLE_RUNC=true \
+  AKERNEL_RUNC_RESOLV_CONF=/path/to/approved-upstream-resolv.conf \
+  ./start.sh
+```
+
+Do not use `/run/systemd/resolve/resolv.conf` as an automatic substitute for split-DNS policy: its server list alone does not encode which domains belong to which link. Use an approved internal resolver or an operator-managed forwarder reachable from sandbox network namespaces when private domains are needed; the launcher does not silently substitute a public DNS server. File validation rejects namespace-local addresses but does not prove reachability or domain-routing correctness. The generated file is a startup snapshot of the approved configuration. To update it, drain sandboxes and restart standalone, then verify internal and external DNS from a new direct-DNS sandbox and verify managed DNS separately. Do not restart the node while a sandbox or nested VM is running.
+
 ### Network backend
 
 Standalone uses the iptables NAT backend by default. Nodes without the
