@@ -75,6 +75,20 @@ with tempfile.TemporaryDirectory(prefix="distill-fs-installer-") as work:
     check("unsupported-arch", target_arch="s390x", error="unsupported distill-fs target")
     bad, sha = altered_archive("bad-binary-hash", files["distill_fs"], "0" * 64)
     check("bad-binary-hash", asset=bad, checksum=sha, error="FAILED")
+    # All artifact/manifest checksums and target metadata remain correct. Reject
+    # the payload header itself before readelf or an emulated --version can pass.
+    other_machine = 183 if arch == "amd64" else 62
+    for name, offset, replacement, error in (
+        ("wrong-binary-machine", 18, other_machine.to_bytes(2, "little"), "ELF machine mismatch"),
+        ("elf32-binary", 4, b"\x01", "requires ELF64"),
+        ("big-endian-binary", 5, b"\x02", "requires little-endian ELF"),
+        ("non-elf-binary", 0, b"nope", "not an ELF binary"),
+    ):
+        payload = bytearray(files["distill_fs"])
+        payload[offset:offset + len(replacement)] = replacement
+        payload = bytes(payload)
+        bad, sha = altered_archive(name, payload, hashlib.sha256(payload).hexdigest())
+        check(name, asset=bad, checksum=sha, error=error)
     # A correctly checksummed bundle must still reject a dynamic executable.
     dynamic = Path("/bin/true").read_bytes()
     headers = subprocess.check_output(["readelf", "-l", "/bin/true"], text=True)

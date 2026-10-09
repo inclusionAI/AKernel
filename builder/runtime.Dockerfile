@@ -20,6 +20,7 @@ ARG RRT_RUNTIME_URL=
 ARG RRT_RUNTIME_SHA256=
 ARG RRT_RUNTIME_AMD64_SHA256=253f8ac837538ac3cae91c6d05604f4334178eeec7303c9d9fce4788c2506a2c
 ARG RRT_RUNTIME_ARM64_SHA256=548ca3515d7bd7ced2204b265bf39d01bde4033f7d25e493b60c8a20be658273
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
@@ -42,6 +43,7 @@ RUN set -eux; \
     curl -fSL --retry 5 --retry-delay 2 --retry-all-errors \
         -o /rrt-runtime "${release_url}"; \
     echo "${release_sha}  /rrt-runtime" | sha256sum -c -; \
+    sh /usr/local/libexec/verify-elf-arch.sh /rrt-runtime "${TARGETARCH}"; \
     chmod 0755 /rrt-runtime
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-runtime-rootfs

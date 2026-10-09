@@ -60,15 +60,25 @@ IMAGE=akernel-local/all-in-one:arm64-runc AKERNEL_ENABLE_RUNC=true \
   ./deploy/standalone/start.sh
 ```
 
-The launcher checks that the Docker engine is OrbStack Linux/arm64, the AKernel image is Linux/arm64, VM payloads are disabled, and an explicitly requested runc payload is present. It verifies TUN/TAP, veth, FUSE, writable cgroup v2, iptables/ip6tables, conntrack, ipset, and loop-backed ext4 in a disposable privileged container. Enabling runc additionally verifies that the bundled EROFS root can be mounted and combined with an ext4-backed writable overlay. These probes use temporary paths under the selected data directory and clean up their own mounts and resources before the node starts. macOS does not run `modprobe`.
+The launcher checks the OrbStack Linux/arm64 engine and allowed options before touching the selected data directory. It then verifies that both the AKernel and gateway images are Linux/arm64, VM payloads are disabled, and an explicitly requested runc payload is present. Pulls and all three container launches explicitly use `--platform linux/arm64`, overriding a conflicting `DOCKER_DEFAULT_PLATFORM`. A wrong-architecture cached tag is rejected with guidance to select an ARM64 reference; the launcher does not overwrite that local tag automatically.
 
-For build downloads through an existing proxy, export its Docker-builder-reachable `HTTP_PROXY` and `HTTPS_PROXY` environment variables and add `AKERNEL_BUILD_PROXY=true` to `make build`. The helper forwards predefined proxy arguments by name to both runtime and node image builds without saving their values. This build-only option does not configure standalone or sandbox traffic; DNS and HTTPS runtime validation can remain direct.
+A disposable privileged container probes TUN/TAP, veth, writable cgroup v2, iptables/ip6tables, conntrack matches, ipset, and loop-backed ext4 before credentials or network configuration are regenerated. It checks that the FUSE device is present, but this alone does not prove a userspace FUSE mount lifecycle; runtime image-mount validation is still required. Enabling runc additionally verifies that the bundled EROFS root can be mounted and combined with an ext4-backed writable overlay. The probes use temporary paths under the selected data directory and clean up their own mounts and resources before the node starts. macOS does not run `modprobe`.
+
+For build downloads through an existing proxy, export its Docker-builder-reachable `HTTP_PROXY` and `HTTPS_PROXY` environment variables and add `AKERNEL_BUILD_PROXY=true` to `make build`. The helper forwards predefined proxy arguments by name to both runtime and node image builds without saving their values. Docker can also pre-populate build proxies from the client configuration; omitting this helper option does not disable those inherited settings. See [Docker CLI proxy configuration](https://docs.docker.com/engine/cli/proxy/). This build-only option does not configure standalone or sandbox traffic.
+
+OrbStack can transparently follow macOS proxy settings independently of container environment variables. An empty proxy environment or `curl --noproxy '*'` therefore does not by itself prove direct outbound HTTPS. Check [OrbStack's network proxy settings](https://docs.orbstack.dev/docker/network) and validate the actual outbound path when a direct connection is required. The launcher does not change host-wide proxy settings.
 
 If the proxy listens on Mac localhost, use `AKERNEL_BUILD_NETWORK=host` together with `AKERNEL_BUILD_PROXY=true` so OrbStack's build RUN instructions can reach the same localhost endpoint used by the Docker CLI. The network option accepts only `default` or `host`, and defaults to Docker's normal build network. It applies to both image builds and leaves the standalone deployment's Docker bridge networking unchanged.
 
 Compare the macOS DNS configuration with `scutil --dns` and explicitly select resolver addresses reachable from the sandbox network namespace. A macOS `/etc/resolv.conf` snapshot does not represent all scoped or split-DNS policies. The launcher does not replace approved resolvers with public DNS; verify DNS and HTTPS inside a newly created `Sandbox(runtime="runc")`. See [DNS resolver sources](#dns-resolver-sources) for the separate managed and direct resolver paths.
 
-The Traefik container IP printed by the launcher is the SDK address. Verify `https://<traefik-container-ip>/healthz` from macOS before creating a sandbox. The profile uses iptables and supports runsc plus explicitly enabled ordinary runc without a KVM request. Kata, Firecracker, and GPU remain disabled. Drain and release sandboxes before stopping standalone with `./deploy/standalone/stop.sh`.
+The Traefik container IP printed by the launcher is the SDK address. Verify the endpoint from macOS before creating a sandbox. The generated standalone certificate is self-signed; for this local health check only, use:
+
+```bash
+curl --noproxy '*' -fkSs "https://<traefik-container-ip>/healthz"
+```
+
+The profile uses iptables and supports runsc plus explicitly enabled ordinary runc without a KVM request. Kata, Firecracker, and GPU remain disabled. Drain and release sandboxes before stopping standalone with `./deploy/standalone/stop.sh`. The stop script resolves only the two standalone container names, stops the gateway first, and returns nonzero if inventory, stop, or removal fails; it does not force-remove containers or delete profile data.
 
 Experimental NVIDIA GPU sandboxes use gVisor nvproxy. The host must provide a
 compatible NVIDIA driver and NVIDIA Container Toolkit. Enable GPU access to

@@ -7,6 +7,7 @@ set -euo pipefail
 [[ "$(uname -m)" == aarch64 ]]
 test -c /dev/net/tun
 test -c /dev/loop-control
+# This checks device presence, not a userspace FUSE mount lifecycle.
 test -c /dev/fuse
 test -f /sys/fs/cgroup/cgroup.controllers
 for controller in cpu io memory pids; do
@@ -117,4 +118,4 @@ if [[ "${AKERNEL_ENABLE_RUNC:-false}" == true ]]; then
     test -x "${probe_dir}/overlay/usr/local/bin/rrt-runtime"
 fi
 
-echo "OrbStack standalone host capabilities passed"
+echo "OrbStack standalone host capability probes passed (FUSE device presence only)"

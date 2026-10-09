@@ -36,7 +36,10 @@ ARG VIRTIOFSD_BUILD_IMAGE=rust:1.90.0-bookworm
 # virtiofsd v1.14.0, including the release Cargo.lock.
 ARG VIRTIOFSD_REVISION=c2540f8db14caba81c1e37fba23fc7bf2cd7f0dd
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
+ARG OTELCOL_CONTRIB_AMD64_SHA256=81bf885bc9a86705feb3c113c5a356571390e3601eb651ffcf2b3428f6571adb
+ARG OTELCOL_CONTRIB_ARM64_SHA256=00b11a5b468455e6ab49d6857e36f5825cb887bf5d8646282f8db33e3eeb5c76
 ARG OTELCOL_CONTRIB_URL=
+ARG OTELCOL_CONTRIB_SHA256=
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 
@@ -46,6 +49,7 @@ ARG GVISOR_URL
 ARG GVISOR_SHA512
 ARG TARGETARCH
 COPY src/sandboxd/third_party/install-gvisor.sh /usr/local/libexec/install-gvisor.sh
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 RUN set -eux; \
     case "${TARGETARCH:-}" in \
       amd64|arm64) ;; \
@@ -63,6 +67,11 @@ RUN set -eux; \
       "${GVISOR_URL}" -o "${asset}"; \
     bash /usr/local/libexec/install-gvisor.sh "${asset}" \
       "${GVISOR_SHA512}" /gvisor; \
+    for binary in runsc containerd-shim-runsc-v1 \
+      gvisor-bin/checkpointgofer gvisor-bin/gvisor-sentry-prewarmer \
+      gvisor-bin/gvisor_sentry gvisor-bin/runsc-metric-server; do \
+      sh /usr/local/libexec/verify-elf-arch.sh "/gvisor/${binary}" "${TARGETARCH}"; \
+    done; \
     /gvisor/runsc --version
 
 FROM ${KATA_BUILD_IMAGE} AS kata-runtime-true
@@ -116,8 +125,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /src/sandboxd
 COPY ./src/sandboxd/ ./
-RUN case "${TARGETARCH}" in amd64|arm64) ;; *) exit 1 ;; esac && \
-    make release RELEASE_GOARCH="${TARGETARCH}"
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+RUN set -eux; \
+    case "${TARGETARCH}" in amd64|arm64) ;; *) exit 1 ;; esac; \
+    make release RELEASE_GOARCH="${TARGETARCH}"; \
+    for binary in sandboxd sbox runc-shim sandbox-logger firecracker-agent; do \
+      sh /usr/local/libexec/verify-elf-arch.sh "output/${binary}" "${TARGETARCH}"; \
+    done
 
 FROM ${VIRTIOFSD_BUILD_IMAGE} AS virtiofsd-builder
 ARG VIRTIOFSD_REVISION
@@ -197,6 +211,7 @@ ARG RUNC_VERSION
 ARG RUNC_SHA256
 ARG RUNC_RELEASE_BASE_URL
 ARG TARGETARCH
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64|arm64) ;; \
@@ -213,6 +228,7 @@ RUN set -eux; \
       "${RUNC_RELEASE_BASE_URL}/v${RUNC_VERSION}/runc.${TARGETARCH}" \
       -o "${asset}"; \
     echo "${RUNC_SHA256}  ${asset}" | sha256sum -c -; \
+    sh /usr/local/libexec/verify-elf-arch.sh "${asset}" "${TARGETARCH}"; \
     install -D -m 0755 "${asset}" /runc/usr/local/bin/runc; \
     rm -f "${asset}"
 COPY --from=sandboxd-builder /src/sandboxd/output/runc-shim /runc/usr/local/bin/runc-shim
@@ -231,6 +247,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl jq binutils && \
     rm -rf /var/lib/apt/lists/*
 COPY ./builder/scripts/install-distill-fs.sh /install-distill-fs.sh
+COPY ./builder/scripts/verify-elf-arch.sh /verify-elf-arch.sh
 RUN sh /install-distill-fs.sh "$DISTILL_FS_RELEASE" \
     "$DISTILL_FS_URL" "$DISTILL_FS_SHA256" /distill-fs
 
@@ -258,10 +275,28 @@ ARG RUNC_SHA256
 ARG FIRECRACKER_RELEASE
 ARG LIBNVIDIA_CONTAINER_VERSION
 ARG OTELCOL_CONTRIB_VERSION
+ARG OTELCOL_CONTRIB_AMD64_SHA256
+ARG OTELCOL_CONTRIB_ARM64_SHA256
 ARG OTELCOL_CONTRIB_URL
+ARG OTELCOL_CONTRIB_SHA256
 ARG TARGETARCH
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64|arm64) ;; \
+      *) echo "unsupported node target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    case "${AKERNEL_RUNTIME_PROFILE}" in \
+      rrt) ;; \
+      python) \
+        if [ "${TARGETARCH}" != "amd64" ]; then \
+          echo "the python runtime profile currently supports linux/amd64 only" >&2; \
+          exit 1; \
+        fi ;; \
+      *) echo "unsupported AKERNEL_RUNTIME_PROFILE: ${AKERNEL_RUNTIME_PROFILE}" >&2; exit 1 ;; \
+    esac
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -330,6 +365,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 
 ENV YR_INSTALLATION_DIR=/home/yuanrong
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 
 # Install the complete, language-runtime-free openYuanRong control plane from
 # its checksum-pinned core wheel. A URL and checksum pair may override the
@@ -372,6 +408,12 @@ RUN set -eux; \
     test -x "${target}/yr/functionsystem/bin/yr"; \
     mkdir -p "${YR_INSTALLATION_DIR}"; \
     cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
+    for binary in domain_scheduler function_agent function_master function_proxy \
+      iam_server meta_service runtime_manager yr; do \
+      test -x "${YR_INSTALLATION_DIR}/functionsystem/bin/${binary}"; \
+      sh /usr/local/libexec/verify-elf-arch.sh \
+        "${YR_INSTALLATION_DIR}/functionsystem/bin/${binary}" "${TARGETARCH}"; \
+    done; \
     rm -rf "${target}" "${wheel}"; \
     ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
 
@@ -431,11 +473,36 @@ COPY ./builder/scripts/master_entrypoint.sh ${YR_INSTALLATION_DIR}/entrypoint.sh
 COPY ./builder/scripts/*.sh /root/
 COPY ./builder/systemd_services/*.service /etc/systemd/system/
 
-RUN archive_url="${OTELCOL_CONTRIB_URL:-https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_${TARGETARCH}.tar.gz}"; \
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) archive_sha="${OTELCOL_CONTRIB_AMD64_SHA256}" ;; \
+      arm64) archive_sha="${OTELCOL_CONTRIB_ARM64_SHA256}" ;; \
+      *) echo "unsupported OTel target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    archive_url="https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_${TARGETARCH}.tar.gz"; \
+    if [ -n "${OTELCOL_CONTRIB_URL}" ]; then \
+      test -n "${OTELCOL_CONTRIB_SHA256}" || { \
+        echo "OTELCOL_CONTRIB_URL and OTELCOL_CONTRIB_SHA256 must be set together" >&2; exit 1; \
+      }; \
+      archive_url="${OTELCOL_CONTRIB_URL}"; \
+      archive_sha="${OTELCOL_CONTRIB_SHA256}"; \
+    else \
+      test -z "${OTELCOL_CONTRIB_SHA256}" || { \
+        echo "OTELCOL_CONTRIB_URL and OTELCOL_CONTRIB_SHA256 must be set together" >&2; exit 1; \
+      }; \
+    fi; \
+    printf '%s\n' "${archive_sha}" | grep -Eq '^[0-9a-fA-F]{64}$' || { \
+      echo "invalid OTel SHA-256 pin" >&2; exit 1; \
+    }; \
+    temp_dir="$(mktemp -d /tmp/akernel-otelcol.XXXXXX)"; \
+    trap 'rm -rf "${temp_dir}"' EXIT; \
+    archive="${temp_dir}/otelcol-contrib.tar.gz"; \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-        "${archive_url}" \
-    | tar -xz -C /usr/local/bin otelcol-contrib && \
-    chmod 0755 /usr/local/bin/otelcol-contrib
+        "${archive_url}" -o "${archive}"; \
+    printf '%s  %s\n' "${archive_sha}" "${archive}" | sha256sum -c -; \
+    tar -xzf "${archive}" -C "${temp_dir}" otelcol-contrib; \
+    sh /usr/local/libexec/verify-elf-arch.sh "${temp_dir}/otelcol-contrib" "${TARGETARCH}"; \
+    install -m 0755 "${temp_dir}/otelcol-contrib" /usr/local/bin/otelcol-contrib
 
 RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INSTALLATION_DIR}/trace && \
     chmod 0755 ${YR_INSTALLATION_DIR}/yr_node_bootstrap.sh ${YR_INSTALLATION_DIR}/entrypoint.sh && \

@@ -12,8 +12,8 @@ DISTILL_FS_SHA256=$3
 destination=$4
 
 case "${TARGETARCH:-$(uname -m)}" in
-    amd64|x86_64) expected_target=x86_64-unknown-linux-musl ;;
-    arm64|aarch64) expected_target=aarch64-unknown-linux-musl ;;
+    amd64|x86_64) target_arch=amd64; expected_target=x86_64-unknown-linux-musl ;;
+    arm64|aarch64) target_arch=arm64; expected_target=aarch64-unknown-linux-musl ;;
     *) echo "unsupported distill-fs target architecture" >&2; exit 1 ;;
 esac
 : "${DISTILL_FS_RELEASE:?distill-fs release is not pinned}"
@@ -49,6 +49,8 @@ jq -e --arg release "$DISTILL_FS_RELEASE" --arg target "$expected_target" \
     "$bundle/manifest.json" >/dev/null
 printf '%s  %s\n' "$(jq -r .binary_sha256 "$bundle/manifest.json")" \
     "$bundle/distill_fs" | sha256sum -c -
+script_dir="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+sh "$script_dir/verify-elf-arch.sh" "$bundle/distill_fs" "$target_arch"
 readelf -h "$bundle/distill_fs" >/dev/null
 if readelf -l "$bundle/distill_fs" | grep -q INTERP ||
     readelf -d "$bundle/distill_fs" | grep -q NEEDED; then

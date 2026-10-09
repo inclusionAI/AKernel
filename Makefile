@@ -68,6 +68,7 @@ help:
 	@echo "  make sdk-check                     Lint, type-check, and test the Python SDK"
 	@echo "  make deploy-script-check           Check deployment script syntax"
 	@echo "  make deploy-standalone-test        Test standalone deployment helpers"
+	@echo "  make build-helper-test             Test image-build helpers without Docker"
 	@echo "  make e2e                           Run the basic SDK e2e example"
 	@echo "  make destroy                       Destroy cloud resources"
 
@@ -186,6 +187,11 @@ deploy-script-check:
 .PHONY: deploy-standalone-test
 deploy-standalone-test:
 	@python3 -m unittest discover -s deploy/standalone -p 'test_*.py'
+
+.PHONY: build-helper-test
+build-helper-test:
+	@python3 builder/scripts/test-build-image.py
+	@python3 builder/scripts/test-elf-arch.py
 
 .PHONY: destroy
 destroy:
