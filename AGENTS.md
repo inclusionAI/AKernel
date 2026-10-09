@@ -145,12 +145,13 @@ and licenses packaged with the Firecracker payload. Both standalone and Helm
 enable read-only virtio-fs by default; disabling the Firecracker image payload
 also excludes virtiofsd.
 
-The sandboxd submodule's runtime manifest is the source of truth for the
-gVisor and Firecracker releases used by both sandboxd E2E and AKernel
-packaging. Test an unreleased runtime by checking out the sandboxd commit that
-pins it rather than overriding manifest fields from the AKernel build. Keep
-sandboxd's pooled-TAP contract and the matching gVisor compatibility patches
-validated together when upgrading.
+The sandboxd submodule's runtime manifest is the source of truth for the gVisor, runc, and Firecracker releases used by both sandboxd E2E and AKernel packaging. Test an unreleased runtime by checking out the sandboxd commit that pins it rather than overriding manifest fields from the AKernel build. Keep sandboxd's pooled-TAP contract and the matching gVisor compatibility patches validated together when upgrading.
+
+Native Linux/arm64 builds support the `rrt` runtime profile with runsc and optional runc. Set `AKERNEL_TARGETARCH=arm64`, `AKERNEL_ENABLE_KATA=false`, and `AKERNEL_ENABLE_FIRECRACKER=false`; use `AKERNEL_ENABLE_RUNC=true` to include runc. ARM64 rejects the Python profile, VM payloads, and NVIDIA GPU requests. The build selects architecture-matched gVisor and runc pins from the sandboxd manifest and distill-fs pins from `builder/distill-fs-versions.env`, explicitly sets both Docker build platforms, and passes the target architecture to sandboxd compilation. Keep the RRT release's AMD64 and ARM64 checksums synchronized with `OPEN_YR_VERSION`. Build-helper argument coverage runs with `python3 builder/scripts/test-build-image.py` without building Docker images.
+
+Build proxy forwarding is opt-in with `AKERNEL_BUILD_PROXY=true` and defaults to `false`. Set proxy environment variables to an endpoint reachable from the Docker builder; the helper passes uppercase and lowercase `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, and `ALL_PROXY` predefined build arguments by name to both builds. Keep their values out of command arguments, logs, saved configuration, and Dockerfile `ARG` declarations. This option changes build downloads only; it does not configure standalone or sandbox networking.
+
+`AKERNEL_BUILD_NETWORK` accepts only `default` (the default) or `host`. Selecting `host` passes `--network host` to both Docker image builds so their RUN instructions can reach host-local services, including a localhost build proxy on OrbStack. This controls build networking only; standalone container networking and sandbox runtime networking retain their deployment settings.
 
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all

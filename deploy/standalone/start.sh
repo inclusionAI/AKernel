@@ -10,7 +10,7 @@ set -e
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${SCRIPT_DIR}/config"
-DATA_DIR="${SCRIPT_DIR}/data"
+DATA_DIR="${AKERNEL_STANDALONE_DATA_DIR:-${SCRIPT_DIR}/data}"
 FRONTEND_PORT="8888"
 ETCD_PORT="${ETCD_PORT:-2379}"
 ETCD_PEER_PORT="${ETCD_PEER_PORT:-2378}"
@@ -105,6 +105,10 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    if [[ "${DATA_DIR}" != /* ]]; then
+        log_error "AKERNEL_STANDALONE_DATA_DIR must be an absolute path"
+        exit 1
+    fi
 
     # Create data directory
     mkdir -p "${DATA_DIR}"
@@ -319,6 +323,53 @@ configure_network() {
 }
 
 prepare_host_network_modules() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if [[ "${DOCKER_CMD}" != docker ||
+              "$("${DOCKER_PREFIX[@]}" docker info --format '{{.OperatingSystem}}')" != OrbStack ]]; then
+            log_error "macOS standalone requires OrbStack Docker"
+            exit 1
+        fi
+        case "$("${DOCKER_PREFIX[@]}" docker info --format '{{.OSType}}/{{.Architecture}}')" in
+            linux/arm64|linux/aarch64) ;;
+            *)
+                log_error "OrbStack standalone requires a native linux/arm64 Docker engine"
+                exit 1
+                ;;
+        esac
+        if [[ "${AKERNEL_ENABLE_GPU:-false}" != false ||
+              "${AKERNEL_ENABLE_KATA:-false}" != false ||
+              "${AKERNEL_ENABLE_FIRECRACKER:-false}" != false ||
+              "${AKERNEL_NAT_BACKEND}" != iptables ]]; then
+            log_error "OrbStack standalone requires iptables networking with Kata, Firecracker, and GPU disabled"
+            exit 1
+        fi
+        if [[ "$("${DOCKER_PREFIX[@]}" docker image inspect \
+            --format '{{.Os}}/{{.Architecture}}' "${IMAGE}")" != linux/arm64 ]]; then
+            log_error "OrbStack standalone requires a native linux/arm64 AKernel image"
+            exit 1
+        fi
+        local runtime
+        for runtime in kata firecracker; do
+            if [[ "$("${DOCKER_PREFIX[@]}" docker image inspect \
+                --format "{{index .Config.Labels \"org.akernel.${runtime}.enabled\"}}" "${IMAGE}")" != false ]]; then
+                log_error "OrbStack image must disable ${runtime}"
+                exit 1
+            fi
+        done
+        if [[ "${AKERNEL_ENABLE_RUNC}" == true &&
+              "$("${DOCKER_PREFIX[@]}" docker image inspect \
+                --format '{{index .Config.Labels "org.akernel.runc.enabled"}}' "${IMAGE}")" != true ]]; then
+            log_error "AKERNEL_ENABLE_RUNC requires an image built with the runc payload enabled"
+            exit 1
+        fi
+        "${DOCKER_PREFIX[@]}" docker run --rm --privileged --net bridge \
+            -e AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC}" \
+            -v "${SCRIPT_DIR}/orbstack-preflight.sh:/orbstack-preflight.sh:ro" \
+            -v "${DATA_DIR}:/home/akernel" \
+            --entrypoint /bin/bash "${IMAGE}" /orbstack-preflight.sh
+        return
+    fi
+
     local modprobe_bin
     modprobe_bin="$(command -v modprobe || true)"
     if [[ -z "${modprobe_bin}" ]]; then

@@ -7,18 +7,19 @@
 set -eu
 
 DISTILL_FS_RELEASE=$1
-DISTILL_FS_AMD64_URL=$2
-DISTILL_FS_AMD64_SHA256=$3
+DISTILL_FS_URL=$2
+DISTILL_FS_SHA256=$3
 destination=$4
 
 case "${TARGETARCH:-$(uname -m)}" in
-    amd64|x86_64) ;;
-    *) echo "distill-fs release supports linux/amd64 only" >&2; exit 1 ;;
+    amd64|x86_64) expected_target=x86_64-unknown-linux-musl ;;
+    arm64|aarch64) expected_target=aarch64-unknown-linux-musl ;;
+    *) echo "unsupported distill-fs target architecture" >&2; exit 1 ;;
 esac
 : "${DISTILL_FS_RELEASE:?distill-fs release is not pinned}"
-: "${DISTILL_FS_AMD64_URL:?distill-fs release URL is not pinned}"
-: "${DISTILL_FS_AMD64_SHA256:?publish and pin the distill-fs release before building}"
-printf '%s\n' "$DISTILL_FS_AMD64_SHA256" | grep -Eq '^[0-9a-f]{64}$' || {
+: "${DISTILL_FS_URL:?distill-fs release URL is not pinned}"
+: "${DISTILL_FS_SHA256:?publish and pin the distill-fs release before building}"
+printf '%s\n' "$DISTILL_FS_SHA256" | grep -Eq '^[0-9a-f]{64}$' || {
     echo "invalid distill-fs SHA-256 pin" >&2
     exit 1
 }
@@ -28,16 +29,21 @@ printf '%s\n' "$DISTILL_FS_AMD64_SHA256" | grep -Eq '^[0-9a-f]{64}$' || {
 mkdir -p "$destination/download" "$destination/bin" "$destination/share/distill-fs"
 archive="$destination/download/distill-fs.tar.gz"
 curl -fSL --retry 5 --retry-delay 2 --retry-all-errors \
-    "$DISTILL_FS_AMD64_URL" -o "$archive"
-printf '%s  %s\n' "$DISTILL_FS_AMD64_SHA256" "$archive" | sha256sum -c -
+    "$DISTILL_FS_URL" -o "$archive"
+printf '%s  %s\n' "$DISTILL_FS_SHA256" "$archive" | sha256sum -c -
 tar -xzf "$archive" -C "$destination/download" \
     distill_fs manifest.json LICENSE NOTICE Cargo.lock
 bundle="$destination/download"
-jq -e --arg release "$DISTILL_FS_RELEASE" \
+actual_target="$(jq -r .target "$bundle/manifest.json")"
+if [ "$actual_target" != "$expected_target" ]; then
+    echo "distill-fs release target mismatch: expected $expected_target, found $actual_target" >&2
+    exit 1
+fi
+jq -e --arg release "$DISTILL_FS_RELEASE" --arg target "$expected_target" \
     '.component == "distill-fs" and .release_tag == $release and
      .version == ($release | ltrimstr("v")) and
      .repository == "inclusionAI/distill-fs" and
-     .target == "x86_64-unknown-linux-musl" and
+     .target == $target and
      (.source_revision | test("^[0-9a-f]{40}$")) and
      (.binary_sha256 | test("^[0-9a-f]{64}$"))' \
     "$bundle/manifest.json" >/dev/null

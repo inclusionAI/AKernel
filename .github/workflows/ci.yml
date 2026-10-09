@@ -114,6 +114,7 @@ jobs:
       - name: Test standalone deployment helpers
         run: |
           make deploy-standalone-test
+          python3 builder/scripts/test-build-image.py
 
   standalone-e2e:
     name: Standalone E2E

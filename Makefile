@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-SHELL := /usr/bin/bash
+SHELL := /bin/bash
 
 VENDOR ?= aliyun
 ENV ?= default
@@ -57,6 +57,7 @@ help:
 	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
 	@echo "  make build AKERNEL_ENABLE_FIRECRACKER=false Exclude Firecracker"
 	@echo "  make build AKERNEL_ENABLE_RUNC=true Include the optional runc payload"
+	@echo "  make build AKERNEL_TARGETARCH=arm64 AKERNEL_ENABLE_KATA=false AKERNEL_ENABLE_FIRECRACKER=false AKERNEL_ENABLE_RUNC=true Build native arm64 runc image"
 	@echo "  make build RRT_RUNTIME_URL=... RRT_RUNTIME_SHA256=... Override RRT artifact"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
