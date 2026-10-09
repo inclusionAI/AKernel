@@ -145,12 +145,15 @@ and licenses packaged with the Firecracker payload. Both standalone and Helm
 enable read-only virtio-fs by default; disabling the Firecracker image payload
 also excludes virtiofsd.
 
-The sandboxd submodule's runtime manifest is the source of truth for the
-gVisor and Firecracker releases used by both sandboxd E2E and AKernel
-packaging. Test an unreleased runtime by checking out the sandboxd commit that
-pins it rather than overriding manifest fields from the AKernel build. Keep
-sandboxd's pooled-TAP contract and the matching gVisor compatibility patches
-validated together when upgrading.
+The sandboxd submodule's runtime manifest is the source of truth for the gVisor, runc, and Firecracker releases used by both sandboxd E2E and AKernel packaging. Test an unreleased runtime by checking out the sandboxd commit that pins it rather than overriding manifest fields from the AKernel build. Keep sandboxd's pooled-TAP contract and the matching gVisor compatibility patches validated together when upgrading.
+
+Native Linux/arm64 builds support the `rrt` runtime profile with runsc and optional runc. Set `AKERNEL_TARGETARCH=arm64`, `AKERNEL_ENABLE_KATA=false`, and `AKERNEL_ENABLE_FIRECRACKER=false`; use `AKERNEL_ENABLE_RUNC=true` to include runc. ARM64 rejects the Python profile, VM payloads, and NVIDIA GPU requests. Builds require Docker BuildKit. The target precedence is explicit `AKERNEL_TARGETARCH`, then a supported single-platform `DOCKER_DEFAULT_PLATFORM`, then the stable `amd64` default; never infer the builder's architecture from the Docker client's host. Explicit runtime flags override the selected deployment profile, which overrides defaults. Validate the merged flags, release pins, and URL/checksum override pairs before either Docker build.
+
+The build selects architecture-matched gVisor and runc pins from the sandboxd manifest and distill-fs pins from `builder/distill-fs-versions.env`, explicitly sets both Docker build platforms, and passes the target architecture to sandboxd compilation. Check downloaded executable ELF headers against the target architecture with `builder/scripts/verify-elf-arch.sh`; checksum verification, manifest claims, or successful execution under emulation do not establish architecture. Keep the RRT release's AMD64 and ARM64 checksums synchronized with `OPEN_YR_VERSION`, and the collector archive checksums synchronized with `OTELCOL_CONTRIB_VERSION`. Collector URL overrides require a matching checksum. `make build-helper-test` covers build arguments and ELF validation without Docker builds.
+
+Build proxy forwarding from the caller's environment is opt-in with `AKERNEL_BUILD_PROXY=true` and defaults to `false`. Set proxy environment variables to an endpoint reachable from the Docker builder; the helper passes uppercase and lowercase `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, and `ALL_PROXY` predefined build arguments by name to both builds. Keep their values out of command arguments, logs, saved configuration, and Dockerfile `ARG` declarations. This option changes build downloads only; it does not configure standalone or sandbox networking or remove Docker's own proxy configuration. Absence of proxy environment variables does not prove an unproxied connection, particularly with OrbStack's transparent macOS proxy integration.
+
+`AKERNEL_BUILD_NETWORK` accepts only `default` (the default) or `host`. Selecting `host` passes `--network host` to both Docker image builds so their RUN instructions can reach host-local services, including a localhost build proxy on OrbStack. This controls build networking only; standalone container networking and sandbox runtime networking retain their deployment settings.
 
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all
@@ -274,6 +277,8 @@ boundary from runsc. It does not support experimental GPU or explicit
 usable `/dev/kvm` device.
 
 Standalone configures resolver sources by DNS mode. Enabling runc copies an approved host resolver into the data mount and sets `plugin.runtime.direct_resolv_conf_path`, while `plugin.runtime.resolv_conf_path` remains the node resolver used by managed DNS. `AKERNEL_RUNC_RESOLV_CONF` selects the host source; systemd-resolved hosts require it explicitly because a flat file cannot preserve split DNS. Preserve the direct-resolver marker under `[plugin.runtime]` in custom templates, and drain sandboxes before refreshing the resolver snapshot or replacing the node. See [`deploy/standalone/README.md#dns-resolver-sources`](deploy/standalone/README.md#dns-resolver-sources) for mode selection and reachability requirements.
+
+Standalone checks platform and image compatibility before modifying credentials or resolver configuration. OrbStack launches and pulls explicitly select `linux/arm64`, independently of the client's default Docker platform. Select an absolute `AKERNEL_STANDALONE_DATA_DIR` for an independent profile; otherwise data stays under `deploy/standalone/data`. Container proxy credentials belong in the protected profile env-file, not logs or process arguments. Drain sandboxes before stopping the node; stop or removal failures must return nonzero, and stopped profiles retain their data and identity files.
 
 The bundled sandboxd configuration enables per-sandbox network ACLs. Pooled TAP
 networking requires the host `tun` module and a usable `/dev/net/tun`. The

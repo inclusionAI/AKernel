@@ -10,7 +10,7 @@ set -e
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${SCRIPT_DIR}/config"
-DATA_DIR="${SCRIPT_DIR}/data"
+DATA_DIR="${AKERNEL_STANDALONE_DATA_DIR:-${SCRIPT_DIR}/data}"
 FRONTEND_PORT="8888"
 ETCD_PORT="${ETCD_PORT:-2379}"
 ETCD_PEER_PORT="${ETCD_PEER_PORT:-2378}"
@@ -30,6 +30,7 @@ LITEBUS_DATA_KEY=""
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
 DOCKER_PREFIX=()
+CONTAINER_PLATFORM_ARGS=()
 PROXY_RUN_ARGS=()
 GPU_RUN_ARGS=()
 
@@ -105,10 +106,10 @@ check_prerequisites() {
             exit 1
             ;;
     esac
-
-    # Create data directory
-    mkdir -p "${DATA_DIR}"
-    log_info "Data directory: ${DATA_DIR}"
+    if [[ "${DATA_DIR}" != /* ]]; then
+        log_error "AKERNEL_STANDALONE_DATA_DIR must be an absolute path"
+        exit 1
+    fi
 
     # Check if config files exist
     local config_files=(
@@ -132,21 +133,36 @@ check_prerequisites() {
         exit 1
     fi
 
-    # config/ holds the input configs; image_manager/ is runtime state that
-    # sandboxd wipes on pod change. Keep them as distinct subtrees.
-    mkdir -p "${DATA_DIR}/sandboxd/config" "${DATA_DIR}/sandboxd/image_manager"
-
     log_info "All config files found"
+}
+
+prepare_data() {
+    # config/ holds inputs; image_manager/ is runtime state that sandboxd wipes
+    # on pod change. Create the profile only after read-only launch gates pass.
+    mkdir -p "${DATA_DIR}/sandboxd/config" "${DATA_DIR}/sandboxd/image_manager"
+    log_info "Data directory: ${DATA_DIR}"
 }
 
 configure_auth() {
     if [[ ! -s "${IAM_SEED_FILE}" ]]; then
-        python3 -c 'import secrets; print(secrets.token_hex(32).upper())' \
-            > "${IAM_SEED_FILE}"
-        chmod 0600 "${IAM_SEED_FILE}"
+        local seed_tmp
+        seed_tmp="$(umask 077; mktemp "${DATA_DIR}/.iam-seed.XXXXXX")"
+        if ! (
+            umask 077
+            python3 -c 'import secrets; print(secrets.token_hex(32).upper())' \
+                > "${seed_tmp}" &&
+                chmod 0600 "${seed_tmp}" &&
+                mv -f -- "${seed_tmp}" "${IAM_SEED_FILE}"
+        ); then
+            rm -f -- "${seed_tmp}"
+            log_error "Could not create protected deployment credentials"
+            exit 1
+        fi
         log_info "Generated a deployment-specific IAM seed"
     fi
 
+    # Preserve an existing deployment identity while tightening old file modes.
+    chmod 0600 "${IAM_SEED_FILE}"
     LITEBUS_DATA_KEY="$(tr -d '[:space:]' < "${IAM_SEED_FILE}")"
     if [[ ! "${LITEBUS_DATA_KEY}" =~ ^[0-9A-Fa-f]+$ ]] || \
        (( ${#LITEBUS_DATA_KEY} % 2 != 0 )); then
@@ -175,15 +191,29 @@ cleanup_existing() {
 ensure_image() {
     local image="$1"
     if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} image inspect "${image}" &> /dev/null; then
+        validate_image_platform "${image}"
         log_info "Using local image: ${image}"
         return 0
     fi
 
     log_info "Pulling image: ${image}"
-    if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} pull "${image}"; then
+    if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} pull "${CONTAINER_PLATFORM_ARGS[@]}" "${image}"; then
+        validate_image_platform "${image}"
         log_info "Image pulled successfully"
     else
         log_error "Failed to pull image: ${image}"
+        exit 1
+    fi
+}
+
+validate_container_proxy() {
+    local proxy="${AKERNEL_CONTAINER_PROXY:-}"
+    if [[ -z "${proxy}" ]]; then
+        return 0
+    fi
+    local no_proxy="${AKERNEL_CONTAINER_NO_PROXY:-localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
+    if [[ "${proxy}${no_proxy}" == *$'\r'* || "${proxy}${no_proxy}" == *$'\n'* ]]; then
+        log_error "Container proxy configuration must not contain line breaks"
         exit 1
     fi
 }
@@ -193,31 +223,28 @@ configure_container_proxy() {
     if [[ -z "${proxy}" ]]; then
         return 0
     fi
-
+    validate_container_proxy
     local no_proxy="${AKERNEL_CONTAINER_NO_PROXY:-localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
-    log_info "Using container proxy: ${proxy}"
-
-    cat > "${DATA_DIR}/proxy.env" <<EOF
-HTTP_PROXY=${proxy}
-HTTPS_PROXY=${proxy}
-ALL_PROXY=${proxy}
-http_proxy=${proxy}
-https_proxy=${proxy}
-all_proxy=${proxy}
-NO_PROXY=${no_proxy}
-no_proxy=${no_proxy}
-EOF
+    local proxy_tmp
+    proxy_tmp="$(umask 077; mktemp "${DATA_DIR}/.proxy.env.XXXXXX")"
+    if ! (
+        umask 077
+        printf '%s\n' \
+            "HTTP_PROXY=${proxy}" "HTTPS_PROXY=${proxy}" "ALL_PROXY=${proxy}" \
+            "http_proxy=${proxy}" "https_proxy=${proxy}" "all_proxy=${proxy}" \
+            "NO_PROXY=${no_proxy}" "no_proxy=${no_proxy}" > "${proxy_tmp}" &&
+            chmod 0600 "${proxy_tmp}" &&
+            mv -f -- "${proxy_tmp}" "${DATA_DIR}/proxy.env"
+    ); then
+        rm -f -- "${proxy_tmp}"
+        log_error "Could not write protected container proxy configuration"
+        exit 1
+    fi
+    log_info "Using configured container proxy"
 
     PROXY_RUN_ARGS=(
         --add-host=host.docker.internal:host-gateway
-        -e HTTP_PROXY="${proxy}"
-        -e HTTPS_PROXY="${proxy}"
-        -e ALL_PROXY="${proxy}"
-        -e http_proxy="${proxy}"
-        -e https_proxy="${proxy}"
-        -e all_proxy="${proxy}"
-        -e NO_PROXY="${no_proxy}"
-        -e no_proxy="${no_proxy}"
+        --env-file "${DATA_DIR}/proxy.env"
         -v "${DATA_DIR}/proxy.env:/etc/akernel/proxy.env:ro"
     )
 }
@@ -318,7 +345,94 @@ configure_network() {
     fi
 }
 
+validate_host_platform() {
+    CONTAINER_PLATFORM_ARGS=()
+    case "${AKERNEL_ENABLE_GPU:-false}" in
+        true|false) ;;
+        *)
+            log_error "AKERNEL_ENABLE_GPU must be true or false"
+            exit 1
+            ;;
+    esac
+    case "${AKERNEL_NAT_BACKEND}" in
+        iptables|bpfnat) ;;
+        *)
+            log_error "AKERNEL_NAT_BACKEND must be 'iptables' or 'bpfnat'"
+            exit 1
+            ;;
+    esac
+    validate_container_proxy
+    if [[ "${AKERNEL_ENABLE_GPU:-false}" == true && "${DOCKER_CMD}" != docker ]]; then
+        log_error "AKERNEL_ENABLE_GPU currently requires Docker"
+        exit 1
+    fi
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if [[ "${DOCKER_CMD}" != docker ||
+              "$("${DOCKER_PREFIX[@]}" docker info --format '{{.OperatingSystem}}')" != OrbStack ]]; then
+            log_error "macOS standalone requires OrbStack Docker"
+            exit 1
+        fi
+        case "$("${DOCKER_PREFIX[@]}" docker info --format '{{.OSType}}/{{.Architecture}}')" in
+            linux/arm64|linux/aarch64) ;;
+            *)
+                log_error "OrbStack standalone requires a native linux/arm64 Docker engine"
+                exit 1
+                ;;
+        esac
+        if [[ "${AKERNEL_ENABLE_GPU:-false}" != false ||
+              "${AKERNEL_ENABLE_KATA:-false}" != false ||
+              "${AKERNEL_ENABLE_FIRECRACKER:-false}" != false ||
+              "${AKERNEL_NAT_BACKEND}" != iptables ]]; then
+            log_error "OrbStack standalone requires iptables networking with Kata, Firecracker, and GPU disabled"
+            exit 1
+        fi
+        CONTAINER_PLATFORM_ARGS=(--platform linux/arm64)
+    fi
+}
+
+validate_image_platform() {
+    local image="$1"
+    if [[ "${#CONTAINER_PLATFORM_ARGS[@]}" -eq 0 ]]; then
+        return 0
+    fi
+    local platform
+    platform="$("${DOCKER_PREFIX[@]}" ${DOCKER_CMD} image inspect \
+        --format '{{.Os}}/{{.Architecture}}' "${image}")"
+    if [[ "${platform}" != linux/arm64 ]]; then
+        log_error "Image ${image} is not native linux/arm64; select an ARM64 image reference. Existing local tags are not overwritten automatically"
+        exit 1
+    fi
+}
+
+validate_image_capabilities() {
+    if [[ "${#CONTAINER_PLATFORM_ARGS[@]}" -gt 0 ]]; then
+        local runtime
+        for runtime in kata firecracker; do
+            if [[ "$("${DOCKER_PREFIX[@]}" docker image inspect \
+                --format "{{index .Config.Labels \"org.akernel.${runtime}.enabled\"}}" "${IMAGE}")" != false ]]; then
+                log_error "OrbStack image must disable ${runtime}"
+                exit 1
+            fi
+        done
+    fi
+    if [[ "${AKERNEL_ENABLE_RUNC}" == true &&
+          "$("${DOCKER_PREFIX[@]}" ${DOCKER_CMD} image inspect \
+            --format '{{index .Config.Labels "org.akernel.runc.enabled"}}' "${IMAGE}")" != true ]]; then
+        log_error "AKERNEL_ENABLE_RUNC requires an image built with the runc payload enabled"
+        exit 1
+    fi
+}
+
 prepare_host_network_modules() {
+    if [[ "${#CONTAINER_PLATFORM_ARGS[@]}" -gt 0 ]]; then
+        "${DOCKER_PREFIX[@]}" docker run "${CONTAINER_PLATFORM_ARGS[@]}" --rm --privileged --net bridge \
+            -e AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC}" \
+            -v "${SCRIPT_DIR}/orbstack-preflight.sh:/orbstack-preflight.sh:ro" \
+            -v "${DATA_DIR}:/home/akernel" \
+            --entrypoint /bin/bash "${IMAGE}" /orbstack-preflight.sh
+        return
+    fi
+
     local modprobe_bin
     modprobe_bin="$(command -v modprobe || true)"
     if [[ -z "${modprobe_bin}" ]]; then
@@ -393,6 +507,7 @@ start_node_container() {
     # by reverse tunnels; the legacy etcd mode cannot publish those routes.
 
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
+        "${CONTAINER_PLATFORM_ARGS[@]}" \
         --name "${NODE_CONTAINER_NAME}" \
         --privileged \
         --net bridge \
@@ -494,6 +609,7 @@ start_traefik_container() {
 
     log_info "Starting container: ${TRAEFIK_CONTAINER_NAME}"
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
+        "${CONTAINER_PLATFORM_ARGS[@]}" \
         --name "${TRAEFIK_CONTAINER_NAME}" \
         --net bridge \
         --restart always \
@@ -562,13 +678,16 @@ show_status() {
 # Main
 check_prerequisites
 cleanup_existing
-configure_auth
+validate_host_platform
 ensure_image "${IMAGE}"
 ensure_image "${TRAEFIK_IMAGE}"
+validate_image_capabilities
+prepare_data
+prepare_host_network_modules
+configure_auth
 configure_container_proxy
 configure_gpu
 configure_network
-prepare_host_network_modules
 start_node_container
 wait_for_ready
 NODE_IP="$(container_ip "${NODE_CONTAINER_NAME}")"

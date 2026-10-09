@@ -15,17 +15,35 @@ ARG OPEN_YR_LEGACY_SDK_VERSION=0.9.9
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-download
 
 ARG OPEN_YR_VERSION
-ARG RRT_RUNTIME_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/rrt-runtime-amd64
-ARG RRT_RUNTIME_SHA256=253f8ac837538ac3cae91c6d05604f4334178eeec7303c9d9fce4788c2506a2c
+ARG TARGETARCH
+ARG RRT_RUNTIME_URL=
+ARG RRT_RUNTIME_SHA256=
+ARG RRT_RUNTIME_AMD64_SHA256=253f8ac837538ac3cae91c6d05604f4334178eeec7303c9d9fce4788c2506a2c
+ARG RRT_RUNTIME_ARM64_SHA256=548ca3515d7bd7ced2204b265bf39d01bde4033f7d25e493b60c8a20be658273
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) release_sha="${RRT_RUNTIME_AMD64_SHA256}" ;; \
+      arm64) release_sha="${RRT_RUNTIME_ARM64_SHA256}" ;; \
+      *) echo "unsupported RRT architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    release_url="https://github.com/openYuanrong-mirror/yuanrong/releases/download/${OPEN_YR_VERSION}/rrt-runtime-${TARGETARCH}"; \
+    if [ -n "${RRT_RUNTIME_URL}" ]; then \
+      test -n "${RRT_RUNTIME_SHA256}"; \
+      release_url="${RRT_RUNTIME_URL}"; \
+      release_sha="${RRT_RUNTIME_SHA256}"; \
+    else \
+      test -z "${RRT_RUNTIME_SHA256}"; \
+    fi; \
     curl -fSL --retry 5 --retry-delay 2 --retry-all-errors \
-        -o /rrt-runtime "${RRT_RUNTIME_URL}"; \
-    echo "${RRT_RUNTIME_SHA256}  /rrt-runtime" | sha256sum -c -; \
+        -o /rrt-runtime "${release_url}"; \
+    echo "${release_sha}  /rrt-runtime" | sha256sum -c -; \
+    sh /usr/local/libexec/verify-elf-arch.sh /rrt-runtime "${TARGETARCH}"; \
     chmod 0755 /rrt-runtime
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-runtime-rootfs
@@ -70,6 +88,7 @@ LABEL org.akernel.runtime.profile="rrt"
 
 FROM rrt-runtime-rootfs AS python-runtime-rootfs
 
+ARG TARGETARCH
 ARG UV_VERSION
 ARG PYTHON_310_VERSION
 ARG PYTHON_311_VERSION
@@ -88,6 +107,11 @@ ENV UV_CACHE_DIR=/tmp/uv-cache \
     LD_LIBRARY_PATH=/usr/local/lib \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+
+RUN if [ "${TARGETARCH}" != "amd64" ]; then \
+      echo "the python runtime profile currently supports linux/amd64 only" >&2; \
+      exit 1; \
+    fi
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
