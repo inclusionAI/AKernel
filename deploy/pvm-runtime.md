@@ -6,7 +6,7 @@ This profile requires the sandboxd change that adds `firecracker-pvm`, and a val
 
 ## Host and guest prerequisites
 
-Use the existing distribution host/L1 kernel with a matched out-of-tree `kvm.ko` and `kvm-pvm.ko`. The host-module source is `virt-pvm/linux`'s `pvm-6.12-host-oot` branch, with the tested target-version compatibility changes pinned in [`pvm/oot-host.env`](./pvm/oot-host.env). No PVM patch, rebuild or replacement of the host kernel binary is required. The qualified target is the original Ubuntu `7.0.0-30-generic` kernel on Intel x86-64; other kernels/configurations and AMD hosts need separate build and runtime qualification.
+Use the existing distribution host/L1 kernel with a matched out-of-tree `kvm.ko` and `kvm-pvm.ko`. [`pvm/oot-host.env`](./pvm/oot-host.env) pins the host source, its generic 6.12 OOT baseline and the ordered Ubuntu target patch series. Apply that profile to a fresh source export before building. No PVM patch, rebuild or replacement of the host kernel binary is required. The qualified target is the original Ubuntu `7.0.0-30-generic` kernel on Intel x86-64; other kernels/configurations and AMD hosts need separate build and runtime qualification.
 
 The OOT host branch does not contain the PVM guest implementation. Firecracker's `resources/akernel/pvm-kernel-versions.env` independently pins the PVM guest source at `58902213f660d7f8d75eb9f08e6c3ff7e4a3721d`. Use each source for its own role; do not substitute the host-only branch into the guest builder.
 
@@ -15,15 +15,24 @@ Install the running distribution kernel's headers, generated configuration and `
 ```sh
 source deploy/pvm/oot-host.env
 : "${PVM_HOST_SOURCE:?select a new host-module source checkout path}"
+: "${PVM_HOST_PREPARED_SOURCE:?select a fresh target module build path}"
 test ! -e "$PVM_HOST_SOURCE"
 git init "$PVM_HOST_SOURCE"
 git -C "$PVM_HOST_SOURCE" fetch --depth=1 \
     "$PVM_HOST_SOURCE_REPOSITORY" "$PVM_HOST_SOURCE_COMMIT"
 git -C "$PVM_HOST_SOURCE" checkout --detach FETCH_HEAD
 test "$(git -C "$PVM_HOST_SOURCE" rev-parse HEAD)" = "$PVM_HOST_SOURCE_COMMIT"
+git -C "$PVM_HOST_SOURCE" fetch --depth 1 \
+    "$PVM_HOST_SOURCE_REPOSITORY" "$PVM_HOST_BASELINE_COMMIT"
+python3 "$PVM_HOST_SOURCE/tools/pvm-oot/prepare.py" \
+    --profile "$PVM_HOST_SOURCE/$PVM_HOST_TARGET_PROFILE" \
+    --source "$PVM_HOST_SOURCE" --kernel-build "/lib/modules/$(uname -r)/build" \
+    --cc gcc-15 --output "$PVM_HOST_PREPARED_SOURCE"
 make -C "/lib/modules/$(uname -r)/build" \
-    M="$PVM_HOST_SOURCE/arch/x86/kvm" PVM_OOT_MODE=1 -j2 modules
+    M="$PVM_HOST_PREPARED_SOURCE/arch/x86/kvm" PVM_OOT_MODE=1 CC=gcc-15 -j2 modules
 ```
+
+Preparation verifies the baseline contents, patch hashes/order and exact target config, `Module.symvers`, release and compiler. Changed inputs fail rather than selecting an inferred compat path. Retain `.pvm-oot-prepared.json` with the build logs and module hashes. A new Ubuntu ABI, including `-31`, needs its own profile and qualification. The profile replaces kernel-version conditions in the baseline; it does not automatically inherit newer stock KVM fixes.
 
 Keep the complete distribution networking/storage module package available. AKernel standalone needs IPv4/IPv6 legacy filter tables, conntrack, connmark/CONNMARK, bridge filtering, ipset and TUN. These remain stock distribution modules; do not replace them with a trimmed PVM kernel/module tree. An earlier custom-host experiment failed at `modprobe iptable_filter` after omitting these dependencies. The stock-kernel OOT qualification retains them without rebuilding the host.
 
@@ -37,8 +46,8 @@ for vendor in kvm_intel kvm_amd; do
 done
 if test -d /sys/module/kvm; then modprobe -r kvm; fi
 modprobe irqbypass
-insmod "$PVM_HOST_SOURCE/arch/x86/kvm/kvm.ko"
-insmod "$PVM_HOST_SOURCE/arch/x86/kvm/kvm-pvm.ko"
+insmod "$PVM_HOST_PREPARED_SOURCE/arch/x86/kvm/kvm.ko"
+insmod "$PVM_HOST_PREPARED_SOURCE/arch/x86/kvm/kvm-pvm.ko"
 ```
 
 Restart sandboxd to reprobe the backend before accepting workloads and keep the pair fixed for its lifetime. The OOT core must not be combined with distribution VMX/SVM modules. It is still a two-module replacement, not a single independent `pvm.ko` attached to the stock KVM core. This AKernel profile does not automatically change host kernels, boot settings, modules, networks or existing clusters.
@@ -57,18 +66,22 @@ vcpu->arch.host_debugctl = get_debugctlmsr();
 
 The value is consumed by VMX/SVM, while PVM already saves its own host DEBUGCTL state in `pvm_vcpu_load()`. An L1 can incur an outer-hypervisor MSR exit for each unnecessary `IA32_DEBUGCTL` (`0x1d9`) read, including first-write faults during exact dirty-page tracking. The [backend-scoped reference patch](pvm/kvm-debugctl-backend-scope.patch) moves the save into `vmx_vcpu_run()` and `svm_vcpu_run()`, preserving those source paths. It applies to the pinned OOT source and changes the module source only. OOT mode builds the core and PVM backend, excluding VMX/SVM; the guest-bundle builder does not apply the patch.
 
-To build this optional variant, use a separate clean checkout at the pinned OOT commit and build only the matched modules against the unchanged distribution host:
+To build this optional variant, prepare a separate clean target export from the same pinned profile and build the matched modules against the unchanged distribution host:
 
 ```sh
-PVM_HOST_SOURCE=/path/to/separate-pinned-pvm-linux
+: "${PVM_HOST_OPTIMIZED_SOURCE:?select a fresh optimized module build path}"
 PVM_DEBUGCTL_PATCH="$PWD/deploy/pvm/kvm-debugctl-backend-scope.patch"
-git -C "$PVM_HOST_SOURCE" apply --check "$PVM_DEBUGCTL_PATCH"
-git -C "$PVM_HOST_SOURCE" apply "$PVM_DEBUGCTL_PATCH"
+python3 "$PVM_HOST_SOURCE/tools/pvm-oot/prepare.py" \
+    --profile "$PVM_HOST_SOURCE/$PVM_HOST_TARGET_PROFILE" \
+    --source "$PVM_HOST_SOURCE" --kernel-build "/lib/modules/$(uname -r)/build" \
+    --cc gcc-15 --output "$PVM_HOST_OPTIMIZED_SOURCE"
+git -C "$PVM_HOST_OPTIMIZED_SOURCE" apply --check "$PVM_DEBUGCTL_PATCH"
+git -C "$PVM_HOST_OPTIMIZED_SOURCE" apply "$PVM_DEBUGCTL_PATCH"
 make -C "/lib/modules/$(uname -r)/build" \
-    M="$PVM_HOST_SOURCE/arch/x86/kvm" PVM_OOT_MODE=1 -j2 modules
+    M="$PVM_HOST_OPTIMIZED_SOURCE/arch/x86/kvm" PVM_OOT_MODE=1 CC=gcc-15 -j2 modules
 ```
 
-Load both modules during the dedicated-node procedure above and requalify the optimized pair. Preserve hardware-KVM restoration; do not discard its saved value or mix the OOT core with stock vendor modules. To return to hardware KVM, stop PVM users, unload both OOT modules and load the complete original stock pair. The stock kernel and its vendor modules remain unchanged. SVM hardware execution was not covered by the Intel-only experiment.
+Load both modules from `PVM_HOST_OPTIMIZED_SOURCE` during the dedicated-node procedure above and requalify the optimized pair. Preserve hardware-KVM restoration; do not discard its saved value or mix the OOT core with stock vendor modules. To return to hardware KVM, stop PVM users, unload both OOT modules and load the complete original stock pair. The stock kernel and its vendor modules remain unchanged. SVM hardware execution was not covered by the Intel-only experiment.
 
 An earlier controlled nested microbenchmark on a Cascade Lake host measured 96 MiB first dirty writes at about 61.5 ms with guest MPK alone and 35.9 ms with MPK plus this backend-scoped patch, compared with about 50 ms for nested hardware KVM. These earlier in-tree results do not qualify OOT performance, AKernel service performance or direct bare-metal behavior. Current stock-kernel OOT qualification uses the unoptimized pair. Record the patch and exact module identities separately when validating an optimized pair.
 
