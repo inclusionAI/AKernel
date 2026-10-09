@@ -191,6 +191,10 @@ provide both `OPEN_YR_CORE_WHEEL_URL` and `OPEN_YR_CORE_WHEEL_SHA256` to
 `make build`. The complete wheel is verified before it replaces the pinned
 release control plane.
 
+For the etcd prefix-read source candidate, validation scope, and core wheel
+integration boundary, see `deploy/etcd-prefix-read-scope.txt`. Source changes
+in the nested functionsystem submodule do not replace the pinned wheel.
+
 To test an unreleased RRT binary, provide both `RRT_RUNTIME_URL` and
 `RRT_RUNTIME_SHA256` to `make build`. The runtime build verifies the binary
 before packaging it into the selected runtime root filesystem.

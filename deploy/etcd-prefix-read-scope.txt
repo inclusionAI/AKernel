@@ -1,0 +1,108 @@
+Etcd prefix-read candidate: source scope and image integration
+Reviewed on 2026-10-09. Source candidate only; no image or deployment change.
+
+Source provenance
+
+AKernel main: 464e9b10c5102558fd5c39cdb362349533612a40
+YuanRong upstream master: 5bd7a9a038fb4a966ef960a938629f049934b222
+Functionsystem upstream master: 1a2aff6f965e86b36d7a69efa37084deb4d327a6
+Functionsystem fix: dfd60257134ad8af876cd8b12d5bc2f5f5b932a5
+Candidate branch: codex/etcd-bounded-snapshot-reads
+Candidate repository: https://github.com/hky1999/yuanrong-functionsystem
+
+The functionsystem source is a nested submodule. The current account can
+publish the candidate to the existing fork, but cannot push to the upstream
+mirror. No unpublished YuanRong parent revision is used as a gitlink. This
+AKernel branch documents the independently published component candidate;
+it does not advance release pins or package the source fix into an image.
+
+For source review in an initialized, dedicated checkout:
+
+  git -C src/yuanrong/functionsystem fetch \
+    https://github.com/hky1999/yuanrong-functionsystem.git \
+    refs/heads/codex/etcd-bounded-snapshot-reads
+  git -C src/yuanrong/functionsystem switch --detach \
+    dfd60257134ad8af876cd8b12d5bc2f5f5b932a5
+
+Implementation boundary
+
+The complete read/recovery design crosses C++ workers, Go watcher lifecycle,
+shared recovery admission, metadata ownership, consumer state and startup
+timers. It needs several changes and integration tests. The first candidate
+changes seven production files in functionsystem, four test/build files, and
+one component document; the production change stays within the etcd client,
+the status-bearing accessor and the worker's initial synchronization guard.
+
+Unlimited default-order prefix Get calls become sequential physical Range
+requests. Each page uses a positive KV limit, one fixed range_end, and the
+first page's revision. The next inclusive key is last_key + NUL. The existing
+Get API still returns one complete collection, so existing full-snapshot
+reconciliation code is never called once per partial page. Invalid keys,
+source changes, count mismatches, compaction and failures discard the result.
+
+The page size defaults to 256 and accepts 1..4096. The whole-read budget
+defaults to 60 seconds and accepts 1..3600. Invalid values explicitly fail.
+These are MetaStoreTimeoutOption constructor options, without new CLI or
+deployment settings. Explicit limited/count-only/sorted reads keep their
+current path. Native Metastore behavior and RPC protocols are unchanged.
+
+Initial GetAndWatch rejects failed reads or rejected snapshot callbacks and
+keeps watch start at snapshot_revision + 1. Worker ObserverActor uses the new
+SyncWithStatus before marking instance synchronization complete; failure also
+fails its completion future. Other callers of the legacy Sync interface still
+need a separate failure-propagation audit. Client shutdown completes pending
+logical reads with cancellation; it does not explicitly interrupt a Range
+already executing on the server.
+
+Validation completed
+
+25 tests passed in a local Ubuntu 22.04 container: 10 cursor tests, 13 mocked
+RPC tests including the existing transaction test, and two integration tests
+against the official etcd 3.6.8 binary. The integration tests verify concurrent
+updates/deletes/inserts between pages and replay of a write between snapshot
+completion and watch start. Compile checks also passed for the changed
+accessor and observer and the accessor regression test translation unit.
+
+The local harness compiled the actual client and Litebus sources with GCC
+11.4, gRPC 1.30.2 and Protobuf 3.12.4. It regenerated the protocol headers and
+used test-only header includes for baseline Litebus compatibility. This is
+not a full build with the project's pinned dependency set. Four new accessor
+tests were compile-checked but not executed. The component document contains
+the focused CMake target and optional integration test environment variable:
+
+  src/yuanrong/functionsystem/docs/etcd-prefix-snapshot-reads.txt
+
+Remaining acceptance work
+
+* Per-page limits bound KV count, not value bytes or backend index scan cost.
+  The final client collection and event vectors still grow with the prefix.
+* One active page is guaranteed per logical read, not per worker or fleet.
+  Multiple logical reads and workers can still run concurrently. Shared
+  request/byte admission and startup/reconnect staggering remain required.
+* Per-owner indexes, smaller metadata, consumer parse/staging correctness,
+  acknowledged watch checkpoints, Go lifecycle/subscription fixes and old
+  worker recovery coverage remain outside this candidate.
+* Test the 60-second default against existing worker watch startup timers
+  and process supervision. It is not a complete readiness or recovery policy.
+* Run the pinned-dependency build and worker/accessor regressions. Reproduce
+  the intended record/value distribution and simultaneous recovery scale;
+  measure etcd/client memory, index scan CPU, latency and recovery duration.
+
+Image integration and rollout
+
+builder/node.Dockerfile currently downloads a checksum-pinned
+openyuanrong_core 0.10.2rc10 wheel. A source checkout or gitlink update does
+not modify those binaries. Build the reviewed source into a compatible core
+wheel, validate it with the selected frontend/runtime versions, and publish
+the actual artifact before updating any release manifest.
+
+AKernel already supports an isolated wheel override through the paired
+OPEN_YR_CORE_WHEEL_URL and OPEN_YR_CORE_WHEEL_SHA256 inputs to make build.
+Use the real published wheel URL and its verified checksum. No candidate
+artifact has been built or published in this change; no digest is invented.
+
+Worker rollout must preserve running workloads. Validate on new or idle
+nodes, with mutually exclusive placement or a reviewed OnDelete strategy.
+Do not trigger a complete existing worker-pool rolling update as part of
+source validation. The autoscaling and emergency capacity policy is a
+separate implementation stream.
