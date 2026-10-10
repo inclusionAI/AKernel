@@ -42,10 +42,13 @@ python sdk/python/scripts/prepare_adx_dependency.py \
 python -m pip install ./sdk/python
 ```
 
-The helper downloads the ADX SDK candidate pinned in `adx-sdk.lock.json` and
-verifies its SHA-256 digest before installation. This source-build path is used
-until `adx-sandbox==0.1.0` is available from the configured Python package
-index. AKernel SDK releases still require the dependency to be published.
+The helper downloads the pinned Agent DX `v0.1.0rc1` GitHub release archive,
+verifies its SHA-256, and reads only the bundled SDK wheel. It verifies the
+wheel's own SHA-256 before installation and reuses a verified local wheel on
+subsequent runs. Both digests and the member path are in `adx-sdk.lock.json`.
+This source-build path is used until `adx-sandbox==0.1.0rc1` is available from the
+configured Python package index. AKernel SDK releases still require the
+dependency to be published.
 
 Configure the public AKernel entrypoint and the deployment token:
 

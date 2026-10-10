@@ -1,8 +1,10 @@
 {
   "schema_version": 1,
   "name": "adx-sandbox",
-  "version": "0.1.0",
-  "commit": "5e62b9f3fd571bd4d796380e07269976bbb1d820",
-  "url": "https://openyuanrong.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20260929023150-5e62b9f3fd57/linux/amd64/adx_sandbox-0.1.0-py3-none-any.whl",
-  "sha256": "5f53d89c02b482fdb26b6c9ee902e2298357b53781d3a224e5365e5a0614aa02"
+  "version": "0.1.0rc1",
+  "commit": "001b257ab09478d2296aee164df0fceb8b15aa24",
+  "url": "https://github.com/openJiuwen-ai/agent-dx/releases/download/v0.1.0rc1/adx-release-v0.1.0rc1-linux-amd64.tar.gz",
+  "sha256": "b1019058391394eab58e5b35d59fbbc72507f22c9e6f19ed32729cdee971c046",
+  "archive_member": "sdk/adx_sandbox-0.1.0rc1-py3-none-any.whl",
+  "archive_sha256": "3b9fe181a9c019ae9f7ed2f299f8c0091867c6b75a3325f44058e9776cd3db68"
 }

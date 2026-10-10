@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import hashlib
+import io
 import json
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,6 +72,58 @@ class PrepareAdxDependencyTest(unittest.TestCase):
 
         self.assertEqual(list(output.glob("*.whl")), [])
         self.assertEqual(list(output.glob("*.tmp")), [])
+
+    def _archive_lock(self, *, symlink=False):
+        lock = self._write_lock()
+        archive = self.root / "adx-release.tar.gz"
+        member = f"sdk/{self.source.name}"
+        with tarfile.open(archive, "w:gz") as bundle:
+            info = tarfile.TarInfo(f"./{member}")
+            if symlink:
+                info.type = tarfile.SYMTYPE
+                info.linkname = "/etc/passwd"
+                bundle.addfile(info)
+            else:
+                payload = self.source.read_bytes()
+                info.size = len(payload)
+                bundle.addfile(info, io.BytesIO(payload))
+        data = json.loads(lock.read_text())
+        data.update(
+            url=archive.as_uri(),
+            archive_member=member,
+            archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+        lock.write_text(json.dumps(data))
+        return lock, archive
+
+    def test_release_bundle_wheel_is_verified_and_cached(self):
+        lock, archive = self._archive_lock()
+        output = self.root / "download"
+        wheel = prepare(lock, output)
+        self.assertEqual(wheel.name, self.source.name)
+        self.assertEqual(wheel.read_bytes(), self.source.read_bytes())
+        archive.unlink()
+        self.assertEqual(prepare(lock, output), wheel)
+        self.assertEqual(list(output.glob("*.tmp")), [])
+
+    def test_release_bundle_and_wheel_checksums_are_both_required(self):
+        for field in ("archive_sha256", "sha256"):
+            with self.subTest(field=field):
+                lock, _ = self._archive_lock()
+                data = json.loads(lock.read_text())
+                data[field] = "0" * 64
+                lock.write_text(json.dumps(data))
+                output = self.root / "download"
+                with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                    prepare(lock, output)
+                self.assertEqual(list(output.iterdir()), [])
+
+    def test_release_bundle_rejects_non_regular_wheel(self):
+        lock, _ = self._archive_lock(symlink=True)
+        output = self.root / "download"
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            prepare(lock, output)
+        self.assertEqual(list(output.iterdir()), [])
 
 
 if __name__ == "__main__":

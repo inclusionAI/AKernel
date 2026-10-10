@@ -25,9 +25,9 @@ class RuntimeContractTest(unittest.TestCase):
         )
         self.assertRegex(
             urls[0],
-            rf"^https://openyuanrong\.obs\.cn-southwest-2\.myhuaweicloud\.com/"
-            rf"adx/daily/[0-9]{{14}}-[0-9a-f]{{12}}/linux/amd64/"
-            rf"adx-{component}\.tar\.gz$",
+            rf"^https://github\.com/openJiuwen-ai/agent-dx/releases/download/"
+            rf"(v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?)/"
+            rf"adx-{component}-\1-linux-amd64\.tar\.gz$",
         )
         self.assertRegex(checksums[0], r"^[0-9a-f]{64}$")
         self.assertIn(
@@ -100,7 +100,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("--target runtime-execd", build)
         self.assertNotIn("--runtime-profile", build)
 
-    def test_dockerfiles_install_the_pinned_obs_release(self) -> None:
+    def test_dockerfiles_install_the_pinned_github_release(self) -> None:
         node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
         runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
         self.assert_matching_artifact_pins(node, runtime)
@@ -118,7 +118,7 @@ class RuntimeContractTest(unittest.TestCase):
         runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
         mutations = {
             "mutable URL": re.sub(
-                r"daily/[0-9]{14}-[0-9a-f]{12}", "daily/latest", node
+                r"/v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?/", "/latest/", node
             ),
             "missing checksum": re.sub(
                 r"^ARG ADX_RELEASE_SHA256=.+\n", "", node, flags=re.MULTILINE
@@ -130,8 +130,8 @@ class RuntimeContractTest(unittest.TestCase):
                 flags=re.MULTILINE,
             ),
             "mismatched build": re.sub(
-                r"daily/[0-9]{14}-[0-9a-f]{12}",
-                "daily/20000101000000-000000000000",
+                r"v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?",
+                "v0.0.0rc1",
                 node,
             ),
             "unchecked checksum": node.replace("| sha256sum -c -;", "| cat;"),

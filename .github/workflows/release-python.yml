@@ -77,7 +77,7 @@ jobs:
         run: |
           python -m pip download --no-deps --only-binary=:all: \
             --dest "${RUNNER_TEMP}/adx-sdk-published" \
-            'adx-sandbox==0.1.0'
+            'adx-sandbox==0.1.0rc1'
 
       - name: Check SDK
         run: |

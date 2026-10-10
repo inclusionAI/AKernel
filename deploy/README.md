@@ -31,7 +31,8 @@ make print-env
 make e2e
 ```
 
-The node image downloads the pinned ADX linux/amd64 release directly from OBS,
+The node image downloads the pinned ADX `v0.1.0rc1` Linux AMD64 release from
+[GitHub Releases](https://github.com/openJiuwen-ai/agent-dx/releases/tag/v0.1.0rc1),
 verifies the archive SHA-256, and runs the release's own `install.sh`, which
 verifies its internal manifest before installation. The runtime build downloads
 the separately published `adx-execd` component archive and verifies its SHA-256.
@@ -39,15 +40,16 @@ AKernel then builds its own runtime rootfs with that binary; the prebuilt ADX
 runtime image is not copied into the all-in-one image. When advancing ADX,
 update `ADX_RELEASE_URL` and `ADX_RELEASE_SHA256` in `builder/node.Dockerfile`,
 and `ADX_EXECD_URL` and `ADX_EXECD_SHA256` in `builder/runtime.Dockerfile`.
-Keep both archives on the same immutable OBS build directory. The CI release
+Keep both archives on the same release tag and architecture. The CI release
 contract reads these Dockerfile pins and checks the URL format, SHA-256 pins,
-checksum verification commands, and matching builds; tests do not duplicate
+checksum verification commands, and matching releases; tests do not duplicate
 the selected release's version or checksum.
 The Collector archive URL and SHA-256 are also pinned in `builder/node.Dockerfile`.
 Upstream's `v0.120.0` archive contains the Collector Contrib `0.120.1` binary;
 the download tag and archive name use `0.120.0`, not the binary's version.
-The published release is linux/amd64, so `make build` explicitly targets
-`linux/amd64`; Mac ARM builds require Docker's amd64 emulation.
+ADX publishes AMD64 and ARM64 packages. AKernel's current all-in-one build
+explicitly consumes AMD64 and targets `linux/amd64`; Mac ARM builds require
+Docker's amd64 emulation.
 
 Kata Containers and Firecracker are enabled in the default AKernel image and
 runtime configuration. Both require `/dev/kvm` to be available to the node

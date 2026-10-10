@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
-    "adx-sandbox==0.1.0",
+    "adx-sandbox==0.1.0rc1",
     "idna>=3,<4",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",

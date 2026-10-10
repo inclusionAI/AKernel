@@ -8,6 +8,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tarfile
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,8 @@ class Dependency:
     commit: str
     url: str
     sha256: str
+    archive_member: str | None = None
+    archive_sha256: str | None = None
 
 
 def _required_string(data: dict[str, Any], name: str) -> str:
@@ -41,13 +44,28 @@ def read_lock(path: Path) -> Dependency:
         commit=_required_string(data, "commit"),
         url=_required_string(data, "url"),
         sha256=_required_string(data, "sha256"),
+        archive_member=data.get("archive_member"),
+        archive_sha256=data.get("archive_sha256"),
     )
     if dependency.name != "adx-sandbox":
         raise ValueError(f"unexpected ADX SDK project: {dependency.name}")
-    if len(dependency.sha256) != 64 or any(
-        character not in "0123456789abcdef" for character in dependency.sha256
-    ):
-        raise ValueError("ADX SDK sha256 must be 64 lowercase hexadecimal digits")
+    if (dependency.archive_member is None) != (dependency.archive_sha256 is None):
+        raise ValueError("archive_member and archive_sha256 must be set together")
+    for digest in (dependency.sha256, dependency.archive_sha256):
+        if digest is not None and (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError(
+                "ADX SDK sha256 must be 64 lowercase hexadecimal digits"
+            )
+    if dependency.archive_member is not None:
+        expected = f"sdk/adx_sandbox-{dependency.version}-py3-none-any.whl"
+        if dependency.archive_member != expected:
+            raise ValueError(
+                f"unexpected ADX SDK archive member: {dependency.archive_member}"
+            )
     return dependency
 
 
@@ -63,19 +81,42 @@ def prepare(lock_path: Path, output_dir: Path) -> Path:
     dependency = read_lock(lock_path)
     filename = Path(urlparse(dependency.url).path).name
     expected = f"adx_sandbox-{dependency.version}-py3-none-any.whl"
-    if filename != expected:
+    if dependency.archive_member is None and filename != expected:
         raise ValueError(f"unexpected ADX SDK wheel filename: {filename}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    wheel = output_dir / filename
+    wheel = output_dir / expected
     if wheel.exists() and _sha256(wheel) == dependency.sha256:
         return wheel
 
     temporary = wheel.with_suffix(wheel.suffix + ".tmp")
+    download = wheel.with_suffix(wheel.suffix + ".download.tmp")
     temporary.unlink(missing_ok=True)
+    download.unlink(missing_ok=True)
     try:
         with urllib.request.urlopen(dependency.url, timeout=60) as response:
-            temporary.write_bytes(response.read())
+            with download.open("wb") as stream:
+                for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    stream.write(chunk)
+        if dependency.archive_member is None:
+            download.replace(temporary)
+        else:
+            if _sha256(download) != dependency.archive_sha256:
+                raise ValueError("ADX release archive checksum mismatch")
+            with tarfile.open(download, "r:gz") as archive:
+                members = [
+                    member
+                    for member in archive.getmembers()
+                    if member.name.removeprefix("./") == dependency.archive_member
+                ]
+                if len(members) != 1 or not members[0].isfile():
+                    raise ValueError("ADX SDK archive member must be one regular file")
+                source = archive.extractfile(members[0])
+                if source is None:
+                    raise ValueError("ADX SDK archive member cannot be read")
+                with source, temporary.open("wb") as stream:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        stream.write(chunk)
         actual = _sha256(temporary)
         if actual != dependency.sha256:
             raise ValueError(
@@ -85,6 +126,7 @@ def prepare(lock_path: Path, output_dir: Path) -> Path:
         temporary.replace(wheel)
     finally:
         temporary.unlink(missing_ok=True)
+        download.unlink(missing_ok=True)
     return wheel
 
 
