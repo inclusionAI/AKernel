@@ -19,8 +19,19 @@ PROXY_NAMES = (
     "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
     "http_proxy", "https_proxy", "no_proxy", "all_proxy",
 )
+APT_MIRROR_NAMES = (
+    "AKERNEL_APT_UBUNTU_MIRROR", "AKERNEL_APT_UBUNTU_PORTS_MIRROR",
+    "AKERNEL_APT_DEBIAN_MIRROR", "AKERNEL_APT_DEBIAN_SECURITY_MIRROR",
+)
+DOWNLOAD_SOURCE_NAMES = (
+    *APT_MIRROR_NAMES, "AKERNEL_BUILD_MIRROR", "PIP_INDEX_URL", "GOPROXY",
+    "UV_DEFAULT_INDEX", "UV_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_TRUSTED_HOST",
+    "GOSUMDB", "GONOSUMDB", "GONOPROXY", "GOPRIVATE",
+    "OTELCOL_CONTRIB_URL", "OTELCOL_CONTRIB_SHA256",
+)
 AMBIENT_BUILD_NAMES = (
-    *PROXY_NAMES, "BASH_ENV", "ENV", "BASHOPTS", "SHELLOPTS", "CDPATH", "GLOBIGNORE",
+    *PROXY_NAMES, *DOWNLOAD_SOURCE_NAMES,
+    "BASH_ENV", "ENV", "BASHOPTS", "SHELLOPTS", "CDPATH", "GLOBIGNORE",
     "RUNTIME_PROFILE", "DOCKER_DEFAULT_PLATFORM", "DOCKER_BUILDKIT",
     "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
 )
@@ -140,6 +151,11 @@ class BuildImageTests(unittest.TestCase):
             return []
         return [json.loads(line) for line in self.proxy_environments.read_text().splitlines()]
 
+    def build_arguments(self, call):
+        return dict(call[index + 1].split("=", 1)
+                    for index, value in enumerate(call[:-1])
+                    if value == "--build-arg" and "=" in call[index + 1])
+
     def write_profile(self, **values):
         profile = self.root / ".akernel/test/config.env"
         profile.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +178,12 @@ class BuildImageTests(unittest.TestCase):
             "FIRECRACKER_UNSELECTED_PIN": "PRIVATE_INVALID_VALUE",
             "DISTILL_FS_UNSELECTED_PIN": "PRIVATE_INVALID_VALUE",
             "HTTP_PROXY": "https://private-proxy.invalid",
+            "AKERNEL_BUILD_MIRROR": "PRIVATE_INVALID_VALUE",
+            "AKERNEL_APT_UBUNTU_MIRROR": "https://private-mirror.invalid/ubuntu",
+            "PIP_INDEX_URL": "https://private-mirror.invalid/simple",
+            "GOPROXY": "https://private-mirror.invalid/go",
+            "OTELCOL_CONTRIB_URL": "https://private-override.invalid/otelcol.tar.gz",
+            "OTELCOL_CONTRIB_SHA256": "PRIVATE_INVALID_VALUE",
         }
         fixture = BuildImageTests("test_arm64_runc_uses_matching_pins_and_platforms")
         self.addCleanup(fixture.doCleanups)
@@ -371,6 +393,128 @@ class BuildImageTests(unittest.TestCase):
         self.assertIn("OPEN_YR_CORE_WHEEL_URL=https://example.test/cli-core.whl", node)
         self.assertIn(f"OPEN_YR_CORE_WHEEL_SHA256={'F' * 64}", node)
 
+    def test_default_official_sources_do_not_override_mirrors_or_release_pins(self):
+        for option in ({}, {"AKERNEL_BUILD_MIRROR": "official"}):
+            with self.subTest(option=option):
+                result = self.run_helper(**option)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                runtime, node = self.docker_calls()[-2:]
+                for call in (runtime, node):
+                    arguments = self.build_arguments(call)
+                    for name in (*APT_MIRROR_NAMES, "PIP_INDEX_URL", "GOPROXY"):
+                        self.assertNotIn(name, arguments)
+                pins = self.build_arguments(node)
+                self.assertEqual(pins["GVISOR_URL"], "https://example.test/gvisor-arm64.tar.bz2")
+                self.assertEqual(pins["GVISOR_SHA512"], "b" * 128)
+                self.assertEqual(pins["DISTILL_FS_URL"], "https://example.test/distill-arm64.tar.gz")
+                self.assertEqual(pins["DISTILL_FS_SHA256"], "2" * 64)
+                self.assertEqual(pins["RUNC_RELEASE_BASE_URL"], "https://example.test/runc")
+                self.assertEqual(pins["RUNC_SHA256"], "d" * 64)
+                self.assertNotIn("OTELCOL_CONTRIB_URL", pins)
+                self.assertNotIn("OTELCOL_CONTRIB_SHA256", pins)
+
+    def test_aliyun_apt_preset_reaches_both_builds_on_each_architecture(self):
+        expected = dict(zip(APT_MIRROR_NAMES, (
+            "http://mirrors.aliyun.com/ubuntu", "http://mirrors.aliyun.com/ubuntu-ports",
+            "http://mirrors.aliyun.com/debian", "http://mirrors.aliyun.com/debian-security",
+        )))
+        for architecture in ("amd64", "arm64"):
+            with self.subTest(architecture=architecture):
+                result = self.run_helper(AKERNEL_TARGETARCH=architecture, AKERNEL_BUILD_MIRROR="aliyun")
+                self.assertEqual(result.returncode, 0, result.stdout)
+                for call in self.docker_calls()[-2:]:
+                    arguments = self.build_arguments(call)
+                    for name, url in expected.items():
+                        self.assertEqual(arguments[name].rstrip("/"), url)
+                    self.assertEqual(call[call.index("--platform") + 1], f"linux/{architecture}")
+                    self.assertNotIn("GOPROXY", arguments)
+
+    def test_aliyun_pypi_applies_to_python_profile_without_changing_node_pins(self):
+        result = self.run_helper("--runtime-profile", "python",
+                                 AKERNEL_TARGETARCH="amd64", AKERNEL_BUILD_MIRROR="aliyun")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        runtime, node = map(self.build_arguments, self.docker_calls())
+        self.assertEqual(runtime["PIP_INDEX_URL"].rstrip("/"), "https://mirrors.aliyun.com/pypi/simple")
+        self.assertNotIn("PIP_INDEX_URL", node)
+        self.assertEqual(node["GVISOR_URL"], "https://example.test/gvisor-amd64.tar.bz2")
+        self.assertEqual(node["GVISOR_SHA512"], "a" * 128)
+
+    def test_custom_package_sources_override_preset_and_preserve_go_checksum_policy(self):
+        custom = {name: f"https://mirror.example.test/{index}"
+                  for index, name in enumerate(APT_MIRROR_NAMES)}
+        custom.update(PIP_INDEX_URL="https://mirror.example.test/simple", GOPROXY="https://mirror.example.test/go,direct")
+        result = self.run_helper("--runtime-profile", "python", AKERNEL_TARGETARCH="amd64",
+                                 AKERNEL_BUILD_MIRROR="aliyun", **custom)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        runtime, node = map(self.build_arguments, self.docker_calls())
+        for arguments in (runtime, node):
+            for name in APT_MIRROR_NAMES:
+                self.assertEqual(arguments[name], custom[name])
+            self.assertNotIn("GOSUMDB", arguments)
+        self.assertEqual(runtime["PIP_INDEX_URL"], custom["PIP_INDEX_URL"])
+        self.assertEqual(node["GOPROXY"], custom["GOPROXY"])
+        self.assertNotIn("PIP_INDEX_URL", node)
+
+    def test_custom_apt_source_can_override_official_with_no_other_preset_values(self):
+        url = "https://mirror.example.test/ubuntu-ports"
+        result = self.run_helper(AKERNEL_APT_UBUNTU_PORTS_MIRROR=url)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for call in self.docker_calls():
+            arguments = self.build_arguments(call)
+            self.assertEqual(arguments["AKERNEL_APT_UBUNTU_PORTS_MIRROR"], url)
+            for name in APT_MIRROR_NAMES:
+                if name != "AKERNEL_APT_UBUNTU_PORTS_MIRROR":
+                    self.assertNotIn(name, arguments)
+
+    def test_invalid_mirror_preset_fails_before_build_without_echoing_value(self):
+        for value in ("", "auto", "ALIYUN", "PRIVATE_INVALID_VALUE"):
+            with self.subTest(value=value):
+                result = self.run_helper(AKERNEL_BUILD_MIRROR=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("AKERNEL_BUILD_MIRROR", result.stdout)
+                self.assertNotIn("PRIVATE_INVALID_VALUE", result.stdout)
+                self.assertEqual(self.docker_calls(), [])
+
+    def test_invalid_or_credential_bearing_package_mirror_urls_cannot_build(self):
+        values = (
+            "PRIVATE_INVALID_VALUE", "file:///tmp/PRIVATE_INVALID_VALUE",
+            "ftp://mirror.example.test/PRIVATE_INVALID_VALUE", "https://",
+            "https://user:PRIVATE_INVALID_VALUE@mirror.example.test/ubuntu",
+            "https://mirror.example.test/ubuntu?token=PRIVATE_INVALID_VALUE",
+            "https://mirror.example.test/ubuntu#PRIVATE_INVALID_VALUE",
+            "https://mirror.example.test/PRIVATE_INVALID_VALUE\nINJECTED=yes",
+            "http://:443", "https://mirror.example.test:notaport/ubuntu",
+            "http://mirror.example.test/PRIVATE_INVALID_VALUE|replacement",
+            "http://mirror.example.test/PRIVATE_INVALID_VALUE&replacement",
+        )
+        for name in (*APT_MIRROR_NAMES, "PIP_INDEX_URL"):
+            for value in values:
+                with self.subTest(name=name, value=value):
+                    result = self.run_helper("--runtime-profile", "python", AKERNEL_TARGETARCH="amd64", **{name: value})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(name, result.stdout)
+                    self.assertNotIn("PRIVATE_INVALID_VALUE", result.stdout)
+                    self.assertEqual(self.docker_calls(), [])
+
+    def test_otel_override_reaches_only_node_build_from_environment(self):
+        result = self.run_helper(OTELCOL_CONTRIB_URL="https://example.test/otelcol.tar.gz",
+                                 OTELCOL_CONTRIB_SHA256="a" * 64)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        runtime, node = map(self.build_arguments, self.docker_calls())
+        self.assertNotIn("OTELCOL_CONTRIB_URL", runtime)
+        self.assertEqual(node["OTELCOL_CONTRIB_URL"], "https://example.test/otelcol.tar.gz")
+        self.assertEqual(node["OTELCOL_CONTRIB_SHA256"], "a" * 64)
+
+    def test_otel_cli_pair_takes_precedence_over_environment_pair(self):
+        result = self.run_helper("--otelcol-contrib-url", "https://example.test/cli-otelcol.tar.gz",
+                                 "--otelcol-contrib-sha256", "B" * 64,
+                                 OTELCOL_CONTRIB_URL="https://example.test/env-otelcol.tar.gz",
+                                 OTELCOL_CONTRIB_SHA256="a" * 64)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        node = self.build_arguments(self.docker_calls()[1])
+        self.assertEqual(node["OTELCOL_CONTRIB_URL"], "https://example.test/cli-otelcol.tar.gz")
+        self.assertEqual(node["OTELCOL_CONTRIB_SHA256"], "B" * 64)
+
     def test_proxy_forwarding_is_off_by_default_and_explicit_false(self):
         proxies = {name: f"http://build-proxy.invalid/{name}" for name in PROXY_NAMES}
         for option in ({}, {"AKERNEL_BUILD_PROXY": "false"}):
@@ -451,6 +595,7 @@ class BuildImageTests(unittest.TestCase):
         )
         for prefix, cli_prefix in (
             ("RRT_RUNTIME", "rrt-runtime"), ("OPEN_YR_CORE_WHEEL", "open-yr-core-wheel"),
+            ("OTELCOL_CONTRIB", "otelcol-contrib"),
         ):
             for source in ("caller", "cli"):
                 for url, sha256, expected in cases:
@@ -476,6 +621,7 @@ class BuildImageTests(unittest.TestCase):
             "--env", "--repository", "--tag", "--runtime-image", "--runtime-profile",
             "--open-yr-core-wheel-url", "--open-yr-core-wheel-sha256",
             "--rrt-runtime-url", "--rrt-runtime-sha256",
+            "--otelcol-contrib-url", "--otelcol-contrib-sha256",
         ):
             with self.subTest(option=option):
                 result = self.run_helper(option)

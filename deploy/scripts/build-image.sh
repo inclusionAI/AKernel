@@ -22,6 +22,16 @@ open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
 open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
 rrt_runtime_url="${RRT_RUNTIME_URL:-}"
 rrt_runtime_sha256="${RRT_RUNTIME_SHA256:-}"
+otelcol_contrib_url="${OTELCOL_CONTRIB_URL:-}"
+otelcol_contrib_sha256="${OTELCOL_CONTRIB_SHA256:-}"
+# Download routing is caller-local, independent of cloud profiles.
+build_mirror="${AKERNEL_BUILD_MIRROR-official}"
+apt_ubuntu_mirror="${AKERNEL_APT_UBUNTU_MIRROR-}"
+apt_ubuntu_ports_mirror="${AKERNEL_APT_UBUNTU_PORTS_MIRROR-}"
+apt_debian_mirror="${AKERNEL_APT_DEBIAN_MIRROR-}"
+apt_debian_security_mirror="${AKERNEL_APT_DEBIAN_SECURITY_MIRROR-}"
+pip_index_url="${PIP_INDEX_URL-}"
+go_proxy="${GOPROXY-}"
 print_component_versions=0
 # Explicit caller values take precedence over values saved in an environment.
 caller_runc_set="${AKERNEL_ENABLE_RUNC+x}"
@@ -61,7 +71,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --env|--repository|--tag|--runtime-image|--runtime-profile|\
     --open-yr-core-wheel-url|--open-yr-core-wheel-sha256|\
-    --rrt-runtime-url|--rrt-runtime-sha256)
+    --rrt-runtime-url|--rrt-runtime-sha256|\
+    --otelcol-contrib-url|--otelcol-contrib-sha256)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       ;;
   esac
@@ -100,6 +111,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --rrt-runtime-sha256)
       rrt_runtime_sha256="$2"
+      shift 2
+      ;;
+    --otelcol-contrib-url)
+      otelcol_contrib_url="$2"
+      shift 2
+      ;;
+    --otelcol-contrib-sha256)
+      otelcol_contrib_sha256="$2"
       shift 2
       ;;
     --print-component-versions)
@@ -298,6 +317,40 @@ validate_override() {
 }
 validate_override RRT_RUNTIME "${rrt_runtime_url}" "${rrt_runtime_sha256}"
 validate_override OPEN_YR_CORE_WHEEL "${open_yr_core_wheel_url}" "${open_yr_core_wheel_sha256}"
+validate_override OTELCOL_CONTRIB "${otelcol_contrib_url}" "${otelcol_contrib_sha256}"
+
+case "${build_mirror}" in
+  official) ;;
+  aliyun)
+    # Minimal Ubuntu images lack CA certificates. APT verifies signed Release
+    # metadata and package hashes over HTTP; Python uses HTTPS.
+    apt_ubuntu_mirror="${apt_ubuntu_mirror:-http://mirrors.aliyun.com/ubuntu}"
+    apt_ubuntu_ports_mirror="${apt_ubuntu_ports_mirror:-http://mirrors.aliyun.com/ubuntu-ports}"
+    apt_debian_mirror="${apt_debian_mirror:-http://mirrors.aliyun.com/debian}"
+    apt_debian_security_mirror="${apt_debian_security_mirror:-http://mirrors.aliyun.com/debian-security}"
+    pip_index_url="${pip_index_url:-https://mirrors.aliyun.com/pypi/simple/}"
+    ;;
+  *) die "AKERNEL_BUILD_MIRROR must be official or aliyun" ;;
+esac
+
+mirror_build_args=()
+for name in UBUNTU UBUNTU_PORTS DEBIAN DEBIAN_SECURITY; do
+  variable="apt_$(printf '%s' "${name}" | tr '[:upper:]' '[:lower:]')_mirror"
+  value="${!variable}"
+  if [[ -n "${value}" ]]; then
+    [[ "${value}" =~ ^https?://[a-zA-Z0-9._-]+(:[0-9]+)?(/[a-zA-Z0-9._~%+:/-]*)?$ ]] ||
+      die "AKERNEL_APT_${name}_MIRROR must be a public HTTP(S) repository URL without credentials or query parameters"
+    mirror_build_args+=(--build-arg "AKERNEL_APT_${name}_MIRROR=${value}")
+  fi
+done
+if [[ -n "${pip_index_url}" ]]; then
+  [[ "${pip_index_url}" =~ ^https?://[a-zA-Z0-9._-]+(:[0-9]+)?(/[a-zA-Z0-9._~%+:/-]*)?$ ]] ||
+    die "PIP_INDEX_URL must be a public HTTP(S) index URL without credentials or query parameters"
+fi
+if [[ -n "${go_proxy}" && "${go_proxy}" != direct && "${go_proxy}" != off ]]; then
+  [[ "${go_proxy}" =~ ^https?://[a-zA-Z0-9._-]+(:[0-9]+)?(/[a-zA-Z0-9._~%+:/-]*)?(,direct)?$ ]] ||
+    die "GOPROXY must be a public HTTP(S) URL with optional ,direct, or direct/off"
+fi
 
 require_cmd docker
 
@@ -306,6 +359,12 @@ runtime_build_args=(
   -f builder/runtime.Dockerfile
   --target "runtime-${runtime_profile}"
 )
+if [[ ${#mirror_build_args[@]} -gt 0 ]]; then
+  runtime_build_args+=("${mirror_build_args[@]}")
+fi
+if [[ -n "${pip_index_url}" ]]; then
+  runtime_build_args+=(--build-arg "PIP_INDEX_URL=${pip_index_url}")
+fi
 if [[ "${build_network}" == host ]]; then
   runtime_build_args+=(--network host)
 fi
@@ -350,6 +409,12 @@ node_build_args=(
   --build-arg "FIRECRACKER_AMD64_SHA256=${firecracker_amd64_sha256}"
   --build-arg "FIRECRACKER_KERNEL_PROFILE=${firecracker_kernel_profile}"
 )
+if [[ ${#mirror_build_args[@]} -gt 0 ]]; then
+  node_build_args+=("${mirror_build_args[@]}")
+fi
+if [[ -n "${go_proxy}" ]]; then
+  node_build_args+=(--build-arg "GOPROXY=${go_proxy}")
+fi
 if [[ "${build_network}" == host ]]; then
   node_build_args+=(--network host)
 fi
@@ -362,6 +427,12 @@ if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; th
   node_build_args+=(
     --build-arg "OPEN_YR_CORE_WHEEL_URL=${open_yr_core_wheel_url}"
     --build-arg "OPEN_YR_CORE_WHEEL_SHA256=${open_yr_core_wheel_sha256}"
+  )
+fi
+if [[ -n "${otelcol_contrib_url}" || -n "${otelcol_contrib_sha256}" ]]; then
+  node_build_args+=(
+    --build-arg "OTELCOL_CONTRIB_URL=${otelcol_contrib_url}"
+    --build-arg "OTELCOL_CONTRIB_SHA256=${otelcol_contrib_sha256}"
   )
 fi
 docker build \
