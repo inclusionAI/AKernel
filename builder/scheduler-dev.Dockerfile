@@ -6,7 +6,7 @@ ARG BASE_IMAGE=ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9
 FROM ${BASE_IMAGE}
 ENV container=oci DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates e2fsprogs fuse3 iproute2 ipset iptables libseccomp2 \
+    ca-certificates e2fsprogs fuse3 iproute2 ipset iptables libseccomp2 libsystemd0 \
     mount openssl procps python3 python3-yaml tini && rm -rf /var/lib/apt/lists/*
 COPY payload/ /
 COPY SHA256SUMS /opt/akernel/SHA256SUMS
