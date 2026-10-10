@@ -110,6 +110,8 @@ def prepare_config(templates=Path("/etc/akernel/dev-templates"),
             service["config"]["resource_source"] = {
                 "kind": "file", "path": str(adx / "capacity.json"),
             }
+            service["config"]["checkpoint_dir"] = str(
+                STATE / "sandboxd/root/checkpoints/adx")
     output.write_text(json.dumps(expanded))
     subprocess.run([adxctl, "--config", str(output), "validate"], check=True)
 
