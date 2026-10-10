@@ -143,9 +143,7 @@ Native Linux/arm64 builds support the `rrt` runtime profile with runsc and optio
 
 The build selects architecture-matched gVisor and runc pins from the sandboxd manifest and distill-fs pins from `builder/distill-fs-versions.env`, explicitly sets both Docker build platforms, and passes the target architecture to sandboxd compilation. Check downloaded executable ELF headers against the target architecture with `builder/scripts/verify-elf-arch.sh`; checksum verification, manifest claims, or successful execution under emulation do not establish architecture. Keep the RRT release's AMD64 and ARM64 checksums synchronized with `OPEN_YR_VERSION`, and the collector archive checksums synchronized with `OTELCOL_CONTRIB_VERSION`. Collector URL overrides require a matching checksum. `make build-helper-test` covers build arguments and ELF validation without Docker builds.
 
-Build proxy forwarding from the caller's environment is opt-in with `AKERNEL_BUILD_PROXY=true` and defaults to `false`. Set proxy environment variables to an endpoint reachable from the Docker builder; the helper passes uppercase and lowercase `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, and `ALL_PROXY` predefined build arguments by name to both builds. Keep their values out of command arguments, logs, saved configuration, and Dockerfile `ARG` declarations. This option changes build downloads only; it does not configure standalone or sandbox networking or remove Docker's own proxy configuration. Absence of proxy environment variables does not prove an unproxied connection, particularly with OrbStack's transparent macOS proxy integration.
-
-`AKERNEL_BUILD_NETWORK` accepts only `default` (the default) or `host`. Selecting `host` passes `--network host` to both Docker image builds so their RUN instructions can reach host-local services, including a localhost build proxy on OrbStack. This controls build networking only; standalone container networking and sandbox runtime networking retain their deployment settings.
+Keep official build-download sources as the default and mirror/proxy selection explicit. Preserve third-party repository URLs, release pins, signing keys, checksums, and TLS verification. Forward proxy credentials only through Docker's predefined build arguments by name, without exposing or persisting values. The [build download guide](builder/README.md) owns mirror scope, override precedence, proxy/network options, and release URL/checksum pairs; update it when changing those interfaces.
 
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all
@@ -181,15 +179,6 @@ Each component embeds its own semantic version: sandboxd uses
 `Cargo.toml`. AKernel does not inject parent-repository version metadata into
 component compilation.
 
-To test an unreleased openYuanRong core wheel without rebuilding YuanRong,
-provide both `OPEN_YR_CORE_WHEEL_URL` and `OPEN_YR_CORE_WHEEL_SHA256` to
-`make build`. The complete wheel is verified before it replaces the pinned
-release control plane.
-
-To test an unreleased RRT binary, provide both `RRT_RUNTIME_URL` and
-`RRT_RUNTIME_SHA256` to `make build`. The runtime build verifies the binary
-before packaging it into the selected runtime root filesystem.
-
 Inspect the selected local versions without building an image:
 
 ```bash
@@ -205,7 +194,7 @@ distill-fs release's packaged manifest.
 
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
-Use `make standalone` for local source builds on a native Linux/amd64 or Linux/arm64 Docker daemon, or Apple Silicon Mac with OrbStack. It selects the daemon architecture and defaults to `rrt` with runsc only; optional payloads require explicit supported `AKERNEL_ENABLE_*` flags. It initializes only an absent `src/sandboxd`, checks the initialized checkout is clean and matches the gitlink, builds a unique source image, starts it through `start.sh`, and waits for node and gateway health. The source launcher does not use a cloud image profile or cross-architecture emulation. Existing standalone container names, including stopped containers, must be resolved before it builds. `make standalone-status` reports the selected profile and health; `make standalone-stop` checks recorded container IDs, data mounts, and an empty sandbox inventory before stopping. See the [standalone guide](./deploy/standalone/README.md) for lifecycle and SDK setup.
+The [standalone guide](./deploy/standalone/README.md) owns source startup, supported platforms, runtime selection, and SDK setup. Preserve the source launcher's native-daemon architecture selection, clean sandboxd gitlink check, occupied-name preflight, profile locking, unique source image, and node/gateway health checks. Status and stop must verify recorded container identities, images, and data mounts; stop also requires an empty sandbox inventory. Source management is independent of cloud profiles and must preserve unrelated containers.
 
 The all-in-one image and node launchers declare lowercase `container=oci`
 for PID 1 systemd. Preserve this in the final image, Helm node environment,
@@ -270,7 +259,7 @@ usable `/dev/kvm` device.
 
 Standalone configures resolver sources by DNS mode. Enabling runc copies an approved host resolver into the data mount and sets `plugin.runtime.direct_resolv_conf_path`, while `plugin.runtime.resolv_conf_path` remains the node resolver used by managed DNS. `AKERNEL_RUNC_RESOLV_CONF` selects the host source; systemd-resolved hosts require it explicitly because a flat file cannot preserve split DNS. Preserve the direct-resolver marker under `[plugin.runtime]` in custom templates, and drain sandboxes before refreshing the resolver snapshot or replacing the node. See [`deploy/standalone/README.md#dns-resolver-sources`](deploy/standalone/README.md#dns-resolver-sources) for mode selection and reachability requirements.
 
-Standalone checks platform and image compatibility before modifying credentials or resolver configuration. OrbStack launches and pulls explicitly select `linux/arm64`, independently of the client's default Docker platform. `make standalone` defaults to `.akernel/standalone/data`; direct `start.sh` defaults to `deploy/standalone/data` and selects the public Docker Hub image when `IMAGE` is unset. An absolute `AKERNEL_STANDALONE_DATA_DIR` overrides either path. Container proxy credentials belong in the protected profile env-file, not logs or process arguments. Drain sandboxes before stopping the node; stop or removal failures must return nonzero, and stopped profiles retain their data and identity files.
+Standalone must check platform and image compatibility before modifying credentials or resolver configuration, and explicitly use the native ARM64 platform with OrbStack. Keep source and existing-image profile defaults documented in the standalone guide. Container proxy credentials belong in the protected profile env-file. Drain sandboxes before stopping the node; stop or removal failures must return nonzero, and stopped profiles retain data and identity files.
 
 The bundled sandboxd configuration enables per-sandbox network ACLs. Pooled TAP
 networking requires the host `tun` module and a usable `/dev/net/tun`. The

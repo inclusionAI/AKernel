@@ -91,7 +91,7 @@ The gateway defaults to `traefik:v3.6.8`. For private registry or OSS access, co
 
 ## Runtime selection
 
-Runsc is the default sandbox runtime. The source entry point excludes optional runtime payloads by default, whereas the existing public image may include Kata and Firecracker. A configured VM runtime is advertised only when the node has usable KVM and its matching payload.
+Runsc is the default sandbox runtime. The source entry point uses `RUNTIME_PROFILE=rrt` and excludes optional payloads by default. A configured VM runtime is advertised only when the node has usable KVM and its matching payload. Check image contents before selecting optional runtimes with the existing-image launcher.
 
 ### Optional runc
 
@@ -108,11 +108,11 @@ For the existing-image launcher, both build inclusion and runtime enablement are
 
 ### Kata, Firecracker, and GPU
 
-On Linux/amd64, opt into the VM payloads with `make standalone AKERNEL_ENABLE_KATA=true` or `make standalone AKERNEL_ENABLE_FIRECRACKER=true`. Both require usable `/dev/kvm` and hardware or nested virtualization on the Docker host. Firecracker includes the pinned VMM, kernel, guest agent, and virtiofsd; read-only virtio-fs supports OCI and Nydus roots directly. Its private writable disk uses `AsyncDirect` with `Writeback`. The host filestore must support io_uring and `STATX_DIOALIGN`; see the [deployment guide](../README.md) for older-host configuration and checkpoint compatibility.
+On Linux/amd64, opt into the VM payloads with `make standalone AKERNEL_ENABLE_KATA=true` or `make standalone AKERNEL_ENABLE_FIRECRACKER=true`. Both require usable `/dev/kvm` and hardware or nested virtualization on the Docker host. Firecracker also requires compatible host storage capabilities; see the [deployment guide](../README.md#guided-deployment) for its I/O policy and checkpoint compatibility.
 
 Experimental NVIDIA GPU sandboxes require runsc, a compatible host NVIDIA driver, and NVIDIA Container Toolkit. Enable node GPU access with `AKERNEL_ENABLE_GPU=true` on a supported Linux/amd64 host. `AKERNEL_GPU_DEVICES` selects Docker's `--gpus` device subset. The image provides `nvidia-container-cli`, not a host driver.
 
-Linux/arm64 supports the `rrt` profile with runsc and optional runc. It rejects the Python runtime profile, Kata, Firecracker, and GPU access. The source launcher selects the native daemon architecture rather than a client-side `DOCKER_DEFAULT_PLATFORM`; cross-architecture emulation is not a supported source-launch mode. For deliberate image-only cross builds, use `make build` and its explicit architecture options separately.
+Linux/arm64 supports runsc and optional runc, with Kata, Firecracker, and GPU access unavailable. The source launcher selects the native daemon architecture rather than a client-side `DOCKER_DEFAULT_PLATFORM`; cross-architecture emulation is not supported. Use `make build` for image-only cross builds or the optional AMD64 Python runtime profile; launch existing images on a matching supported daemon.
 
 See the maintained [runtime selection example](../../sdk/python/examples/sandbox_runtime.py) for client usage.
 
@@ -122,7 +122,7 @@ Use the source quick start with a running OrbStack Docker engine. It chooses nat
 
 Before starting the node, a disposable privileged container probes TUN/TAP, veth, writable cgroup v2, iptables/ip6tables, conntrack matches, ipset, and loop-backed ext4. It also checks for the FUSE device; verify userspace FUSE image mounts through a sandbox when needed. Enabling runc adds EROFS and ext4-backed writable-overlay probes. The probes clean up temporary mounts and paths under the selected data directory. macOS does not run `modprobe`.
 
-The profile uses iptables networking and supports runsc plus explicitly enabled ordinary runc. Kata, Firecracker, GPU, and runc KVM requests are unavailable on this platform. Compare `scutil --dns` with resolver addresses reachable from sandbox namespaces before enabling runc: a macOS `/etc/resolv.conf` snapshot does not capture all scoped or split-DNS policies. The launcher does not substitute public DNS. Verify DNS and certificate-validated HTTPS from a newly created runc sandbox.
+The profile uses iptables networking; runc KVM requests are unavailable. Before enabling runc, compare `scutil --dns` with resolver addresses reachable from sandbox namespaces: a macOS `/etc/resolv.conf` snapshot does not capture all scoped or split-DNS policies. Follow [DNS resolver sources](#dns-resolver-sources) and verify DNS and certificate-validated HTTPS in a new runc sandbox.
 
 The Traefik container IP is the SDK address. For a manual local gateway health check, the standalone certificate is self-signed:
 
@@ -130,7 +130,7 @@ The Traefik container IP is the SDK address. For a manual local gateway health c
 curl --noproxy '*' -fkSs "https://<traefik-container-ip>/healthz"
 ```
 
-OrbStack can follow macOS proxy settings independently of container environment variables. An empty proxy environment or `curl --noproxy '*'` alone does not establish direct outbound HTTPS. Check [OrbStack network proxy settings](https://docs.orbstack.dev/docker/network) when the outbound path matters. The launcher does not change host-wide proxy settings; build-download options are described under [build proxy and network](#build-proxy-and-network).
+For outbound proxy behavior and build downloads, see the [image build download guide](../../builder/README.md#build-proxy-and-network).
 
 ## Configuration
 
@@ -161,13 +161,11 @@ Validation rejects namespace-local addresses but cannot prove reachability or do
 
 ### Build proxy and network
 
-Source builds preserve the existing build helper's opt-in proxy settings. Export Docker-builder-reachable `HTTP_PROXY` and `HTTPS_PROXY`, then use `make standalone AKERNEL_BUILD_PROXY=true`. The helper forwards predefined uppercase and lowercase proxy build arguments by name to both builds without saving their values. Docker may also pre-populate build proxies from client configuration; omitting the helper option does not disable those settings. See [Docker CLI proxy configuration](https://docs.docker.com/engine/cli/proxy/).
-
-For a proxy on Mac localhost, add `AKERNEL_BUILD_NETWORK=host` so OrbStack build RUN instructions can reach that endpoint. The option accepts only `default` or `host` and defaults to Docker's normal build network. These options affect image-build downloads; they do not configure standalone containers or sandbox traffic. Container proxy credentials belong in the launcher's protected profile env-file.
+Downloads use official sources by default. Optional package mirrors, proxy forwarding, build networking, and checksum-paired release caches are documented in the [image build download guide](../../builder/README.md). Container proxy credentials belong in the launcher's protected profile env-file.
 
 ### Network backend
 
-Standalone uses iptables NAT by default. On Linux, the launcher loads the host `tun` module and validates `/dev/net/tun` for pooled-TAP runtimes; runc uses its separate veth path. ACL support also requires IPv4/IPv6 filter tables, `br_netfilter`, `xt_physdev`, conntrack/connmark, timeout-capable ipset modules, and bridge netfilter. The launcher prepares these host modules and the node prepares namespace-local sysctls. OrbStack checks equivalent capabilities through its disposable container preflight.
+Standalone uses iptables NAT by default. Linux requires the [deployment network capabilities](../README.md#network-acls); the launcher loads the required host modules and the node prepares namespace-local sysctls. OrbStack checks equivalent capabilities through its disposable container preflight.
 
 Linux nodes without the required iptables NAT and conntrack support may select the experimental embedded TC eBPF backend with `AKERNEL_NAT_BACKEND=bpfnat`. It requires permission to load TC eBPF programs and mount or access writable bpffs. AKernel enables forwarding and disables global reverse-path filtering inside the node namespace for bpfnat local DNAT. It does not override host firewall policy; custom host-network deployments with `FORWARD=DROP` must allow bridge- and sandbox-CIDR-scoped traffic to and from `sandbox0`.
 
