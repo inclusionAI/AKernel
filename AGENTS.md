@@ -86,6 +86,14 @@ either mutating command. Do not use `AUTO_APPROVE=1` without that approval.
 
 ## Local Deployment State
 
+The scheduler development profile is documented in
+[`deploy/standalone/scheduler-dev.md`](deploy/standalone/scheduler-dev.md).
+It consumes frozen artifacts through `builder/scheduler-dev.Dockerfile` and
+starts a separate, bounded container using `scheduler-dev.py`. Preserve its
+private network, cgroup namespace, loopback-only ports, immutable image identity,
+and persistent state. Its capacity file expires after one day. Do not treat
+this profile as dynamic-resource or oversubscription acceptance.
+
 Interactive deployment helpers write local state under `.akernel/default/` by
 default. Pass `ENV=<name>` when you need multiple independent deployment
 profiles. These directories are intentionally ignored by Git. They may contain:
