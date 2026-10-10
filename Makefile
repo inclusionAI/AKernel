@@ -53,6 +53,9 @@ help:
 	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
 	@echo "  make config SCHEDULE_PLACEMENT_POLICY=binpack Use compact scheduling"
 	@echo "  make build IMAGE_TAG=<tag>          Build the all-in-one image"
+	@echo "  make standalone                    Build current source and start local runsc"
+	@echo "  make standalone-status             Show local source profile health"
+	@echo "  make standalone-stop               Stop a drained local source profile"
 	@echo "  make build RUNTIME_PROFILE=python   Include optional Python runtimes"
 	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
 	@echo "  make build AKERNEL_ENABLE_FIRECRACKER=false Exclude Firecracker"
@@ -68,6 +71,7 @@ help:
 	@echo "  make sdk-check                     Lint, type-check, and test the Python SDK"
 	@echo "  make deploy-script-check           Check deployment script syntax"
 	@echo "  make deploy-standalone-test        Test standalone deployment helpers"
+	@echo "  make standalone-source-test       Build, SDK-test and stop a fresh local profile"
 	@echo "  make build-helper-test             Test image-build helpers without Docker"
 	@echo "  make e2e                           Run the basic SDK e2e example"
 	@echo "  make destroy                       Destroy cloud resources"
@@ -120,6 +124,16 @@ build:
 .PHONY: versions
 versions:
 	@./deploy/scripts/build-image.sh --print-component-versions
+
+.PHONY: standalone standalone-status standalone-stop
+standalone:
+	@python3 deploy/standalone/manage.py up
+
+standalone-status:
+	@python3 deploy/standalone/manage.py status
+
+standalone-stop:
+	@python3 deploy/standalone/manage.py stop
 
 .PHONY: push
 push:
@@ -191,7 +205,12 @@ deploy-standalone-test:
 .PHONY: build-helper-test
 build-helper-test:
 	@python3 builder/scripts/test-build-image.py
+	@python3 builder/scripts/test-apt-mirror.py
 	@python3 builder/scripts/test-elf-arch.py
+
+.PHONY: standalone-source-test
+standalone-source-test:
+	@bash deploy/standalone/test-source.sh
 
 .PHONY: destroy
 destroy:

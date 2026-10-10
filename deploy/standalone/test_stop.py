@@ -182,6 +182,25 @@ exec "$@"
         self.assertIn("daemon is not running", result.stdout)
         self.assertEqual(self.owned_calls(), [])
 
+    def test_expected_inventory_is_checked_before_either_container_stops(self):
+        for overrides in (
+            {"AKERNEL_EXPECTED_NODE_ID": "c" * 64},
+            {"AKERNEL_EXPECTED_TRAEFIK_ID": "absent"},
+            {"AKERNEL_EXPECTED_NODE_ID": NODE_ID, "MOCK_MISSING": "akernel-node"},
+        ):
+            with self.subTest(overrides=overrides):
+                self.calls.unlink(missing_ok=True)
+                result = self.run_stop(**overrides)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("inventory changed", result.stdout)
+                self.assertEqual(self.owned_calls(), [])
+
+    def test_matching_expected_ids_preserve_gateway_first_shutdown(self):
+        result = self.run_stop(AKERNEL_EXPECTED_NODE_ID=NODE_ID,
+                               AKERNEL_EXPECTED_TRAEFIK_ID=GATEWAY_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.owned_calls()[0], ["stop", GATEWAY_ID])
+
     def test_missing_runtime_fails_without_host_fallback(self):
         (self.bin / "docker").unlink()
         result = self.run_stop()

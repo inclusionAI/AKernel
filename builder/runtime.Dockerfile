@@ -16,15 +16,21 @@ FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-download
 
 ARG OPEN_YR_VERSION
 ARG TARGETARCH
-ARG RRT_RUNTIME_URL=
-ARG RRT_RUNTIME_SHA256=
-ARG RRT_RUNTIME_AMD64_SHA256=253f8ac837538ac3cae91c6d05604f4334178eeec7303c9d9fce4788c2506a2c
-ARG RRT_RUNTIME_ARM64_SHA256=548ca3515d7bd7ced2204b265bf39d01bde4033f7d25e493b60c8a20be658273
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
+
+ARG RRT_RUNTIME_URL=
+ARG RRT_RUNTIME_SHA256=
+ARG RRT_RUNTIME_AMD64_SHA256=253f8ac837538ac3cae91c6d05604f4334178eeec7303c9d9fce4788c2506a2c
+ARG RRT_RUNTIME_ARM64_SHA256=548ca3515d7bd7ced2204b265bf39d01bde4033f7d25e493b60c8a20be658273
 
 RUN set -eux; \
     case "${TARGETARCH}" in \
@@ -51,6 +57,11 @@ FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS rrt-runtime-rootfs
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -71,6 +82,11 @@ COPY --from=rrt-download /rrt-runtime /usr/local/bin/rrt-runtime
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS erofs-builder-base
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends erofs-utils && \
@@ -99,7 +115,6 @@ ARG OPEN_YR_LEGACY_SDK_VERSION
 ARG FASTAPI_VERSION=0.138.0
 ARG PYDANTIC_VERSION=2.13.4
 ARG UVICORN_VERSION=0.49.0
-ARG PIP_INDEX_URL=https://pypi.org/simple
 
 ENV UV_CACHE_DIR=/tmp/uv-cache \
     UV_HTTP_TIMEOUT=120 \
@@ -112,6 +127,11 @@ RUN if [ "${TARGETARCH}" != "amd64" ]; then \
       echo "the python runtime profile currently supports linux/amd64 only" >&2; \
       exit 1; \
     fi
+
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -128,6 +148,7 @@ RUN apt-get update && \
         zlib1g && \
     rm -rf /var/lib/apt/lists/*
 
+ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN python3 -m pip install \
         --break-system-packages \
         --no-cache-dir \
@@ -153,7 +174,7 @@ RUN set -eux; \
         "3.14:${PYTHON_314_VERSION}"; do \
         py="${spec%%:*}"; \
         version="${spec#*:}"; \
-        uv venv "/opt/venv-py${py}" --python "${version}" --seed; \
+        uv venv "/opt/venv-py${py}" --python "${version}" --seed --default-index "${PIP_INDEX_URL}"; \
         ln -sfn \
             "uv-python/cpython-${version}-linux-x86_64-gnu/bin/python${py}" \
             "/opt/python${py}"; \

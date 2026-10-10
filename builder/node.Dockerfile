@@ -50,6 +50,11 @@ ARG GVISOR_SHA512
 ARG TARGETARCH
 COPY src/sandboxd/third_party/install-gvisor.sh /usr/local/libexec/install-gvisor.sh
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN set -eux; \
     case "${TARGETARCH:-}" in \
       amd64|arm64) ;; \
@@ -79,6 +84,11 @@ ARG KATA_RELEASE
 ARG KATA_AMD64_SHA256
 ARG KATA_RELEASE_BASE_URL
 ARG TARGETARCH
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN set -eux; \
     test "${TARGETARCH:-amd64}" = "amd64"; \
     apt-get update; \
@@ -115,6 +125,11 @@ FROM ${AKERNEL_RUNTIME_IMAGE} AS runtime-image
 FROM ${SANDBOXD_BUILD_IMAGE} AS sandboxd-builder
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
+ARG AKERNEL_APT_DEBIAN_MIRROR
+ARG AKERNEL_APT_DEBIAN_SECURITY_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -126,6 +141,7 @@ RUN apt-get update && \
 WORKDIR /src/sandboxd
 COPY ./src/sandboxd/ ./
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+ARG GOPROXY=https://proxy.golang.org,direct
 RUN set -eux; \
     case "${TARGETARCH}" in amd64|arm64) ;; *) exit 1 ;; esac; \
     make release RELEASE_GOARCH="${TARGETARCH}"; \
@@ -135,6 +151,11 @@ RUN set -eux; \
 
 FROM ${VIRTIOFSD_BUILD_IMAGE} AS virtiofsd-builder
 ARG VIRTIOFSD_REVISION
+ARG AKERNEL_APT_DEBIAN_MIRROR
+ARG AKERNEL_APT_DEBIAN_SECURITY_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates git libcap-ng-dev libseccomp-dev pkg-config && \
@@ -151,6 +172,11 @@ ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
 ARG TARGETARCH
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates cpio curl gzip jq && \
     rm -rf /var/lib/apt/lists/*
@@ -212,6 +238,11 @@ ARG RUNC_SHA256
 ARG RUNC_RELEASE_BASE_URL
 ARG TARGETARCH
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64|arm64) ;; \
@@ -243,6 +274,11 @@ ARG TARGETARCH
 ARG DISTILL_FS_RELEASE
 ARG DISTILL_FS_URL
 ARG DISTILL_FS_SHA256
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl jq binutils && \
     rm -rf /var/lib/apt/lists/*
@@ -259,14 +295,6 @@ ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_ENABLE_RUNC
 ARG AKERNEL_ENABLE_FIRECRACKER
 ARG AKERNEL_RUNTIME_PROFILE
-ARG AKERNEL_VERSION
-ARG AKERNEL_REVISION
-ARG OPEN_YR_VERSION
-ARG OPEN_YR_CORE_WHEEL_URL
-ARG OPEN_YR_CORE_WHEEL_SHA256
-ARG OPEN_YR_RELEASE_BASE_URL
-ARG OPEN_YR_CORE_AMD64_SHA256
-ARG OPEN_YR_CORE_ARM64_SHA256
 ARG GVISOR_RELEASE
 ARG GVISOR_SHA512
 ARG DISTILL_FS_SHA256
@@ -274,13 +302,7 @@ ARG RUNC_VERSION
 ARG RUNC_SHA256
 ARG FIRECRACKER_RELEASE
 ARG LIBNVIDIA_CONTAINER_VERSION
-ARG OTELCOL_CONTRIB_VERSION
-ARG OTELCOL_CONTRIB_AMD64_SHA256
-ARG OTELCOL_CONTRIB_ARM64_SHA256
-ARG OTELCOL_CONTRIB_URL
-ARG OTELCOL_CONTRIB_SHA256
 ARG TARGETARCH
-ARG PIP_INDEX_URL=https://pypi.org/simple
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN set -eu; \
@@ -297,6 +319,11 @@ RUN set -eu; \
         fi ;; \
       *) echo "unsupported AKERNEL_RUNTIME_PROFILE: ${AKERNEL_RUNTIME_PROFILE}" >&2; exit 1 ;; \
     esac
+
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -367,6 +394,13 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 ENV YR_INSTALLATION_DIR=/home/yuanrong
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 
+ARG OPEN_YR_VERSION
+ARG OPEN_YR_CORE_WHEEL_URL
+ARG OPEN_YR_CORE_WHEEL_SHA256
+ARG OPEN_YR_RELEASE_BASE_URL
+ARG OPEN_YR_CORE_AMD64_SHA256
+ARG OPEN_YR_CORE_ARM64_SHA256
+
 # Install the complete, language-runtime-free openYuanRong control plane from
 # its checksum-pinned core wheel. A URL and checksum pair may override the
 # release asset when validating an unreleased daily build.
@@ -396,7 +430,7 @@ RUN set -eux; \
     fi; \
     wheel="/tmp/${wheel_name}"; \
     target=/tmp/openyuanrong-core; \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+    curl -fSL --http1.1 --retry 10 --retry-delay 2 --retry-all-errors \
       "${wheel_url}" -o "${wheel}"; \
     echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
     python3 -m pip install \
@@ -473,6 +507,12 @@ COPY ./builder/scripts/master_entrypoint.sh ${YR_INSTALLATION_DIR}/entrypoint.sh
 COPY ./builder/scripts/*.sh /root/
 COPY ./builder/systemd_services/*.service /etc/systemd/system/
 
+ARG OTELCOL_CONTRIB_VERSION
+ARG OTELCOL_CONTRIB_AMD64_SHA256
+ARG OTELCOL_CONTRIB_ARM64_SHA256
+ARG OTELCOL_CONTRIB_URL
+ARG OTELCOL_CONTRIB_SHA256
+
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) archive_sha="${OTELCOL_CONTRIB_AMD64_SHA256}" ;; \
@@ -513,6 +553,9 @@ RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INS
     systemctl enable sandboxd.service && \
     systemctl enable yuanrong.service
 
+# Metadata-only changes must not invalidate fixed runtime download layers.
+ARG AKERNEL_VERSION
+ARG AKERNEL_REVISION
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
       org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \

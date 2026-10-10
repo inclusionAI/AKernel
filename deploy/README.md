@@ -200,9 +200,7 @@ currently the revocation mechanism for signed JWT tokens.
 
 ## 1. Standalone
 
-Run a single-node AKernel using the scripts in [`standalone/`](./standalone/).
-See [`standalone/README.md`](./standalone/README.md) for configuration and
-start/stop instructions.
+From the repository root, `make standalone` builds the current source and starts a single-node runsc instance on Linux with native AMD64/ARM64 Docker or Apple Silicon Mac with OrbStack. Use `make standalone-status` and `make standalone-stop` for the same local profile. The direct image launcher remains available for Docker or Pouch. See the [standalone guide](./standalone/README.md) for prerequisites, SDK setup, optional runtimes, and profile management.
 
 ## 2. Kubernetes (Helm)
 
