@@ -53,6 +53,7 @@ class StartPlatformTest(unittest.TestCase):
             ETCD_PORT="2379", ETCD_PEER_PORT="2378",
             YR_IMAGE_PROCESS_CONFIG="/run/akernel/yr-image-process.json",
             AKERNEL_ENABLE_RUNC="true", AKERNEL_NAT_BACKEND="iptables",
+            AKERNEL_FIRECRACKER_BACKEND="kvm",
             MOCK_HOST="Darwin", MOCK_OS="OrbStack",
             MOCK_ENGINE="linux/aarch64", MOCK_IMAGE="linux/arm64",
             MOCK_TRAEFIK_IMAGE="linux/arm64",
@@ -164,6 +165,12 @@ show_status() { record stage show_status; }
         self.assertFalse((self.directory / "data").exists())
         self.assertFalse(any(call[0] == "stage" for call in self.recorded_calls()))
         self.assertFalse(any(call[:2] == ["docker", "run"] for call in self.recorded_calls()))
+
+    def test_invalid_firecracker_backend_is_rejected_before_profile_mutation(self):
+        result = self.run_main(AKERNEL_FIRECRACKER_BACKEND="invalid")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AKERNEL_FIRECRACKER_BACKEND must be kvm or pvm", result.stderr)
+        self.assert_no_profile_mutation()
 
     def test_native_runc_uses_only_disposable_capability_probe(self):
         result = self.run_script(
