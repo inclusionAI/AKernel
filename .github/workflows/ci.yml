@@ -255,7 +255,7 @@ jobs:
         run: |
           token="$(cat deploy/standalone/data/token)"
           export AKERNEL_TOKEN="${token}"
-          export AKERNEL_SERVER_ADDRESS="127.0.0.1"
+          source deploy/standalone/data/sdk.env
           export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
 
           examples=(
@@ -285,7 +285,7 @@ jobs:
         run: |
           token="$(cat deploy/standalone/data/token)"
           export AKERNEL_TOKEN="${token}"
-          export AKERNEL_SERVER_ADDRESS="127.0.0.1"
+          source deploy/standalone/data/sdk.env
           export AKERNEL_RUN_INTEGRATION=1
           export PYTHONPATH="${GITHUB_WORKSPACE}/sdk/python"
 

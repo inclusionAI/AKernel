@@ -5,6 +5,9 @@ inputs:
   source-directory:
     description: Path to the SDK project (requires Python 3.12).
     required: true
+  adx-dependency-source:
+    description: Use a verified release wheel or the configured Python index (release or index).
+    default: release
 
 outputs:
   dist-directory:
@@ -23,7 +26,13 @@ runs:
       shell: bash
       env:
         SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+        ADX_DEPENDENCY_SOURCE: ${{ inputs.adx-dependency-source }}
       run: |
+        case "${ADX_DEPENDENCY_SOURCE}" in
+          index) exit 0 ;;
+          release) ;;
+          *) echo "Invalid ADX dependency source: ${ADX_DEPENDENCY_SOURCE}" >&2; exit 1 ;;
+        esac
         dependency_directory="$(mktemp -d "${RUNNER_TEMP}/adx-sdk.XXXXXX")"
         wheel="$(
           python "${SOURCE_DIRECTORY}/scripts/prepare_adx_dependency.py" \
@@ -66,8 +75,12 @@ runs:
         for artifact in "${DIST_DIRECTORY}"/*.whl "${DIST_DIRECTORY}"/*.tar.gz; do
           test_env="$(mktemp -d "${RUNNER_TEMP}/akernel-install.XXXXXX")"
           python -m venv "${test_env}"
-          "${test_env}/bin/python" -m pip install \
-            "${ADX_DEPENDENCY_WHEEL}" "${artifact}"
+          if [[ -n "${ADX_DEPENDENCY_WHEEL}" ]]; then
+            "${test_env}/bin/python" -m pip install \
+              "${ADX_DEPENDENCY_WHEEL}" "${artifact}"
+          else
+            "${test_env}/bin/python" -m pip install "${artifact}"
+          fi
           "${test_env}/bin/python" -m pip check
           "${test_env}/bin/python" -I - <<'PY'
         import os

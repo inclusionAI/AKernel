@@ -15,6 +15,34 @@ SCRIPT = Path(__file__).with_name("start.sh")
 
 
 class StartScriptTest(unittest.TestCase):
+    def test_sdk_environment_follows_selected_host_and_ports(self) -> None:
+        cases = (
+            ("localhost", "443", "80", "localhost", ""),
+            ("gateway.example.com", "18443", "18080",
+             "gateway.example.com:18443", "http://gateway.example.com:18080"),
+        )
+        for host, control, data, expected_server, expected_gateway in cases:
+            with self.subTest(host=host), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                environment = dict(os.environ, TEST_DATA=str(root),
+                                   TEST_HOST=host, TEST_CONTROL=control, TEST_PORT=data)
+                command = (
+                    f'source {SCRIPT}; DATA_DIR="$TEST_DATA"; '
+                    'AKERNEL_ENDPOINT_HOST="$TEST_HOST"; '
+                    'AKERNEL_CONTROL_PORT="$TEST_CONTROL"; '
+                    'AKERNEL_DATA_PORT="$TEST_PORT"; write_sdk_env; '
+                    'AKERNEL_GATEWAY_ADDRESS=stale; source "$DATA_DIR/sdk.env"; '
+                    'printf "%s\\n%s\\n" "$AKERNEL_SERVER_ADDRESS" '
+                    '"${AKERNEL_GATEWAY_ADDRESS:-}"'
+                )
+                result = subprocess.run(
+                    ["bash", "-c", command], env=environment, check=True,
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.stdout.splitlines(),
+                                 [expected_server, expected_gateway])
+                self.assertEqual((root / "sdk.env").stat().st_mode & 0o777, 0o600)
+
     def test_deployment_generates_reuses_and_exposes_current_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -197,6 +225,7 @@ class StartScriptTest(unittest.TestCase):
             captured = Path(directory) / "endpoints"
             command = (
                 f"source {SCRIPT!s}; "
+                f"DATA_DIR={directory!s}; "
                 "AKERNEL_ENDPOINT_HOST=127.0.0.1; "
                 "AKERNEL_CONTROL_PORT=18443; AKERNEL_DATA_PORT=18080; "
                 "for name in check_prerequisites cleanup_existing ensure_image "

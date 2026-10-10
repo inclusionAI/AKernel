@@ -47,8 +47,9 @@ verifies its SHA-256, and reads only the bundled SDK wheel. It verifies the
 wheel's own SHA-256 before installation and reuses a verified local wheel on
 subsequent runs. Both digests and the member path are in `adx-sdk.lock.json`.
 This source-build path is used until `adx-sandbox==0.1.0rc1` is available from the
-configured Python package index. AKernel SDK releases still require the
-dependency to be published.
+configured Python package index. AKernel SDK releases install dependencies
+directly from that index using `pyproject.toml`, including the clean wheel and
+sdist installation checks. The source lock file is not a publication dependency.
 
 Configure the public AKernel entrypoint and the deployment token:
 

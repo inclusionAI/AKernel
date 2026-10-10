@@ -169,7 +169,7 @@ This will:
 - Generate a sandboxd config using `AKERNEL_NAT_BACKEND` (`iptables` by
   default)
 - Wait until the node has allocatable capacity
-- Print the SDK address and token path
+- Write the SDK addresses to `data/sdk.env` (mode 0600), and print the token path
 
 The default listeners bind all host interfaces. Override the bind addresses or
 ports before starting when the defaults conflict with another service:
@@ -180,7 +180,7 @@ AKERNEL_DATA_BIND=127.0.0.1 AKERNEL_DATA_PORT=8080 \
 AKERNEL_ENDPOINT_HOST=127.0.0.1 ./start.sh
 ```
 
-`AKERNEL_ENDPOINT_HOST` controls the hostname printed for SDK configuration;
+`AKERNEL_ENDPOINT_HOST` controls the hostname written and printed for SDK configuration;
 it does not change the Docker bind address.
 
 ### 4. Check Status
@@ -211,7 +211,7 @@ sudo docker exec akernel-node systemctl status
 Use the existing SDK environment variables:
 
 ```bash
-export AKERNEL_SERVER_ADDRESS="127.0.0.1"
+source data/sdk.env
 export AKERNEL_TOKEN="$(cat data/token)"
 ```
 
@@ -222,8 +222,9 @@ initializes the public HTTPS certificate. Both are reused on restart. Internal c
 these listeners remain within the standalone container network. SDK address
 and token settings are unchanged.
 
-This configuration requires the ADX internal-network-mode update; the current
-#71 package pin predates that update. See [validation status](checkpoint-validation.md).
+`data/sdk.env` follows the hostname and published ports selected at startup.
+For default ports it exports only the server address; with custom ports it
+also exports the data-plane address. CI reads the same file.
 `data/token` points to the deployment token. Keep the data directory private.
 For custom host port mappings, use the additional gateway override printed by
 `start.sh`; the default deployment does not require it.

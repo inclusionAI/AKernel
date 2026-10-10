@@ -538,6 +538,27 @@ if not token.is_symlink() or token.resolve() != key.resolve():
 PYKEY
 }
 
+write_sdk_env() {
+    local sdk_address="${AKERNEL_ENDPOINT_HOST}"
+    if [[ "${AKERNEL_CONTROL_PORT}" != 443 ]]; then
+        sdk_address+=":${AKERNEL_CONTROL_PORT}"
+    fi
+    (
+        umask 077
+        mkdir -p "${DATA_DIR}"
+        {
+            printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${sdk_address}"
+            if [[ "${AKERNEL_DATA_PORT}" != 80 || "${AKERNEL_CONTROL_PORT}" != 443 ]]; then
+                printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' \
+                    "http://${AKERNEL_ENDPOINT_HOST}:${AKERNEL_DATA_PORT}"
+            else
+                printf 'unset AKERNEL_GATEWAY_ADDRESS\n'
+            fi
+        } > "${DATA_DIR}/sdk.env"
+        chmod 600 "${DATA_DIR}/sdk.env"
+    )
+}
+
 main() {
     check_prerequisites
     cleanup_existing
@@ -552,6 +573,7 @@ main() {
     DATA_URL="http://${AKERNEL_ENDPOINT_HOST}:${AKERNEL_DATA_PORT}"
     wait_for_endpoints "${CONTROL_URL}" "${DATA_URL}"
     show_status "${CONTROL_URL}" "${DATA_URL}"
+    write_sdk_env
 
     log_info "AKernel started successfully in standalone mode"
     local sdk_address="${AKERNEL_ENDPOINT_HOST}"

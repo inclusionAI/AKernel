@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ARG AKERNEL_RUNTIME_BASE_IMAGE=ubuntu:24.04
-ARG ADX_EXECD_URL=https://github.com/openJiuwen-ai/agent-dx/releases/download/v0.1.0rc1/adx-execd-v0.1.0rc1-linux-amd64.tar.gz
+ARG ADX_VERSION=v0.1.0rc1
+ARG ADX_EXECD_URL=https://github.com/openJiuwen-ai/agent-dx/releases/download/${ADX_VERSION}/adx-execd-${ADX_VERSION}-linux-amd64.tar.gz
 ARG ADX_EXECD_SHA256=ba4e4a62982656fe32b66bcdb8dc1e1c54ef28cc57d302702ef0229cdd0007db
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS adx-execd

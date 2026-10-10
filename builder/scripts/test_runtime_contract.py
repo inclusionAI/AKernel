@@ -16,15 +16,24 @@ class RuntimeContractTest(unittest.TestCase):
     def assert_artifact_pin(self, dockerfile: str, component: str) -> str:
         prefix = "ADX_RELEASE" if component == "release" else "ADX_EXECD"
         urls = re.findall(rf"^ARG {prefix}_URL=(.+)$", dockerfile, re.MULTILINE)
+        versions = re.findall(r"^ARG ADX_VERSION=(.+)$", dockerfile, re.MULTILINE)
         checksums = re.findall(
             rf"^ARG {prefix}_SHA256=(.+)$", dockerfile, re.MULTILINE
         )
         self.assertEqual(len(urls), 1, f"missing or duplicate {prefix}_URL pin")
+        self.assertEqual(len(versions), 1, "missing or duplicate ADX_VERSION pin")
+        self.assertRegex(versions[0], r"^v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?$")
+        self.assertEqual(
+            urls[0],
+            "https://github.com/openJiuwen-ai/agent-dx/releases/download/"
+            f"${{ADX_VERSION}}/adx-{component}-${{ADX_VERSION}}-linux-amd64.tar.gz",
+        )
+        expanded_url = urls[0].replace("${ADX_VERSION}", versions[0])
         self.assertEqual(
             len(checksums), 1, f"missing or duplicate {prefix}_SHA256 pin"
         )
         self.assertRegex(
-            urls[0],
+            expanded_url,
             rf"^https://github\.com/openJiuwen-ai/agent-dx/releases/download/"
             rf"(v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?)/"
             rf"adx-{component}-\1-linux-amd64\.tar\.gz$",
@@ -38,7 +47,7 @@ class RuntimeContractTest(unittest.TestCase):
             "| sha256sum -c -;",
             dockerfile,
         )
-        return urls[0].rsplit("/", 1)[0]
+        return expanded_url.rsplit("/", 1)[0]
 
     def assert_matching_artifact_pins(self, node: str, runtime: str) -> None:
         self.assertEqual(
@@ -89,6 +98,29 @@ class RuntimeContractTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertNotIn("export AKERNEL_GATEWAY_ADDRESS=", workflow)
 
+    def test_ci_reads_the_standalone_sdk_endpoints(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertNotIn('export AKERNEL_SERVER_ADDRESS="127.0.0.1"', workflow)
+        self.assertEqual(workflow.count("source deploy/standalone/data/sdk.env"), 2)
+
+    def test_pypi_publication_uses_declared_index_dependencies(self) -> None:
+        workflow = (ROOT / ".github/workflows/release-python.yml").read_text()
+        self.assertNotIn("adx-sdk.lock.json", workflow)
+        self.assertNotIn("prepare_adx_dependency.py", workflow)
+        self.assertIn("adx-dependency-source: index", workflow)
+        action = (ROOT / ".github/actions/python-distributions/action.yml").read_text()
+        self.assertIn("adx-dependency-source:", action)
+        self.assertIn('if [[ -n "${ADX_DEPENDENCY_WHEEL}" ]]', action)
+
+    def test_release_versions_are_named_build_arguments(self) -> None:
+        for component in ("node", "runtime"):
+            dockerfile = (ROOT / f"builder/{component}.Dockerfile").read_text()
+            self.assertRegex(dockerfile, r"(?m)^ARG ADX_VERSION=v[0-9]")
+            version = re.search(r"(?m)^ARG ADX_VERSION=(.+)$", dockerfile)
+            self.assertIsNotNone(version)
+            self.assertEqual(dockerfile.count(version[1]), 1)
+            self.assertIn("/download/${ADX_VERSION}/", dockerfile)
+
     def test_actor_runtime_entrypoint_is_absent(self) -> None:
         self.assertFalse((ROOT / "builder/scripts/entryfile.sh").exists())
 
@@ -118,7 +150,10 @@ class RuntimeContractTest(unittest.TestCase):
         runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
         mutations = {
             "mutable URL": re.sub(
-                r"/v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?/", "/latest/", node
+                r"/\$\{ADX_VERSION\}/", "/latest/", node
+            ),
+            "missing version": re.sub(
+                r"^ARG ADX_VERSION=.+\n", "", node, flags=re.MULTILINE
             ),
             "missing checksum": re.sub(
                 r"^ARG ADX_RELEASE_SHA256=.+\n", "", node, flags=re.MULTILINE

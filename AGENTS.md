@@ -337,6 +337,10 @@ deployment profile. Treat their output as a secret: do not include it in logs,
 commits, issue reports, or chat unless the user explicitly requests credential
 handoff.
 
+Standalone startup writes its selected SDK addresses to mode-0600
+`deploy/standalone/data/sdk.env`; tests and callers can source this file and
+read `data/token` separately. Keep the selected hostname and both ports aligned.
+
 ## SDK And CLI
 
 Minimal sandbox usage:
@@ -575,6 +579,10 @@ Publishing a GitHub Release runs
 the wheel and source distribution, and publishes them through the PyPI trusted
 publisher configured for the `pypi` GitHub environment. Do not add a PyPI
 password or API token to the repository.
+
+Python publication installs the dependencies declared in `pyproject.toml`
+from the configured package index. The ADX source lock is used only for source
+and PR candidate verification, not by the publication workflow.
 
 PR CI and publishing share `.github/actions/python-distributions`, which
 builds the wheel and source distribution and installs each in a separate clean

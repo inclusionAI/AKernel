@@ -130,8 +130,10 @@ python -m pip install ./sdk/python
 The source helper verifies the pinned Agent DX `v0.1.0rc1` GitHub release archive,
 then reads and separately verifies its bundled `adx-sandbox 0.1.0rc1` wheel.
 The URL, commit and both SHA-256 digests are recorded in
-`sdk/python/adx-sdk.lock.json`. Published AKernel SDK releases require the same
-ADX SDK version to be available from the configured Python package index.
+`sdk/python/adx-sdk.lock.json` for source and PR validation. Published AKernel SDK
+releases install the dependency declared in `pyproject.toml` from the configured
+Python package index; publication and clean distribution checks do not use the
+source lock file.
 
 Configure the AKernel environment:
 

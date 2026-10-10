@@ -38,8 +38,9 @@ verifies its internal manifest before installation. The runtime build downloads
 the separately published `adx-execd` component archive and verifies its SHA-256.
 AKernel then builds its own runtime rootfs with that binary; the prebuilt ADX
 runtime image is not copied into the all-in-one image. When advancing ADX,
-update `ADX_RELEASE_URL` and `ADX_RELEASE_SHA256` in `builder/node.Dockerfile`,
-and `ADX_EXECD_URL` and `ADX_EXECD_SHA256` in `builder/runtime.Dockerfile`.
+update `ADX_VERSION` in both Dockerfiles, `ADX_RELEASE_SHA256` in
+`builder/node.Dockerfile`, and `ADX_EXECD_SHA256` in `builder/runtime.Dockerfile`.
+The download URLs derive the tag and archive name from `ADX_VERSION`.
 Keep both archives on the same release tag and architecture. The CI release
 contract reads these Dockerfile pins and checks the URL format, SHA-256 pins,
 checksum verification commands, and matching releases; tests do not duplicate
