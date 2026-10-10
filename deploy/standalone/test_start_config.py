@@ -56,6 +56,7 @@ class StartConfigTest(unittest.TestCase):
             SANDBOXD_CONFIG_FILE=str(self.config_output),
             AKERNEL_NAT_BACKEND="iptables",
             AKERNEL_ENABLE_RUNC="true",
+            AKERNEL_FIRECRACKER_BACKEND="kvm",
             AKERNEL_RUNC_RESOLV_CONF=str(self.source),
             AKERNEL_CHUNK_DB_SIZE="",
         )
@@ -91,6 +92,17 @@ class StartConfigTest(unittest.TestCase):
         self.assertIn(message, result.stderr)
         self.assertEqual(self.config_output.read_text(), "existing config\n")
         self.assertFalse(self.resolver_output.exists())
+
+    def test_pvm_selection_preserves_direct_resolver_configuration(self):
+        result = self.generate(AKERNEL_FIRECRACKER_BACKEND="pvm")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = self.read_sections()
+        self.assertIn("plugin.runtime.firecracker_pvm", config)
+        self.assertNotIn("plugin.runtime.firecracker", config)
+        self.assertIn("firecracker-pvm", config["plugin.runtime.runtime_binary"])
+        self.assertNotIn("firecracker", config["plugin.runtime.runtime_binary"])
+        self.assertNotIn("kata", config["plugin.runtime.runtime_binary"])
+        self.assertEqual(self.resolver_output.read_text(), self.resolver_content)
 
     def test_direct_source_is_under_runtime_and_node_source_is_preserved(self):
         for backend in ("iptables", "bpfnat"):

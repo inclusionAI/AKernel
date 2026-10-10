@@ -32,6 +32,7 @@ ARG FIRECRACKER_BUILD_IMAGE=ubuntu:24.04
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
+ARG FIRECRACKER_KERNEL_PROFILE=kvm
 ARG VIRTIOFSD_BUILD_IMAGE=rust:1.90.0-bookworm
 # virtiofsd v1.14.0, including the release Cargo.lock.
 ARG VIRTIOFSD_REVISION=c2540f8db14caba81c1e37fba23fc7bf2cd7f0dd
@@ -171,6 +172,7 @@ FROM ${FIRECRACKER_BUILD_IMAGE} AS firecracker-runtime-true
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
+ARG FIRECRACKER_KERNEL_PROFILE
 ARG TARGETARCH
 ARG AKERNEL_APT_UBUNTU_MIRROR
 ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
@@ -197,12 +199,20 @@ RUN set -eux; \
     tar -xzf "${archive}" -C /tmp/firecracker-release; \
     bundle="/tmp/firecracker-release/release-${FIRECRACKER_RELEASE}-x86_64"; \
     jq -e --arg release "${FIRECRACKER_RELEASE}" \
+      --arg profile "${FIRECRACKER_KERNEL_PROFILE}" \
       '.component == "akernel-firecracker-runtime" and \
        .repository == "akernel-dev/firecracker" and \
        .release_tag == $release and \
-       .architecture == "x86_64"' \
+       .architecture == "x86_64" and \
+       (.kernel_profile // "kvm") == $profile and \
+       ($profile == "kvm" or $profile == "pvm")' \
       "${bundle}/manifest.json" >/dev/null; \
     (cd "${bundle}"; sha256sum -c SHA256SUMS); \
+    if [ "${FIRECRACKER_KERNEL_PROFILE}" = pvm ]; then \
+      for config in PVM_GUEST X86_PIE X86_INTEL_MEMORY_PROTECTION_KEYS; do \
+        grep -qx "CONFIG_${config}=y" "${bundle}/kernel.config"; \
+      done; \
+    fi; \
     install -m 0755 "${bundle}/firecracker" \
       /firecracker/usr/local/bin/firecracker; \
     install -m 0644 \

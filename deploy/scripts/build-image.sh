@@ -15,6 +15,7 @@ tag=""
 env_name=""
 runtime_image=""
 runtime_profile="${RUNTIME_PROFILE:-rrt}"
+firecracker_kernel_profile="${FIRECRACKER_KERNEL_PROFILE:-kvm}"
 runtime_versions_file="${ROOT}/src/sandboxd/third_party/runtime-versions.env"
 distill_fs_versions_file="${ROOT}/builder/distill-fs-versions.env"
 open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
@@ -129,6 +130,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "${firecracker_kernel_profile}" in
+  kvm|pvm) ;;
+  *) die "FIRECRACKER_KERNEL_PROFILE must be kvm or pvm" ;;
+esac
 
 case "${runtime_profile}" in
   rrt|python) ;;
@@ -263,6 +269,9 @@ if [[ "${DOCKER_BUILDKIT-}" == 0 ]]; then
 fi
 
 if [[ "${target_arch}" == arm64 ]]; then
+  if [[ "${firecracker_kernel_profile}" == pvm ]]; then
+    die "the PVM guest profile requires linux/amd64"
+  fi
   if [[ "${AKERNEL_ENABLE_KATA}" != false ||
         "${AKERNEL_ENABLE_FIRECRACKER}" != false ]]; then
     die "linux/arm64 requires AKERNEL_ENABLE_KATA=false AKERNEL_ENABLE_FIRECRACKER=false; VM payloads are unsupported"
@@ -398,6 +407,7 @@ node_build_args=(
   --build-arg "FIRECRACKER_RELEASE=${firecracker_release}"
   --build-arg "FIRECRACKER_AMD64_URL=${firecracker_amd64_url}"
   --build-arg "FIRECRACKER_AMD64_SHA256=${firecracker_amd64_sha256}"
+  --build-arg "FIRECRACKER_KERNEL_PROFILE=${firecracker_kernel_profile}"
 )
 if [[ ${#mirror_build_args[@]} -gt 0 ]]; then
   node_build_args+=("${mirror_build_args[@]}")

@@ -24,6 +24,7 @@ SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
 AKERNEL_CHUNK_DB_SIZE="${AKERNEL_CHUNK_DB_SIZE:-}"
+AKERNEL_FIRECRACKER_BACKEND="${AKERNEL_FIRECRACKER_BACKEND:-kvm}"
 YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG:-/run/akernel/yr-image-process.json}"
 LITEBUS_DATA_KEY=""
 
@@ -103,6 +104,13 @@ check_prerequisites() {
             ;;
         *)
             log_error "AKERNEL_ENABLE_RUNC must be true or false"
+            exit 1
+            ;;
+    esac
+    case "${AKERNEL_FIRECRACKER_BACKEND}" in
+        kvm|pvm) ;;
+        *)
+            log_error "AKERNEL_FIRECRACKER_BACKEND must be kvm or pvm"
             exit 1
             ;;
     esac
@@ -271,6 +279,21 @@ configure_network() {
         -E
         -e "s/^[[:space:]]*nat_backend[[:space:]]*=.*/nat_backend=\"${AKERNEL_NAT_BACKEND}\"/"
     )
+
+    if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]]; then
+        if ! grep -q '^\[plugin.runtime.firecracker\]$' \
+            "${CONFIG_DIR}/sandboxd_config.toml" || \
+           ! grep -q '^firecracker="/usr/local/bin/firecracker"$' \
+            "${CONFIG_DIR}/sandboxd_config.toml"; then
+            log_error "PVM selection requires the standard Firecracker config section and binary entry"
+            exit 1
+        fi
+        sed_args+=(
+            -e 's/^firecracker=/firecracker-pvm=/'
+            -e 's/^\[plugin.runtime.firecracker\]$/[plugin.runtime.firecracker_pvm]/'
+            -e '/^kata=/d'
+        )
+    fi
 
     case "${AKERNEL_NAT_BACKEND}" in
         iptables|bpfnat)
@@ -513,6 +536,7 @@ start_node_container() {
         --net bridge \
         --restart always \
         -e container=oci \
+        -e "AKERNEL_FIRECRACKER_BACKEND=${AKERNEL_FIRECRACKER_BACKEND}" \
         -e AKS_LOCAL_MODE="true" \
         -e YR_RRT_CONTROL_SOCKET_PATH="/run/akernel" \
         -e YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG}" \

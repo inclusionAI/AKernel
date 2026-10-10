@@ -451,6 +451,9 @@ node:
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
       # Sandboxd probes runc and runc-shim before advertising the runtime.
       enableRunc: false
+      # pvm selects firecracker-pvm and removes Kata from this node profile.
+      # The image must contain the validated PVM guest bundle.
+      firecrackerBackend: kvm
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
       config: |-
