@@ -24,6 +24,8 @@
                 "yr_cluster_memory_allocatable",
                 "yr_instance_count",
                 "yr_cluster_instance_total",
+                "yr_cluster_instance_unavailable",
+                "yr_cluster_instance_recovering",
                 "yr_proxy_alarm",
                 "yr_etcd_alarm",
                 "yr_metastore_alarm",
