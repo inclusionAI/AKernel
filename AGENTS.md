@@ -6,20 +6,7 @@ project guidance.
 
 ## Project Overview
 
-AKernel provides cluster-backed remote sandbox environments for agents and
-developer workflows. The current public user-facing surface is the Python
-`akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI.
-The default sandbox runtime is gVisor runsc. Runtime identifiers and generic
-JSON-compatible runtime configuration are forwarded to the selected backend,
-which owns availability and compatibility checks. The bundled deployment also
-advertises Kata Containers and Firecracker on KVM-capable nodes. The native
-Linux runc payload is build-time optional and must be explicitly included and
-enabled by an operator.
-Creation-time network policies and atomic runtime replacement support
-unrestricted networking, blocking new flows except the YuanRong control and
-published sandbox-port routes, or denying exact and leading-wildcard DNS names.
-Experimental whole-device NVIDIA GPU requests require runsc. Configurable
-writable-storage requests are supported by runsc and Firecracker.
+AKernel provides standalone and cluster-backed sandbox environments for agents and developer workflows. The current public user-facing surface is the Python `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI. The default sandbox runtime is gVisor runsc. Runtime identifiers and generic JSON-compatible runtime configuration are forwarded to the selected backend, which owns availability and compatibility checks. The bundled deployment also advertises Kata Containers and Firecracker on KVM-capable nodes. The native Linux runc payload is build-time optional and must be explicitly included and enabled by an operator. Creation-time network policies and atomic runtime replacement support unrestricted networking, blocking new flows except the YuanRong control and published sandbox-port routes, or denying exact and leading-wildcard DNS names. Experimental whole-device NVIDIA GPU requests require runsc. Configurable writable-storage requests are supported by runsc and Firecracker.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -41,8 +28,8 @@ tunnels. The project overview and deployment quick start are in
   recursive component submodules.
 - `builder/` - Dockerfiles, service configs, runtime rootfs build, and image
   entrypoint scripts for the public all-in-one image.
-- `deploy/` - Helm charts, standalone scripts, Terraform modules, and
-  deployment helper scripts.
+- `deploy/` - Helm charts, standalone scripts, Terraform modules, and deployment helper scripts.
+- `deploy/standalone/manage.py` - source-build standalone lifecycle shared by Linux and Apple Silicon Mac with OrbStack.
 - `assets/` - static images used by the root README.
 
 The open-source AKernel repository contains the SDK, deployment configuration,
@@ -63,6 +50,9 @@ make help
 make check VENDOR=aliyun
 make config VENDOR=aliyun
 make build
+make standalone
+make standalone-status
+make standalone-stop
 make push
 make plan
 make deploy
@@ -70,6 +60,7 @@ make token TTL=24h
 make print-env
 make sdk-test
 make deploy-script-check
+make deploy-standalone-test
 make e2e
 ```
 
@@ -96,8 +87,9 @@ profiles. These directories are intentionally ignored by Git. They may contain:
 - generated JWT tokens
 - SDK environment exports
 
-Never commit `.akernel/`, Terraform state, kubeconfigs, tokens, signing seeds,
-cloud credentials, private registry URLs, or local debug artifacts.
+The source standalone entry point uses `.akernel/standalone/data/` by default, or an absolute `AKERNEL_STANDALONE_DATA_DIR`. It keeps generated runtime configuration, the signing seed, token, `source-state.json`, and `sdk-env.sh` together in that directory. The environment file reads the protected token file when sourced; lifecycle commands print credential paths without their values. This local profile is independent of cloud `ENV` profiles.
+
+Never commit `.akernel/`, Terraform state, kubeconfigs, tokens, signing seeds, cloud credentials, private registry URLs, or local debug artifacts.
 
 ## Build
 
@@ -211,9 +203,9 @@ distill-fs release's packaged manifest.
 
 ## Deploy
 
-Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point.
-AKernel supports standalone, existing Kubernetes clusters via Helm, and
-Terraform-based cloud provisioning.
+Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
+
+Use `make standalone` for local source builds on a native Linux/amd64 or Linux/arm64 Docker daemon, or Apple Silicon Mac with OrbStack. It selects the daemon architecture and defaults to `rrt` with runsc only; optional payloads require explicit supported `AKERNEL_ENABLE_*` flags. It initializes only an absent `src/sandboxd`, checks the initialized checkout is clean and matches the gitlink, builds a unique source image, starts it through `start.sh`, and waits for node and gateway health. The source launcher does not use a cloud image profile or cross-architecture emulation. Existing standalone container names, including stopped containers, must be resolved before it builds. `make standalone-status` reports the selected profile and health; `make standalone-stop` checks recorded container IDs, data mounts, and an empty sandbox inventory before stopping. See the [standalone guide](./deploy/standalone/README.md) for lifecycle and SDK setup.
 
 The all-in-one image and node launchers declare lowercase `container=oci`
 for PID 1 systemd. Preserve this in the final image, Helm node environment,
@@ -278,7 +270,7 @@ usable `/dev/kvm` device.
 
 Standalone configures resolver sources by DNS mode. Enabling runc copies an approved host resolver into the data mount and sets `plugin.runtime.direct_resolv_conf_path`, while `plugin.runtime.resolv_conf_path` remains the node resolver used by managed DNS. `AKERNEL_RUNC_RESOLV_CONF` selects the host source; systemd-resolved hosts require it explicitly because a flat file cannot preserve split DNS. Preserve the direct-resolver marker under `[plugin.runtime]` in custom templates, and drain sandboxes before refreshing the resolver snapshot or replacing the node. See [`deploy/standalone/README.md#dns-resolver-sources`](deploy/standalone/README.md#dns-resolver-sources) for mode selection and reachability requirements.
 
-Standalone checks platform and image compatibility before modifying credentials or resolver configuration. OrbStack launches and pulls explicitly select `linux/arm64`, independently of the client's default Docker platform. Select an absolute `AKERNEL_STANDALONE_DATA_DIR` for an independent profile; otherwise data stays under `deploy/standalone/data`. Container proxy credentials belong in the protected profile env-file, not logs or process arguments. Drain sandboxes before stopping the node; stop or removal failures must return nonzero, and stopped profiles retain their data and identity files.
+Standalone checks platform and image compatibility before modifying credentials or resolver configuration. OrbStack launches and pulls explicitly select `linux/arm64`, independently of the client's default Docker platform. `make standalone` defaults to `.akernel/standalone/data`; direct `start.sh` defaults to `deploy/standalone/data` and selects the public Docker Hub image when `IMAGE` is unset. An absolute `AKERNEL_STANDALONE_DATA_DIR` overrides either path. Container proxy credentials belong in the protected profile env-file, not logs or process arguments. Drain sandboxes before stopping the node; stop or removal failures must return nonzero, and stopped profiles retain their data and identity files.
 
 The bundled sandboxd configuration enables per-sandbox network ACLs. Pooled TAP
 networking requires the host `tun` module and a usable `/dev/net/tun`. The
@@ -454,11 +446,7 @@ use the Traefik container IP printed by `deploy/standalone/start.sh`:
 export AKERNEL_SERVER_ADDRESS=<traefik-container-ip>
 ```
 
-No separate `AKERNEL_GATEWAY_ADDRESS` is required for the default standalone
-layout. When a custom topology sets it, the override applies only to public
-sandbox port URLs and reverse tunnels; exec and file transfer continue to use
-`AKERNEL_SERVER_ADDRESS`. Standalone uses `akerneldev/all-in-one:latest` by
-default; pass `IMAGE` to test a locally built or differently tagged image.
+No separate `AKERNEL_GATEWAY_ADDRESS` is required for the default standalone layout. When a custom topology sets it, the override applies only to public sandbox port URLs and reverse tunnels; exec and file transfer continue to use `AKERNEL_SERVER_ADDRESS`. For source standalone, source the generated `sdk-env.sh` from the selected data directory. Direct `start.sh` uses `akerneldev/all-in-one:latest` by default; pass `IMAGE` for a locally built or differently tagged image.
 
 Standalone GPU testing additionally requires NVIDIA Container Toolkit on the
 host and `AKERNEL_ENABLE_GPU=true`. sandboxd uses the read-only cgroup
@@ -474,11 +462,7 @@ the sandbox bridge. YuanRong receives `INSTANCE_IP` in Kubernetes or the
 default-route interface address in standalone mode; `AKERNEL_NODE_IP` is the
 explicit override for multi-homed environments.
 
-The standalone sandboxd filestore is a loop-mounted ext4 image under the
-bind-mounted `deploy/standalone/data/` directory. Explicit `storage_mb`
-quotas for runsc and Firecracker use this local-disk filestore. Without an
-explicit quota, runsc retains its configured memory-backed overlay while
-Firecracker creates its configured sparse ext4 default.
+The standalone sandboxd filestore is a loop-mounted ext4 image under the selected bind-mounted data directory. Explicit `storage_mb` quotas for runsc and Firecracker use this local-disk filestore. Without an explicit quota, runsc retains its configured memory-backed overlay while Firecracker creates its configured sparse ext4 default.
 
 Terraform-managed Alibaba Cloud node pools instead attach a dedicated 300 GiB
 ESSD by default, have ACK format it as XFS, and mount it at `/home/akernel`.
@@ -621,6 +605,12 @@ templates, and Python deployment helpers with:
 
 ```bash
 make deploy-script-check
+```
+
+For standalone lifecycle or launch changes, also run the helper tests without starting containers:
+
+```bash
+make deploy-standalone-test
 ```
 
 Run the basic e2e example against a deployed cluster with:

@@ -73,6 +73,22 @@ for container in "${CONTAINER_NAMES[@]}"; do
     CONTAINER_IDS+=("${container_id}")
 done
 
+# The source-profile manager supplies exact expected IDs after checking mounts
+# and draining sandboxes. Verify the entire inventory before stopping either
+# container, including names that were absent when the manager checked them.
+for index in "${!CONTAINER_NAMES[@]}"; do
+    case "${CONTAINER_NAMES[index]}" in
+        akernel-node) expected_id="${AKERNEL_EXPECTED_NODE_ID:-}" ;;
+        akernel-traefik) expected_id="${AKERNEL_EXPECTED_TRAEFIK_ID:-}" ;;
+    esac
+    if [[ -z "${expected_id}" ]]; then continue; fi
+    actual_id="${CONTAINER_IDS[index]:-absent}"
+    if [[ "${expected_id}" != "${actual_id}" ]]; then
+        log_error "Standalone container inventory changed; shutdown was not attempted"
+        exit 1
+    fi
+done
+
 # Stop the gateway before the AKernel container so no new requests arrive
 # while the runtime is shutting down. Continue after individual failures.
 cleanup_failed=false

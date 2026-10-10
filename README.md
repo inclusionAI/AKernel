@@ -64,6 +64,17 @@ Built-in OpenTelemetry (OTEL) integration provides complete observability out of
 - 🏗️ [Architecture](#architecture) - System design and components
 - 🚀 [Deployment](./deploy/README.md) - Installation and configuration guide
 
+### Run Locally from Source
+
+On Linux with native AMD64/ARM64 Docker, or Apple Silicon Mac with OrbStack, run from the source checkout:
+
+```bash
+make standalone
+source .akernel/standalone/data/sdk-env.sh
+```
+
+This builds and starts a runsc standalone instance. Use `make standalone-status` to inspect it and `make standalone-stop` after releasing its sandboxes. See the [Standalone Guide](./deploy/standalone/README.md) for prerequisites, SDK setup, and optional runtimes.
+
 ### Bootstrap a Cluster
 
 AKernel provides guided Terraform deployment for Alibaba Cloud ACK and Huawei Cloud CCE. Clone the repository and prepare the cloud credentials before selecting one of the image options below.
