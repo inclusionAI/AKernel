@@ -259,8 +259,6 @@ ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_ENABLE_RUNC
 ARG AKERNEL_ENABLE_FIRECRACKER
 ARG AKERNEL_RUNTIME_PROFILE
-ARG AKERNEL_VERSION
-ARG AKERNEL_REVISION
 ARG OPEN_YR_VERSION
 ARG OPEN_YR_CORE_WHEEL_URL
 ARG OPEN_YR_CORE_WHEEL_SHA256
@@ -396,7 +394,7 @@ RUN set -eux; \
     fi; \
     wheel="/tmp/${wheel_name}"; \
     target=/tmp/openyuanrong-core; \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+    curl -fSL --http1.1 --retry 10 --retry-delay 2 --retry-all-errors \
       "${wheel_url}" -o "${wheel}"; \
     echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
     python3 -m pip install \
@@ -513,6 +511,9 @@ RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INS
     systemctl enable sandboxd.service && \
     systemctl enable yuanrong.service
 
+# Metadata-only changes must not invalidate fixed runtime download layers.
+ARG AKERNEL_VERSION
+ARG AKERNEL_REVISION
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
       org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \
