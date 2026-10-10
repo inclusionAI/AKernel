@@ -30,7 +30,10 @@ enable_cache_in_stock_mode=true
 
 [plugin.runtime]
 image_lib_dir="/home/akernel/images"
+# Managed DNS upstream and generated resolver search/domain/options.
 resolv_conf_path="/etc/resolv.conf"
+# Direct DNS resolver source, generated when the launcher enables runc.
+# AKERNEL_DIRECT_RESOLVER
 # A configured size creates a loop-backed bounded filestore. ext4 is used by
 # default; set filestore_xfs_enabled=true to select XFS.
 filestore_dir="/home/akernel/filestore"

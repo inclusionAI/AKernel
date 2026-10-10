@@ -22,8 +22,11 @@ from akernel_sdk import Sandbox
 
 def main() -> None:
     # Context exit explicitly cleans up; GC does not delete the sandbox.
-    with Sandbox(cpu=1000, memory=2048) as sandbox:
+    with Sandbox(cpu=1000, memory=2048, cwd="/workspace/akernel-example") as sandbox:
         print(f"Sandbox created: {sandbox.id}")
+        result = sandbox.commands.run("pwd")
+        assert result.exit_code == 0, result.stderr
+        assert result.stdout.strip() == "/workspace/akernel-example", result.stdout
 
         result = sandbox.commands.run(
             'printf "Hello, $USER_NAME!"',

@@ -74,20 +74,14 @@ An earlier controlled nested microbenchmark on a Cascade Lake host measured 96 M
 
 ## Candidate image and node selection
 
-To validate an unreleased bundle, provide all three artifact fields and its kernel profile. Partial overrides fail. Image construction verifies archive/internal checksums, manifest identity, selected profile and PVM guest options. The artifact profile does not change the host backend.
+To validate an unreleased bundle, check out a sandboxd candidate commit whose `third_party/runtime-versions.env` pins all three Firecracker artifact fields (release, URL and SHA-256). The image builder consumes that manifest; caller environment variables cannot override its release pins. Keep candidate pins on the validation checkout until those exact bytes pass validation and are promoted. Image construction verifies archive/internal checksums, manifest identity, selected profile and PVM guest options. The artifact profile does not change the host backend.
 
 ```sh
-: "${PVM_BUNDLE_TAG:?set the planned candidate release tag}"
-: "${PVM_BUNDLE_URL:?set the exact candidate archive URL}"
-: "${PVM_BUNDLE_SHA256:?set the verified archive SHA-256}"
-FIRECRACKER_KERNEL_PROFILE=pvm \
-FIRECRACKER_RELEASE="$PVM_BUNDLE_TAG" \
-FIRECRACKER_AMD64_URL="$PVM_BUNDLE_URL" \
-FIRECRACKER_AMD64_SHA256="$PVM_BUNDLE_SHA256" \
+FIRECRACKER_KERNEL_PROFILE=pvm AKERNEL_TARGETARCH=amd64 \
     deploy/scripts/build-image.sh --repository pvm-validation --tag candidate
 ```
 
-Keep default release pins unchanged during development. After validation and promotion, pin the published URL and verified digest in sandboxd and advance AKernel's gitlink. Do not rebuild the candidate during promotion.
+After validation and promotion, pin the published URL and verified digest in sandboxd and advance AKernel's gitlink. Do not rebuild the candidate during promotion. PVM guest images require `linux/amd64`; ARM64 retains the mainline runsc/runc profile.
 
 Standalone accepts `AKERNEL_FIRECRACKER_BACKEND=pvm` alongside an image containing the PVM bundle. Its generated config selects `firecracker-pvm`, uses `[plugin.runtime.firecracker_pvm]`, and removes Kata. The entrypoint rejects a PVM selection when guest prerequisites are absent; sandboxd independently verifies the host ABI. Runsc remains the default runtime on systrap. This profile does not qualify Kata or gVisor's KVM platform on PVM.
 

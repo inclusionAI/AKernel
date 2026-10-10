@@ -137,9 +137,9 @@ node:
     pullPolicy: ""
   resources:
     limits:
-      ephemeral-storage: 1Gi
+      ephemeral-storage: 50Gi
     requests:
-      ephemeral-storage: 1Gi
+      ephemeral-storage: 50Gi
   annotations: {}
   initContainers: []
   hostDiskPath: "/home/akernel"

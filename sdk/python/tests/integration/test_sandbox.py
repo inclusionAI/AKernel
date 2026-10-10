@@ -19,6 +19,7 @@ import socketserver
 import threading
 import time
 import unittest
+import uuid
 
 from akernel_sdk import HttpReverseTunnel, NetworkPolicy, Sandbox
 
@@ -90,6 +91,23 @@ class SandboxIntegrationTest(unittest.TestCase):
         self.assertEqual(process.command, "sleep 30")
         self.assertTrue(process.running)
         handle.kill()
+
+    def test_missing_constructor_cwd_is_created_for_commands(self):
+        cwd = f"/tmp/akernel-cwd-{uuid.uuid4().hex}/nested"
+        with Sandbox(
+            cpu=1000, memory=2048, runtime=_RUNTIME, image=_IMAGE, cwd=cwd
+        ) as sandbox:
+            self.assertTrue(sandbox.files.exists(cwd))
+            result = sandbox.commands.run("pwd")
+            self.assertEqual(result.exit_code, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), cwd)
+            handle = sandbox.commands.run("pwd", background=True)
+            result = handle.wait(timeout=10)
+            self.assertEqual(result.exit_code, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), cwd)
+            result = sandbox.commands.run("pwd", cwd="/")
+            self.assertEqual(result.exit_code, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "/")
 
     def test_filesystem(self):
         self.sandbox.files.write("/tmp/akernel-integration.txt", "filesystem-ok")

@@ -13,9 +13,14 @@
 # limitations under the License.
 
 import os
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+from yr_sandbox.commands import Commands as NativeCommands
 
 from akernel_sdk._addresses import Endpoint
 from akernel_sdk._backends import (
@@ -190,6 +195,110 @@ class OpenYuanRongSandboxBackendTest(unittest.TestCase):
                 # YuanRong applies this runtime to the deployed default rootfs.
                 self.assertEqual(sandbox_type.call_args.kwargs["runtime"], runtime)
                 self.assertIsNone(sandbox_type.call_args.kwargs["rootfs"])
+
+    def test_constructor_cwd_is_created_and_used_by_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cwd = Path(directory).resolve() / "workspace" / "nested"
+            override = Path(directory).resolve() / "override"
+            override.mkdir()
+            missing = Path(directory).resolve() / "missing"
+            native = MagicMock()
+            native.id = "default-cwd"
+            native.files.make_dir.side_effect = lambda path: Path(path).mkdir(
+                parents=True, exist_ok=True
+            )
+
+            def invoke(_sandbox_id, _action, args, **_kwargs):
+                try:
+                    result = subprocess.run(
+                        args["cmd"],
+                        shell=True,
+                        cwd=args["cwd"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    return {
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "exit_code": result.returncode,
+                    }
+                except FileNotFoundError as error:
+                    return {"stdout": "", "stderr": str(error), "exit_code": -1}
+
+            client = MagicMock()
+            client.invoke.side_effect = invoke
+            native.commands = NativeCommands(client, native.id, default_cwd=str(cwd))
+            with patch.object(
+                openyuanrong_sandbox.yr_sandbox, "Sandbox", return_value=native
+            ):
+                session = self.backend.create(_spec(command_cwd=str(cwd)))
+                for command_cwd, expected in ((None, cwd), (str(override), override)):
+                    result = session.commands.run(
+                        "pwd", envs=None, cwd=command_cwd, timeout=10
+                    )
+                    self.assertEqual(result.exit_code, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), str(expected))
+                result = session.commands.run(
+                    "pwd", envs=None, cwd=str(missing), timeout=10
+                )
+                self.assertEqual(result.exit_code, -1)
+                self.assertIn("No such file or directory", result.stderr)
+                self.assertFalse(missing.exists())
+                session.close()
+            native.files.make_dir.assert_called_once_with(str(cwd))
+
+    def test_existing_constructor_cwd_is_accepted(self):
+        native = MagicMock()
+        native.files.make_dir.return_value = False
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox, "Sandbox", return_value=native
+        ):
+            self.backend.create(_spec(command_cwd="/workspace"))
+        native.files.make_dir.assert_called_once_with("/workspace")
+        native.close.assert_not_called()
+
+    def test_omitted_constructor_cwd_does_not_create_a_directory(self):
+        native = MagicMock()
+        with patch.object(
+            openyuanrong_sandbox.yr_sandbox, "Sandbox", return_value=native
+        ):
+            self.backend.create(_spec())
+        native.files.make_dir.assert_not_called()
+
+    def test_constructor_cwd_failure_rolls_back_detached_sandbox(self):
+        native = MagicMock()
+        native.id = "default-cwd"
+        error = PermissionError("cannot create working directory")
+        native.files.make_dir.side_effect = error
+        with (
+            patch.object(
+                openyuanrong_sandbox.yr_sandbox, "Sandbox", return_value=native
+            ) as sandbox_type,
+            self.assertRaisesRegex(BackendOperationError, "cannot create") as raised,
+        ):
+            self.backend.create(_spec(command_cwd="/workspace", detached=True))
+        self.assertIs(raised.exception.__cause__, error)
+        native.close.assert_called_once_with()
+        sandbox_type.delete.assert_called_once_with(native.id)
+
+    def test_constructor_cwd_failure_survives_rollback_failure(self):
+        native = MagicMock()
+        native.id = "default-cwd"
+        error = FileExistsError("working directory is a file")
+        native.files.make_dir.side_effect = error
+        with (
+            patch.object(
+                openyuanrong_sandbox.yr_sandbox, "Sandbox", return_value=native
+            ) as sandbox_type,
+            self.assertLogs(openyuanrong_sandbox.logger, level="WARNING"),
+            self.assertRaisesRegex(BackendOperationError, "is a file") as raised,
+        ):
+            sandbox_type.delete.side_effect = RuntimeError("delete unavailable")
+            self.backend.create(_spec(command_cwd="/workspace"))
+        self.assertIs(raised.exception.__cause__, error)
+        native.close.assert_called_once_with()
+        sandbox_type.delete.assert_called_once_with(native.id)
 
     def test_runsc_without_explicit_rootfs_passes_runtime_config_override(self):
         native = MagicMock()

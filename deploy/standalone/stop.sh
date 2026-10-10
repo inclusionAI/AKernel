@@ -52,17 +52,52 @@ else
     exit 1
 fi
 
-# Stop the gateway before the AKernel container so no new requests arrive
-# while the runtime is shutting down.
+# Resolve a successful inventory before treating any name as absent. Stop and
+# remove the captured full IDs so a concurrently reused name is not targeted.
+if ! inventory="$("${DOCKER_PREFIX[@]}" ${DOCKER_CMD} ps -a --no-trunc \
+    --format '{{.ID}} {{.Names}}' 2> /dev/null)"; then
+    log_error "Could not list containers; AKernel shutdown was not attempted"
+    exit 1
+fi
+CONTAINER_IDS=()
 for container in "${CONTAINER_NAMES[@]}"; do
-    if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} container inspect "${container}" &> /dev/null; then
+    container_id=""
+    while read -r listed_id listed_name extra; do
+        if [[ "${listed_name#/}" != "${container}" ]]; then continue; fi
+        if [[ -n "${container_id}" || -n "${extra}" || ! "${listed_id}" =~ ^[0-9a-f]{64}$ ]]; then
+            log_error "Invalid container inventory; AKernel shutdown was not attempted"
+            exit 1
+        fi
+        container_id="${listed_id}"
+    done <<< "${inventory}"
+    CONTAINER_IDS+=("${container_id}")
+done
+
+# Stop the gateway before the AKernel container so no new requests arrive
+# while the runtime is shutting down. Continue after individual failures.
+cleanup_failed=false
+for index in "${!CONTAINER_NAMES[@]}"; do
+    container="${CONTAINER_NAMES[index]}"
+    container_id="${CONTAINER_IDS[index]}"
+    if [[ -n "${container_id}" ]]; then
         log_info "Stopping container: ${container}"
-        "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} stop "${container}" &> /dev/null || true
-        "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} rm "${container}" &> /dev/null || true
-        log_info "Container removed: ${container}"
+        if ! "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} stop "${container_id}" &> /dev/null; then
+            log_error "Failed to stop container: ${container}"
+            cleanup_failed=true
+        fi
+        if "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} rm "${container_id}" &> /dev/null; then
+            log_info "Container removed: ${container}"
+        else
+            log_error "Failed to remove container: ${container}"
+            cleanup_failed=true
+        fi
     else
         log_warn "Container '${container}' not found"
     fi
 done
 
+if [[ "${cleanup_failed}" == true ]]; then
+    log_error "AKernel shutdown incomplete; inspect the failed containers and retry"
+    exit 1
+fi
 log_info "AKernel node stopped successfully!"

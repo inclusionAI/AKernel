@@ -111,6 +111,11 @@ jobs:
         run: |
           make deploy-script-check
 
+      - name: Test standalone deployment helpers
+        run: |
+          make deploy-standalone-test
+          make build-helper-test
+
   standalone-e2e:
     name: Standalone E2E
     needs:

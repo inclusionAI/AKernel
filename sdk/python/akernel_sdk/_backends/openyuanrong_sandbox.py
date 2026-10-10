@@ -571,7 +571,25 @@ class OpenYuanRongSandboxBackend:
             sandbox = yr_sandbox.Sandbox(**create_args)
         except Exception as error:
             raise _convert_error("create sandbox", error) from error
-        return _Session(sandbox, spec)
+        session = _Session(sandbox, spec)
+        if spec.command_cwd is not None:
+            try:
+                # Match the actor backend's constructor contract. The native
+                # SDK currently only uses cwd as a command default.
+                sandbox.files.make_dir(spec.command_cwd)
+            except Exception as error:
+                try:
+                    session.terminate()
+                except Exception:
+                    logger.warning(
+                        "Failed to roll back sandbox %s after cwd initialization",
+                        session.id,
+                        exc_info=True,
+                    )
+                raise _convert_error(
+                    f"initialize sandbox cwd {spec.command_cwd!r}", error
+                ) from error
+        return session
 
     def delete_named(self, name: str) -> None:
         sandbox_id = f"{self.namespace}-{name}"

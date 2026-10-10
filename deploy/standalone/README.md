@@ -45,6 +45,41 @@ Clients then select it with `Sandbox(runtime="runc")`. A sandbox may request
 the configured KVM character device with
 `extra_config={"enableKVM": True}` when the host exposes `/dev/kvm`.
 
+### OrbStack on Apple Silicon
+
+OrbStack runs standalone in a native Linux/arm64 environment. Use the `rrt` runtime profile and exclude Kata, Firecracker, and GPU payloads. Ordinary Linux runc sandboxes use the OrbStack Linux kernel and do not require KVM. Build and start from the AKernel repository root:
+
+```bash
+AKERNEL_TARGETARCH=arm64 AKERNEL_ENABLE_KATA=false \
+  AKERNEL_ENABLE_FIRECRACKER=false AKERNEL_ENABLE_RUNC=true \
+  make build IMAGE_REPOSITORY=akernel-local/all-in-one IMAGE_TAG=arm64-runc
+
+IMAGE=akernel-local/all-in-one:arm64-runc AKERNEL_ENABLE_RUNC=true \
+  AKERNEL_STANDALONE_DATA_DIR=/absolute/path/to/mac-runc-data \
+  AKERNEL_RUNC_RESOLV_CONF=/absolute/path/to/approved-resolv.conf \
+  ./deploy/standalone/start.sh
+```
+
+The launcher checks the OrbStack Linux/arm64 engine and allowed options before touching the selected data directory. It then verifies that both the AKernel and gateway images are Linux/arm64, VM payloads are disabled, and an explicitly requested runc payload is present. Pulls and all three container launches explicitly use `--platform linux/arm64`, overriding a conflicting `DOCKER_DEFAULT_PLATFORM`. A wrong-architecture cached tag is rejected with guidance to select an ARM64 reference; the launcher does not overwrite that local tag automatically.
+
+A disposable privileged container probes TUN/TAP, veth, writable cgroup v2, iptables/ip6tables, conntrack matches, ipset, and loop-backed ext4 before credentials or network configuration are regenerated. It checks that the FUSE device is present, but this alone does not prove a userspace FUSE mount lifecycle; runtime image-mount validation is still required. Enabling runc additionally verifies that the bundled EROFS root can be mounted and combined with an ext4-backed writable overlay. The probes use temporary paths under the selected data directory and clean up their own mounts and resources before the node starts. macOS does not run `modprobe`.
+
+For build downloads through an existing proxy, export its Docker-builder-reachable `HTTP_PROXY` and `HTTPS_PROXY` environment variables and add `AKERNEL_BUILD_PROXY=true` to `make build`. The helper forwards predefined proxy arguments by name to both runtime and node image builds without saving their values. Docker can also pre-populate build proxies from the client configuration; omitting this helper option does not disable those inherited settings. See [Docker CLI proxy configuration](https://docs.docker.com/engine/cli/proxy/). This build-only option does not configure standalone or sandbox traffic.
+
+OrbStack can transparently follow macOS proxy settings independently of container environment variables. An empty proxy environment or `curl --noproxy '*'` therefore does not by itself prove direct outbound HTTPS. Check [OrbStack's network proxy settings](https://docs.orbstack.dev/docker/network) and validate the actual outbound path when a direct connection is required. The launcher does not change host-wide proxy settings.
+
+If the proxy listens on Mac localhost, use `AKERNEL_BUILD_NETWORK=host` together with `AKERNEL_BUILD_PROXY=true` so OrbStack's build RUN instructions can reach the same localhost endpoint used by the Docker CLI. The network option accepts only `default` or `host`, and defaults to Docker's normal build network. It applies to both image builds and leaves the standalone deployment's Docker bridge networking unchanged.
+
+Compare the macOS DNS configuration with `scutil --dns` and explicitly select resolver addresses reachable from the sandbox network namespace. A macOS `/etc/resolv.conf` snapshot does not represent all scoped or split-DNS policies. The launcher does not replace approved resolvers with public DNS; verify DNS and HTTPS inside a newly created `Sandbox(runtime="runc")`. See [DNS resolver sources](#dns-resolver-sources) for the separate managed and direct resolver paths.
+
+The Traefik container IP printed by the launcher is the SDK address. Verify the endpoint from macOS before creating a sandbox. The generated standalone certificate is self-signed; for this local health check only, use:
+
+```bash
+curl --noproxy '*' -fkSs "https://<traefik-container-ip>/healthz"
+```
+
+The profile uses iptables and supports runsc plus explicitly enabled ordinary runc without a KVM request. Kata, Firecracker, and GPU remain disabled. Drain and release sandboxes before stopping standalone with `./deploy/standalone/stop.sh`. The stop script resolves only the two standalone container names, stops the gateway first, and returns nonzero if inventory, stop, or removal fails; it does not force-remove containers or delete profile data.
+
 Experimental NVIDIA GPU sandboxes use gVisor nvproxy. The host must provide a
 compatible NVIDIA driver and NVIDIA Container Toolkit. Enable GPU access to
 the node container with:
@@ -73,8 +108,23 @@ reload the same logical sandbox from the latest usable point. Recovery points
 follow the source sandbox lifecycle; they are not exposed as reusable SDK
 objects.
 
-`start.sh` loads the host `tun` module and verifies `/dev/net/tun` before
-starting the pooled-TAP runtimes. Runc retains its separate veth network path.
+On Linux, `start.sh` loads the host `tun` module and verifies `/dev/net/tun` before starting the pooled-TAP runtimes. OrbStack uses the container capability preflight described above. Runc retains its separate veth network path.
+
+### DNS resolver sources
+
+Sandboxd selects resolver sources by DNS mode. With the bundled ACL-enabled configuration, runsc, Kata, and Firecracker use managed DNS through the node proxy, even without a sandbox network policy. Runc uses direct DNS; disabling node ACLs selects direct DNS for every runtime. `plugin.runtime.resolv_conf_path` supplies the managed proxy upstream and generated resolver search/domain/options. The optional `plugin.runtime.direct_resolv_conf_path` supplies direct-DNS sandboxes; when empty, it inherits `resolv_conf_path`. Existing runtime-owned or explicit resolver mounts retain precedence in direct mode.
+
+When runc is enabled, the launcher copies a non-loopback resolver file to `data/sandboxd/config/direct-resolv.conf` before starting the node and sets `plugin.runtime.direct_resolv_conf_path` to its path inside the node. It preserves `plugin.runtime.resolv_conf_path`, which defaults to `/etc/resolv.conf`. Docker's embedded resolver (`127.0.0.11`) is valid in the node container network namespace but not in a direct-DNS sandbox's separate namespace. Custom configuration templates must retain exactly one `# AKERNEL_DIRECT_RESOLVER` marker under `[plugin.runtime]` and the `# AKERNEL_RUNTIME_RUNC` marker under `[plugin.runtime.runtime_binary]` when enabling runc.
+
+On hosts without systemd-resolved, the launcher can select a usable `/etc/resolv.conf` automatically. On systemd-resolved hosts, automatic selection fails closed because the flat upstream file cannot preserve per-link or VPN split-DNS routing. `AKERNEL_RUNC_RESOLV_CONF` selects the host source used when enabling runc; supply an absolute file containing resolver addresses approved for all names direct-DNS workloads must query:
+
+```bash
+AKERNEL_ENABLE_RUNC=true \
+  AKERNEL_RUNC_RESOLV_CONF=/path/to/approved-upstream-resolv.conf \
+  ./start.sh
+```
+
+Do not use `/run/systemd/resolve/resolv.conf` as an automatic substitute for split-DNS policy: its server list alone does not encode which domains belong to which link. Use an approved internal resolver or an operator-managed forwarder reachable from sandbox network namespaces when private domains are needed; the launcher does not silently substitute a public DNS server. File validation rejects namespace-local addresses but does not prove reachability or domain-routing correctness. The generated file is a startup snapshot of the approved configuration. To update it, drain sandboxes and restart standalone, then verify internal and external DNS from a new direct-DNS sandbox and verify managed DNS separately. Do not restart the node while a sandbox or nested VM is running.
 
 ### Network backend
 
@@ -99,17 +149,7 @@ later creation of `sandbox0` cannot change the advertised node address. Set
 `AKERNEL_NODE_IP` only when a multi-homed deployment requires an explicit
 override.
 
-The standalone configuration enables per-sandbox network ACLs. With the
-default iptables backend, `start.sh` loads IPv6 filter-table, `br_netfilter`,
-`xt_physdev`, conntrack/connmark, and timeout-capable ipset modules on the host
-before the node starts; the node then enables IPv4 and IPv6 bridge netfilter in
-its own network namespace.
-The optional bpfnat backend instead
-requires TC eBPF support and a writable bpffs. TCP and UDP port 53 on the
-sandbox bridge must remain free for sandboxd's managed DNS proxy. Before
-upgrading an existing standalone data directory to an ACL-enabled image,
-terminate its sandboxes and stop the old node cleanly; sandboxd refuses to
-initialize ACLs while pre-ACL sandboxes remain in its store.
+The standalone configuration enables per-sandbox network ACLs. On Linux with the default iptables backend, `start.sh` loads IPv6 filter-table, `br_netfilter`, `xt_physdev`, conntrack/connmark, and timeout-capable ipset modules on the host before the node starts; OrbStack checks these capabilities with its container preflight instead of loading host modules. The node then enables IPv4 and IPv6 bridge netfilter in its own network namespace. The optional bpfnat backend instead requires TC eBPF support and a writable bpffs. TCP and UDP port 53 on the sandbox bridge must remain free for sandboxd's managed DNS proxy. Before upgrading an existing standalone data directory to an ACL-enabled image, terminate its sandboxes and stop the old node cleanly; sandboxd refuses to initialize ACLs while pre-ACL sandboxes remain in its store.
 
 ## Directory Structure
 
@@ -118,6 +158,7 @@ deploy/standalone/
 ├── README.md                  # This file
 ├── start.sh                   # Start AKernel and Traefik containers
 ├── stop.sh                    # Stop AKernel and Traefik containers
+├── orbstack-preflight.sh      # Check OrbStack Linux host capabilities
 └── config/                    # Configuration files
     ├── config.json            # OCI runtime configuration
     ├── oss_auths.json         # OSS authentication (edit as needed)
@@ -230,6 +271,8 @@ export AKERNEL_SERVER_ADDRESS="${TRAEFIK_IP}"
 export AKERNEL_TOKEN="$(cat data/token)"
 ```
 
+These examples use the default data directory. When `AKERNEL_STANDALONE_DATA_DIR` is set, read the token and signing seed from that selected directory instead; the launcher prints the selected token path. Treat both files as credentials and keep their contents out of logs.
+
 The signing seed is stored in `data/iam-seed` and reused while that standalone
 data directory exists. Delete the data directory to create a new deployment
 identity. Set `STANDALONE_TOKEN_TTL` when starting AKernel to choose a different
@@ -257,7 +300,8 @@ TRAEFIK_IMAGE="traefik:v3.6.8" ./start.sh
 
 ### Data Directory Location
 
-By default, data is stored in `./data`. To change this, edit `start.sh`:
+By default, data is stored in `deploy/standalone/data`, independently of the current working directory. Set an absolute path to keep an independent profile outside the source checkout:
+
 ```bash
-DATA_DIR="/path/to/your/data"
+AKERNEL_STANDALONE_DATA_DIR=/absolute/path/to/your/data ./start.sh
 ```

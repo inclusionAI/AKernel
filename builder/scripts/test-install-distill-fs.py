@@ -2,7 +2,8 @@
 """Exercise the AKernel installer with a real candidate/release archive.
 
 Usage: python3 builder/scripts/test-install-distill-fs.py /path/to/release.tar.gz
-Requires curl, jq, binutils, and a Linux/amd64 host. No network is needed.
+Requires curl, jq, binutils, and a matching Linux/amd64 or Linux/arm64 host.
+No network is needed.
 """
 
 import hashlib
@@ -23,17 +24,21 @@ with tarfile.open(archive) as bundle:
         "distill_fs", "manifest.json", "LICENSE", "NOTICE", "Cargo.lock"
     )}
 manifest = json.loads(files["manifest.json"])
+arch = {
+    "x86_64-unknown-linux-musl": "amd64",
+    "aarch64-unknown-linux-musl": "arm64",
+}[manifest["target"]]
 release = manifest["release_tag"]
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 
 with tempfile.TemporaryDirectory(prefix="distill-fs-installer-") as work:
     work = Path(work)
 
-    def check(name, asset=archive, checksum=digest, tag=release, arch="amd64", error=None):
+    def check(name, asset=archive, checksum=digest, tag=release, target_arch=arch, error=None):
         destination = work / name
         result = subprocess.run(
             ["sh", str(installer), tag, asset.as_uri(), checksum, str(destination)],
-            env={**os.environ, "TARGETARCH": arch},
+            env={**os.environ, "TARGETARCH": target_arch},
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         binary = destination / "bin/distill_fs"
@@ -65,9 +70,25 @@ with tempfile.TemporaryDirectory(prefix="distill-fs-installer-") as work:
     check("bad-pin", checksum="not-a-digest", error="invalid distill-fs SHA-256")
     check("corrupt-archive", checksum="0" * 64, error="FAILED")
     check("wrong-version", tag="v999.0.0", error="")
-    check("unsupported-arch", arch="arm64", error="linux/amd64 only")
+    other_arch = "arm64" if arch == "amd64" else "amd64"
+    check("wrong-arch", target_arch=other_arch, error="release target mismatch")
+    check("unsupported-arch", target_arch="s390x", error="unsupported distill-fs target")
     bad, sha = altered_archive("bad-binary-hash", files["distill_fs"], "0" * 64)
     check("bad-binary-hash", asset=bad, checksum=sha, error="FAILED")
+    # All artifact/manifest checksums and target metadata remain correct. Reject
+    # the payload header itself before readelf or an emulated --version can pass.
+    other_machine = 183 if arch == "amd64" else 62
+    for name, offset, replacement, error in (
+        ("wrong-binary-machine", 18, other_machine.to_bytes(2, "little"), "ELF machine mismatch"),
+        ("elf32-binary", 4, b"\x01", "requires ELF64"),
+        ("big-endian-binary", 5, b"\x02", "requires little-endian ELF"),
+        ("non-elf-binary", 0, b"nope", "not an ELF binary"),
+    ):
+        payload = bytearray(files["distill_fs"])
+        payload[offset:offset + len(replacement)] = replacement
+        payload = bytes(payload)
+        bad, sha = altered_archive(name, payload, hashlib.sha256(payload).hexdigest())
+        check(name, asset=bad, checksum=sha, error=error)
     # A correctly checksummed bundle must still reject a dynamic executable.
     dynamic = Path("/bin/true").read_bytes()
     headers = subprocess.check_output(["readelf", "-l", "/bin/true"], text=True)

@@ -15,47 +15,21 @@ tag=""
 env_name=""
 runtime_image=""
 runtime_profile="${RUNTIME_PROFILE:-rrt}"
-# Preserve an explicitly selected candidate before loading default pins.
-# A partial override must never mix candidate and default release fields.
-candidate_firecracker_release="${FIRECRACKER_RELEASE:-}"
-candidate_firecracker_url="${FIRECRACKER_AMD64_URL:-}"
-candidate_firecracker_sha256="${FIRECRACKER_AMD64_SHA256:-}"
 firecracker_kernel_profile="${FIRECRACKER_KERNEL_PROFILE:-kvm}"
 runtime_versions_file="${ROOT}/src/sandboxd/third_party/runtime-versions.env"
-if [[ ! -f "${runtime_versions_file}" ]]; then
-  die "missing runtime version manifest: ${runtime_versions_file}"
-fi
-# shellcheck source=/dev/null
-source "${runtime_versions_file}"
 distill_fs_versions_file="${ROOT}/builder/distill-fs-versions.env"
-if [[ ! -f "${distill_fs_versions_file}" ]]; then
-  die "missing distill-fs version manifest: ${distill_fs_versions_file}"
-fi
-# shellcheck source=/dev/null
-source "${distill_fs_versions_file}"
-gvisor_release="${GVISOR_RELEASE:-}"
-gvisor_amd64_sha512="${GVISOR_AMD64_SHA512:-}"
-gvisor_amd64_url="${GVISOR_AMD64_URL:-}"
-firecracker_release="${FIRECRACKER_RELEASE:-}"
-firecracker_amd64_sha256="${FIRECRACKER_AMD64_SHA256:-}"
-firecracker_amd64_url="${FIRECRACKER_AMD64_URL:-}"
-if [[ -n "${candidate_firecracker_release}${candidate_firecracker_url}${candidate_firecracker_sha256}" ]]; then
-  [[ -n "${candidate_firecracker_release}" && -n "${candidate_firecracker_url}" &&
-     "${candidate_firecracker_sha256}" =~ ^[0-9a-f]{64}$ ]] ||
-    die "candidate FIRECRACKER_RELEASE, FIRECRACKER_AMD64_URL, and a SHA-256 digest must be set together"
-  firecracker_release="${candidate_firecracker_release}"
-  firecracker_amd64_url="${candidate_firecracker_url}"
-  firecracker_amd64_sha256="${candidate_firecracker_sha256}"
-fi
-case "${firecracker_kernel_profile}" in
-  kvm|pvm) ;;
-  *) die "FIRECRACKER_KERNEL_PROFILE must be kvm or pvm" ;;
-esac
 open_yr_core_wheel_url="${OPEN_YR_CORE_WHEEL_URL:-}"
 open_yr_core_wheel_sha256="${OPEN_YR_CORE_WHEEL_SHA256:-}"
 rrt_runtime_url="${RRT_RUNTIME_URL:-}"
 rrt_runtime_sha256="${RRT_RUNTIME_SHA256:-}"
 print_component_versions=0
+# Explicit caller values take precedence over values saved in an environment.
+caller_runc_set="${AKERNEL_ENABLE_RUNC+x}"
+caller_runc="${AKERNEL_ENABLE_RUNC-}"
+caller_kata_set="${AKERNEL_ENABLE_KATA+x}"
+caller_kata="${AKERNEL_ENABLE_KATA-}"
+caller_firecracker_set="${AKERNEL_ENABLE_FIRECRACKER+x}"
+caller_firecracker="${AKERNEL_ENABLE_FIRECRACKER-}"
 
 component_revision() {
   local source_dir="$1"
@@ -84,6 +58,13 @@ component_version() {
 }
 
 while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --env|--repository|--tag|--runtime-image|--runtime-profile|\
+    --open-yr-core-wheel-url|--open-yr-core-wheel-sha256|\
+    --rrt-runtime-url|--rrt-runtime-sha256)
+      [[ $# -ge 2 ]] || die "$1 requires a value"
+      ;;
+  esac
   case "$1" in
     --env)
       env_name="$2"
@@ -131,22 +112,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "${firecracker_kernel_profile}" in
+  kvm|pvm) ;;
+  *) die "FIRECRACKER_KERNEL_PROFILE must be kvm or pvm" ;;
+esac
+
 case "${runtime_profile}" in
   rrt|python) ;;
   *) die "unsupported runtime profile: ${runtime_profile}; expected rrt or python" ;;
 esac
 
-case "${AKERNEL_ENABLE_KATA:-true}" in
-  true|false) ;;
-  *) die "AKERNEL_ENABLE_KATA must be true or false" ;;
-esac
-
-case "${AKERNEL_ENABLE_FIRECRACKER:-true}" in
-  true|false) ;;
-  *) die "AKERNEL_ENABLE_FIRECRACKER must be true or false" ;;
-esac
-
-require_cmd docker
+# Select the caller's platform before loading saved deployment settings.
+if [[ -n "${AKERNEL_TARGETARCH+x}" ]]; then
+  target_arch="${AKERNEL_TARGETARCH}"
+elif [[ -n "${DOCKER_DEFAULT_PLATFORM:-}" ]]; then
+  case "${DOCKER_DEFAULT_PLATFORM}" in
+    linux/amd64) target_arch=amd64 ;;
+    linux/arm64) target_arch=arm64 ;;
+    *) die "DOCKER_DEFAULT_PLATFORM must be linux/amd64 or linux/arm64" ;;
+  esac
+else
+  target_arch=amd64
+fi
 
 if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
   load_env_config "${env_name}"
@@ -154,9 +141,78 @@ if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
   tag="${tag:-${IMAGE_TAG}}"
 fi
 
-case "${AKERNEL_ENABLE_RUNC:-false}" in
+if [[ -n "${caller_runc_set}" ]]; then AKERNEL_ENABLE_RUNC="${caller_runc}"; fi
+if [[ -n "${caller_kata_set}" ]]; then AKERNEL_ENABLE_KATA="${caller_kata}"; fi
+if [[ -n "${caller_firecracker_set}" ]]; then AKERNEL_ENABLE_FIRECRACKER="${caller_firecracker}"; fi
+AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC-false}"
+AKERNEL_ENABLE_KATA="${AKERNEL_ENABLE_KATA-true}"
+AKERNEL_ENABLE_FIRECRACKER="${AKERNEL_ENABLE_FIRECRACKER-true}"
+for flag in AKERNEL_ENABLE_RUNC AKERNEL_ENABLE_KATA AKERNEL_ENABLE_FIRECRACKER; do
+  case "${!flag}" in
+    true|false) ;;
+    *) die "${flag} must be true or false" ;;
+  esac
+done
+
+# The manifests, not caller or profile variables, are the release-pin source of
+# truth. Missing fields must stay missing so the preflight checks reject them.
+if [[ ! -f "${runtime_versions_file}" ]]; then
+  die "missing runtime version manifest: ${runtime_versions_file}"
+fi
+unset GVISOR_RELEASE GVISOR_AMD64_URL GVISOR_AMD64_SHA512 \
+  GVISOR_ARM64_URL GVISOR_ARM64_SHA512 RUNC_VERSION RUNC_RELEASE_BASE_URL \
+  RUNC_AMD64_SHA256 RUNC_ARM64_SHA256 FIRECRACKER_RELEASE \
+  FIRECRACKER_AMD64_URL FIRECRACKER_AMD64_SHA256
+# shellcheck source=/dev/null
+source "${runtime_versions_file}"
+if [[ ! -f "${distill_fs_versions_file}" ]]; then
+  die "missing distill-fs version manifest: ${distill_fs_versions_file}"
+fi
+# sandboxd has its own distill-fs test pins; do not use them to fill this file.
+unset DISTILL_FS_RELEASE DISTILL_FS_AMD64_URL DISTILL_FS_AMD64_SHA256 \
+  DISTILL_FS_ARM64_URL DISTILL_FS_ARM64_SHA256
+# shellcheck source=/dev/null
+source "${distill_fs_versions_file}"
+gvisor_release="${GVISOR_RELEASE:-}"
+runc_version="${RUNC_VERSION:-}"
+runc_release_base_url="${RUNC_RELEASE_BASE_URL:-}"
+firecracker_release="${FIRECRACKER_RELEASE:-}"
+firecracker_amd64_sha256="${FIRECRACKER_AMD64_SHA256:-}"
+firecracker_amd64_url="${FIRECRACKER_AMD64_URL:-}"
+
+build_proxy="${AKERNEL_BUILD_PROXY-false}"
+case "${build_proxy}" in
   true|false) ;;
-  *) die "AKERNEL_ENABLE_RUNC must be true or false" ;;
+  *) die "AKERNEL_BUILD_PROXY must be true or false" ;;
+esac
+build_network="${AKERNEL_BUILD_NETWORK-default}"
+case "${build_network}" in
+  default|host) ;;
+  *) die "AKERNEL_BUILD_NETWORK must be default or host" ;;
+esac
+proxy_build_arg_names=(
+  HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY
+  http_proxy https_proxy no_proxy all_proxy
+)
+
+case "${target_arch}" in
+  amd64|x86_64)
+    target_arch=amd64
+    gvisor_url="${GVISOR_AMD64_URL:-}"
+    gvisor_sha512="${GVISOR_AMD64_SHA512:-}"
+    distill_fs_url="${DISTILL_FS_AMD64_URL:-}"
+    distill_fs_sha256="${DISTILL_FS_AMD64_SHA256:-}"
+    runc_sha256="${RUNC_AMD64_SHA256:-}"
+    ;;
+  arm64|aarch64)
+    target_arch=arm64
+    gvisor_url="${GVISOR_ARM64_URL:-}"
+    gvisor_sha512="${GVISOR_ARM64_SHA512:-}"
+    distill_fs_url="${DISTILL_FS_ARM64_URL:-}"
+    distill_fs_sha256="${DISTILL_FS_ARM64_SHA256:-}"
+    runc_sha256="${RUNC_ARM64_SHA256:-}"
+    ;;
+  *) die "unsupported image architecture: ${target_arch}" ;;
 esac
 
 repository="${repository:-akernel-all-in-one}"
@@ -173,7 +229,7 @@ akernel_revision="$(component_revision "${AKERNEL_REPO_ROOT}" akernel)"
 sandboxd_version="$(sed -n '1p' "${sandboxd_source}/version/VERSION")"
 sandboxd_revision="$(component_revision "${sandboxd_source}" sandboxd)"
 distill_fs_version="${DISTILL_FS_RELEASE:-unpublished}"
-distill_fs_revision="sha256:${DISTILL_FS_AMD64_SHA256:-pending-publication}"
+distill_fs_revision="sha256:${distill_fs_sha256:-pending-publication}"
 
 if [[ -z "${sandboxd_version}" ]]; then
   die "failed to read sandboxd version from ${sandboxd_source}/version/VERSION"
@@ -189,17 +245,76 @@ if [[ "${print_component_versions}" == "1" ]]; then
   exit 0
 fi
 
-# Fail before building either image if the release has not been published/pinned.
-if [[ -z "${DISTILL_FS_RELEASE:-}" || -z "${DISTILL_FS_AMD64_URL:-}" ||
-      ! "${DISTILL_FS_AMD64_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]; then
-  die "publish and pin DISTILL_FS_RELEASE, DISTILL_FS_AMD64_URL, and DISTILL_FS_AMD64_SHA256 in ${distill_fs_versions_file} before building"
+if [[ "${DOCKER_BUILDKIT-}" == 0 ]]; then
+  die "image builds require BuildKit; DOCKER_BUILDKIT=0 is unsupported"
 fi
 
-runtime_build_args=()
-if [[ -n "${rrt_runtime_url}" || -n "${rrt_runtime_sha256}" ]]; then
-  if [[ -z "${rrt_runtime_url}" || -z "${rrt_runtime_sha256}" ]]; then
-    die "RRT_RUNTIME_URL and RRT_RUNTIME_SHA256 must be set together"
+if [[ "${target_arch}" == arm64 ]]; then
+  if [[ "${firecracker_kernel_profile}" == pvm ]]; then
+    die "the PVM guest profile requires linux/amd64"
   fi
+  if [[ "${AKERNEL_ENABLE_KATA}" != false ||
+        "${AKERNEL_ENABLE_FIRECRACKER}" != false ]]; then
+    die "linux/arm64 requires AKERNEL_ENABLE_KATA=false AKERNEL_ENABLE_FIRECRACKER=false; VM payloads are unsupported"
+  fi
+  if [[ "${AKERNEL_ENABLE_GPU:-false}" != false ]]; then
+    die "linux/arm64 does not support the NVIDIA GPU payload"
+  fi
+  if [[ "${runtime_profile}" != rrt ]]; then
+    die "linux/arm64 currently requires the rrt runtime profile"
+  fi
+fi
+
+# Fail before building either image if the release has not been published/pinned.
+if [[ -z "${DISTILL_FS_RELEASE:-}" || -z "${distill_fs_url}" ||
+      ! "${distill_fs_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+  die "publish and pin the linux/${target_arch} distill-fs release in ${distill_fs_versions_file} before building"
+fi
+if [[ -z "${gvisor_release}" || -z "${gvisor_url}" ||
+      ! "${gvisor_sha512}" =~ ^[0-9a-f]{128}$ ]]; then
+  die "publish and pin the linux/${target_arch} gVisor release in ${runtime_versions_file} before building"
+fi
+if [[ "${AKERNEL_ENABLE_RUNC}" == true &&
+      ( -z "${runc_version}" || -z "${runc_release_base_url}" ||
+        ! "${runc_sha256}" =~ ^[0-9a-f]{64}$ ) ]]; then
+  die "publish and pin the linux/${target_arch} runc release in ${runtime_versions_file} before building"
+fi
+if [[ "${AKERNEL_ENABLE_FIRECRACKER}" == true &&
+      ( -z "${firecracker_release}" || -z "${firecracker_amd64_url}" ||
+        ! "${firecracker_amd64_sha256}" =~ ^[0-9a-f]{64}$ ) ]]; then
+  die "FIRECRACKER_RELEASE, FIRECRACKER_AMD64_URL, and FIRECRACKER_AMD64_SHA256 must be set together"
+fi
+
+validate_override() {
+  local name="$1" url="$2" sha256="$3"
+  if [[ -n "${url}" || -n "${sha256}" ]]; then
+    if [[ -z "${url}" || -z "${sha256}" ]]; then
+      die "${name}_URL and ${name}_SHA256 must be set together"
+    fi
+    if [[ ! "${sha256}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      die "${name}_SHA256 must be a 64-character hexadecimal digest"
+    fi
+  fi
+}
+validate_override RRT_RUNTIME "${rrt_runtime_url}" "${rrt_runtime_sha256}"
+validate_override OPEN_YR_CORE_WHEEL "${open_yr_core_wheel_url}" "${open_yr_core_wheel_sha256}"
+
+require_cmd docker
+
+runtime_build_args=(
+  --platform "linux/${target_arch}"
+  -f builder/runtime.Dockerfile
+  --target "runtime-${runtime_profile}"
+)
+if [[ "${build_network}" == host ]]; then
+  runtime_build_args+=(--network host)
+fi
+if [[ "${build_proxy}" == true ]]; then
+  for proxy_name in "${proxy_build_arg_names[@]}"; do
+    runtime_build_args+=(--build-arg "${proxy_name}")
+  done
+fi
+if [[ -n "${rrt_runtime_url}" || -n "${rrt_runtime_sha256}" ]]; then
   runtime_build_args+=(
     --build-arg "RRT_RUNTIME_URL=${rrt_runtime_url}"
     --build-arg "RRT_RUNTIME_SHA256=${rrt_runtime_sha256}"
@@ -208,8 +323,6 @@ fi
 
 info "building ${runtime_image} with runtime profile ${runtime_profile}"
 docker build \
-  -f builder/runtime.Dockerfile \
-  --target "runtime-${runtime_profile}" \
   "${runtime_build_args[@]}" \
   -t "${runtime_image}" \
   .
@@ -217,47 +330,42 @@ docker build \
 info "building ${all_in_one_image}"
 node_build_args=(
   --build-arg "DISTILL_FS_RELEASE=${DISTILL_FS_RELEASE}"
-  --build-arg "DISTILL_FS_AMD64_URL=${DISTILL_FS_AMD64_URL}"
-  --build-arg "DISTILL_FS_AMD64_SHA256=${DISTILL_FS_AMD64_SHA256}"
+  --build-arg "DISTILL_FS_URL=${distill_fs_url}"
+  --build-arg "DISTILL_FS_SHA256=${distill_fs_sha256}"
   --build-arg "AKERNEL_RUNTIME_IMAGE=${runtime_image}"
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
-  --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA:-true}"
-  --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC:-false}"
-  --build-arg "AKERNEL_ENABLE_FIRECRACKER=${AKERNEL_ENABLE_FIRECRACKER:-true}"
+  --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA}"
+  --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC}"
+  --build-arg "AKERNEL_ENABLE_FIRECRACKER=${AKERNEL_ENABLE_FIRECRACKER}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"
-)
-if [[ -z "${gvisor_release}" ||
-      -z "${gvisor_amd64_sha512}" ||
-      -z "${gvisor_amd64_url}" ]]; then
-  die "GVISOR_RELEASE, GVISOR_AMD64_URL, and GVISOR_AMD64_SHA512 must be set together"
-fi
-node_build_args+=(
+  --build-arg "RUNC_VERSION=${runc_version}"
+  --build-arg "RUNC_SHA256=${runc_sha256}"
+  --build-arg "RUNC_RELEASE_BASE_URL=${runc_release_base_url}"
   --build-arg "GVISOR_RELEASE=${gvisor_release}"
-  --build-arg "GVISOR_AMD64_URL=${gvisor_amd64_url}"
-  --build-arg "GVISOR_AMD64_SHA512=${gvisor_amd64_sha512}"
-)
-if [[ -z "${firecracker_release}" ||
-      -z "${firecracker_amd64_sha256}" ||
-      -z "${firecracker_amd64_url}" ]]; then
-  die "FIRECRACKER_RELEASE, FIRECRACKER_AMD64_URL, and FIRECRACKER_AMD64_SHA256 must be set together"
-fi
-node_build_args+=(
+  --build-arg "GVISOR_URL=${gvisor_url}"
+  --build-arg "GVISOR_SHA512=${gvisor_sha512}"
   --build-arg "FIRECRACKER_RELEASE=${firecracker_release}"
   --build-arg "FIRECRACKER_AMD64_URL=${firecracker_amd64_url}"
   --build-arg "FIRECRACKER_AMD64_SHA256=${firecracker_amd64_sha256}"
   --build-arg "FIRECRACKER_KERNEL_PROFILE=${firecracker_kernel_profile}"
 )
+if [[ "${build_network}" == host ]]; then
+  node_build_args+=(--network host)
+fi
+if [[ "${build_proxy}" == true ]]; then
+  for proxy_name in "${proxy_build_arg_names[@]}"; do
+    node_build_args+=(--build-arg "${proxy_name}")
+  done
+fi
 if [[ -n "${open_yr_core_wheel_url}" || -n "${open_yr_core_wheel_sha256}" ]]; then
-  if [[ -z "${open_yr_core_wheel_url}" || -z "${open_yr_core_wheel_sha256}" ]]; then
-    die "OPEN_YR_CORE_WHEEL_URL and OPEN_YR_CORE_WHEEL_SHA256 must be set together"
-  fi
   node_build_args+=(
     --build-arg "OPEN_YR_CORE_WHEEL_URL=${open_yr_core_wheel_url}"
     --build-arg "OPEN_YR_CORE_WHEEL_SHA256=${open_yr_core_wheel_sha256}"
   )
 fi
 docker build \
+  --platform "linux/${target_arch}" \
   -f builder/node.Dockerfile \
   "${node_build_args[@]}" \
   -t "${all_in_one_image}" \

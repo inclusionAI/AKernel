@@ -17,11 +17,11 @@ ARG OPEN_YR_CORE_AMD64_SHA256=c54d2ca46263b1b786ce821942739d9df6f3839e05e58c159f
 ARG OPEN_YR_CORE_ARM64_SHA256=80a1002a4e81980c304b3f89cbe77bd42e396306a9fd0985a13e8eb99028994c
 ARG GVISOR_DOWNLOAD_IMAGE=ubuntu:24.04
 ARG GVISOR_RELEASE
-ARG GVISOR_AMD64_URL
-ARG GVISOR_AMD64_SHA512
-ARG RUNC_VERSION=1.5.1
-ARG RUNC_AMD64_SHA256=177df879d50c913eb205e898d5c1c05a18f574053c0ce5524c471208eaf06f6f
-ARG RUNC_RELEASE_BASE_URL=https://github.com/opencontainers/runc/releases/download
+ARG GVISOR_URL
+ARG GVISOR_SHA512
+ARG RUNC_VERSION
+ARG RUNC_SHA256
+ARG RUNC_RELEASE_BASE_URL
 ARG RUNC_BUILD_IMAGE=ubuntu:24.04
 ARG LIBNVIDIA_CONTAINER_VERSION=1.19.1-1
 ARG KATA_BUILD_IMAGE=ubuntu:24.04
@@ -37,34 +37,43 @@ ARG VIRTIOFSD_BUILD_IMAGE=rust:1.90.0-bookworm
 # virtiofsd v1.14.0, including the release Cargo.lock.
 ARG VIRTIOFSD_REVISION=c2540f8db14caba81c1e37fba23fc7bf2cd7f0dd
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
-ARG OTELCOL_CONTRIB_URL=https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_amd64.tar.gz
+ARG OTELCOL_CONTRIB_AMD64_SHA256=81bf885bc9a86705feb3c113c5a356571390e3601eb651ffcf2b3428f6571adb
+ARG OTELCOL_CONTRIB_ARM64_SHA256=00b11a5b468455e6ab49d6857e36f5825cb887bf5d8646282f8db33e3eeb5c76
+ARG OTELCOL_CONTRIB_URL=
+ARG OTELCOL_CONTRIB_SHA256=
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 
 FROM ${GVISOR_DOWNLOAD_IMAGE} AS gvisor-runtime
 ARG GVISOR_RELEASE
-ARG GVISOR_AMD64_URL
-ARG GVISOR_AMD64_SHA512
+ARG GVISOR_URL
+ARG GVISOR_SHA512
 ARG TARGETARCH
 COPY src/sandboxd/third_party/install-gvisor.sh /usr/local/libexec/install-gvisor.sh
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 RUN set -eux; \
     case "${TARGETARCH:-}" in \
-      amd64) ;; \
-      "") test "$(uname -m)" = "x86_64" ;; \
+      amd64|arm64) ;; \
       *) echo "unsupported gVisor target architecture: ${TARGETARCH}" >&2; \
          exit 1 ;; \
     esac; \
     test -n "${GVISOR_RELEASE}"; \
-    test -n "${GVISOR_AMD64_URL}"; \
-    test -n "${GVISOR_AMD64_SHA512}"; \
+    test -n "${GVISOR_URL}"; \
+    test -n "${GVISOR_SHA512}"; \
     asset=/tmp/gvisor.tar.bz2; \
     apt-get update; \
     apt-get install -y --no-install-recommends bzip2 ca-certificates curl; \
     rm -rf /var/lib/apt/lists/*; \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-      "${GVISOR_AMD64_URL}" -o "${asset}"; \
+    curl -fSL --http1.1 --retry 10 --retry-delay 2 --retry-all-errors \
+      "${GVISOR_URL}" -o "${asset}"; \
     bash /usr/local/libexec/install-gvisor.sh "${asset}" \
-      "${GVISOR_AMD64_SHA512}" /gvisor
+      "${GVISOR_SHA512}" /gvisor; \
+    for binary in runsc containerd-shim-runsc-v1 \
+      gvisor-bin/checkpointgofer gvisor-bin/gvisor-sentry-prewarmer \
+      gvisor-bin/gvisor_sentry gvisor-bin/runsc-metric-server; do \
+      sh /usr/local/libexec/verify-elf-arch.sh "/gvisor/${binary}" "${TARGETARCH}"; \
+    done; \
+    /gvisor/runsc --version
 
 FROM ${KATA_BUILD_IMAGE} AS kata-runtime-true
 ARG KATA_RELEASE
@@ -105,6 +114,7 @@ FROM kata-runtime-${AKERNEL_ENABLE_KATA} AS kata-runtime
 FROM ${AKERNEL_RUNTIME_IMAGE} AS runtime-image
 
 FROM ${SANDBOXD_BUILD_IMAGE} AS sandboxd-builder
+ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -116,7 +126,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /src/sandboxd
 COPY ./src/sandboxd/ ./
-RUN make release
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+RUN set -eux; \
+    case "${TARGETARCH}" in amd64|arm64) ;; *) exit 1 ;; esac; \
+    make release RELEASE_GOARCH="${TARGETARCH}"; \
+    for binary in sandboxd sbox runc-shim sandbox-logger firecracker-agent; do \
+      sh /usr/local/libexec/verify-elf-arch.sh "output/${binary}" "${TARGETARCH}"; \
+    done
 
 FROM ${VIRTIOFSD_BUILD_IMAGE} AS virtiofsd-builder
 ARG VIRTIOFSD_REVISION
@@ -202,19 +218,27 @@ FROM firecracker-runtime-${AKERNEL_ENABLE_FIRECRACKER} AS firecracker-runtime
 
 FROM ${RUNC_BUILD_IMAGE} AS runc-runtime-true
 ARG RUNC_VERSION
-ARG RUNC_AMD64_SHA256
+ARG RUNC_SHA256
 ARG RUNC_RELEASE_BASE_URL
 ARG TARGETARCH
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 RUN set -eux; \
-    test "${TARGETARCH:-amd64}" = "amd64"; \
+    case "${TARGETARCH}" in \
+      amd64|arm64) ;; \
+      *) echo "unsupported runc target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    test -n "${RUNC_VERSION}"; \
+    test -n "${RUNC_SHA256}"; \
+    test -n "${RUNC_RELEASE_BASE_URL}"; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
     rm -rf /var/lib/apt/lists/*; \
-    asset=/tmp/runc.amd64; \
+    asset="/tmp/runc.${TARGETARCH}"; \
     curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-      "${RUNC_RELEASE_BASE_URL}/v${RUNC_VERSION}/runc.amd64" \
+      "${RUNC_RELEASE_BASE_URL}/v${RUNC_VERSION}/runc.${TARGETARCH}" \
       -o "${asset}"; \
-    echo "${RUNC_AMD64_SHA256}  ${asset}" | sha256sum -c -; \
+    echo "${RUNC_SHA256}  ${asset}" | sha256sum -c -; \
+    sh /usr/local/libexec/verify-elf-arch.sh "${asset}" "${TARGETARCH}"; \
     install -D -m 0755 "${asset}" /runc/usr/local/bin/runc; \
     rm -f "${asset}"
 COPY --from=sandboxd-builder /src/sandboxd/output/runc-shim /runc/usr/local/bin/runc-shim
@@ -227,14 +251,15 @@ FROM runc-runtime-${AKERNEL_ENABLE_RUNC} AS runc-runtime
 FROM ubuntu:24.04 AS distill-fs-runtime
 ARG TARGETARCH
 ARG DISTILL_FS_RELEASE
-ARG DISTILL_FS_AMD64_URL
-ARG DISTILL_FS_AMD64_SHA256
+ARG DISTILL_FS_URL
+ARG DISTILL_FS_SHA256
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl jq binutils && \
     rm -rf /var/lib/apt/lists/*
 COPY ./builder/scripts/install-distill-fs.sh /install-distill-fs.sh
+COPY ./builder/scripts/verify-elf-arch.sh /verify-elf-arch.sh
 RUN sh /install-distill-fs.sh "$DISTILL_FS_RELEASE" \
-    "$DISTILL_FS_AMD64_URL" "$DISTILL_FS_AMD64_SHA256" /distill-fs
+    "$DISTILL_FS_URL" "$DISTILL_FS_SHA256" /distill-fs
 
 FROM ${AKERNEL_NODE_BASE_IMAGE}
 # Let PID 1 systemd avoid remounting shared host filesystems during shutdown.
@@ -253,13 +278,35 @@ ARG OPEN_YR_RELEASE_BASE_URL
 ARG OPEN_YR_CORE_AMD64_SHA256
 ARG OPEN_YR_CORE_ARM64_SHA256
 ARG GVISOR_RELEASE
+ARG GVISOR_SHA512
+ARG DISTILL_FS_SHA256
 ARG RUNC_VERSION
+ARG RUNC_SHA256
 ARG FIRECRACKER_RELEASE
 ARG LIBNVIDIA_CONTAINER_VERSION
+ARG OTELCOL_CONTRIB_VERSION
+ARG OTELCOL_CONTRIB_AMD64_SHA256
+ARG OTELCOL_CONTRIB_ARM64_SHA256
 ARG OTELCOL_CONTRIB_URL
+ARG OTELCOL_CONTRIB_SHA256
 ARG TARGETARCH
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64|arm64) ;; \
+      *) echo "unsupported node target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    case "${AKERNEL_RUNTIME_PROFILE}" in \
+      rrt) ;; \
+      python) \
+        if [ "${TARGETARCH}" != "amd64" ]; then \
+          echo "the python runtime profile currently supports linux/amd64 only" >&2; \
+          exit 1; \
+        fi ;; \
+      *) echo "unsupported AKERNEL_RUNTIME_PROFILE: ${AKERNEL_RUNTIME_PROFILE}" >&2; exit 1 ;; \
+    esac
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -289,6 +336,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+      echo "NVIDIA payload is excluded from the linux/arm64 image"; \
+    else \
     curl -fsSL --retry 10 --retry-delay 2 --retry-all-errors \
       https://nvidia.github.io/libnvidia-container/gpgkey \
       | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg; \
@@ -301,7 +351,8 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
       "libnvidia-container1=${LIBNVIDIA_CONTAINER_VERSION}" \
       "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}"; \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*; \
+    fi
 
 RUN if command -v update-alternatives >/dev/null 2>&1; then \
         update-alternatives --set iptables /usr/sbin/iptables-legacy || true; \
@@ -324,6 +375,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 
 ENV YR_INSTALLATION_DIR=/home/yuanrong
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 
 # Install the complete, language-runtime-free openYuanRong control plane from
 # its checksum-pinned core wheel. A URL and checksum pair may override the
@@ -366,6 +418,12 @@ RUN set -eux; \
     test -x "${target}/yr/functionsystem/bin/yr"; \
     mkdir -p "${YR_INSTALLATION_DIR}"; \
     cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
+    for binary in domain_scheduler function_agent function_master function_proxy \
+      iam_server meta_service runtime_manager yr; do \
+      test -x "${YR_INSTALLATION_DIR}/functionsystem/bin/${binary}"; \
+      sh /usr/local/libexec/verify-elf-arch.sh \
+        "${YR_INSTALLATION_DIR}/functionsystem/bin/${binary}" "${TARGETARCH}"; \
+    done; \
     rm -rf "${target}" "${wheel}"; \
     ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
 
@@ -425,10 +483,36 @@ COPY ./builder/scripts/master_entrypoint.sh ${YR_INSTALLATION_DIR}/entrypoint.sh
 COPY ./builder/scripts/*.sh /root/
 COPY ./builder/systemd_services/*.service /etc/systemd/system/
 
-RUN curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-        "${OTELCOL_CONTRIB_URL}" \
-    | tar -xz -C /usr/local/bin otelcol-contrib && \
-    chmod 0755 /usr/local/bin/otelcol-contrib
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) archive_sha="${OTELCOL_CONTRIB_AMD64_SHA256}" ;; \
+      arm64) archive_sha="${OTELCOL_CONTRIB_ARM64_SHA256}" ;; \
+      *) echo "unsupported OTel target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    archive_url="https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_CONTRIB_VERSION}/otelcol-contrib_${OTELCOL_CONTRIB_VERSION}_linux_${TARGETARCH}.tar.gz"; \
+    if [ -n "${OTELCOL_CONTRIB_URL}" ]; then \
+      test -n "${OTELCOL_CONTRIB_SHA256}" || { \
+        echo "OTELCOL_CONTRIB_URL and OTELCOL_CONTRIB_SHA256 must be set together" >&2; exit 1; \
+      }; \
+      archive_url="${OTELCOL_CONTRIB_URL}"; \
+      archive_sha="${OTELCOL_CONTRIB_SHA256}"; \
+    else \
+      test -z "${OTELCOL_CONTRIB_SHA256}" || { \
+        echo "OTELCOL_CONTRIB_URL and OTELCOL_CONTRIB_SHA256 must be set together" >&2; exit 1; \
+      }; \
+    fi; \
+    printf '%s\n' "${archive_sha}" | grep -Eq '^[0-9a-fA-F]{64}$' || { \
+      echo "invalid OTel SHA-256 pin" >&2; exit 1; \
+    }; \
+    temp_dir="$(mktemp -d /tmp/akernel-otelcol.XXXXXX)"; \
+    trap 'rm -rf "${temp_dir}"' EXIT; \
+    archive="${temp_dir}/otelcol-contrib.tar.gz"; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+        "${archive_url}" -o "${archive}"; \
+    printf '%s  %s\n' "${archive_sha}" "${archive}" | sha256sum -c -; \
+    tar -xzf "${archive}" -C "${temp_dir}" otelcol-contrib; \
+    sh /usr/local/libexec/verify-elf-arch.sh "${temp_dir}/otelcol-contrib" "${TARGETARCH}"; \
+    install -m 0755 "${temp_dir}/otelcol-contrib" /usr/local/bin/otelcol-contrib
 
 RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INSTALLATION_DIR}/trace && \
     chmod 0755 ${YR_INSTALLATION_DIR}/yr_node_bootstrap.sh ${YR_INSTALLATION_DIR}/entrypoint.sh && \
@@ -443,7 +527,10 @@ LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
       org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \
       org.akernel.gvisor.release="${GVISOR_RELEASE}" \
+      org.akernel.gvisor.archive.sha512="${GVISOR_SHA512}" \
+      org.akernel.distill-fs.archive.sha256="${DISTILL_FS_SHA256}" \
       org.akernel.runc.version="${RUNC_VERSION}" \
+      org.akernel.runc.binary.sha256="${RUNC_SHA256}" \
       org.akernel.runc.enabled="${AKERNEL_ENABLE_RUNC}" \
       org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}" \
       org.akernel.firecracker.release="${FIRECRACKER_RELEASE}" \
