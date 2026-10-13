@@ -187,7 +187,7 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 
 ![AKernel architecture](./assets/akernel-architecture.svg)
 
-The diagram shows the Kubernetes layout. Standalone co-locates the ADX roles in one all-in-one container and exposes Ingress directly. Traefik is an optional external entrypoint for Helm deployments.
+The diagram focuses on the ADX components: SDK/CLI traffic enters through Ingress/API Server. Standalone co-locates the ADX roles in one all-in-one container. Helm entrypoint configuration is described in the [deployment guide](./deploy/README.md).
 
 ### System Components
 
@@ -208,7 +208,6 @@ The diagram shows the Kubernetes layout. Standalone co-locates the ADX roles in 
 
 **Cluster-Wide Services**
 
-- **Traefik**: optional public HTTPS/WSS and HTTP/WS entrypoints in front of ADX Ingress
 - **OCI Registry**: container images for sandbox roots and read-only mounts
 - **Object Storage**: Raw and Nydus rootfs images and read-only sandbox mounts
 - **Cloud Provisioning**: Terraform modules for Alibaba Cloud ACK and Huawei Cloud CCE

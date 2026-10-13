@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1180" viewBox="0 0 1280 1180" role="img" aria-labelledby="title description">
   <title id="title">AKernel Kubernetes architecture with Agent DX</title>
-  <desc id="description">SDK and CLI clients reach ADX Ingress and API Server through optional Traefik HTTPS and HTTP entrypoints. The Coordinator manages sandbox placement; Redis holds shared state and discovery. Worker Adxlets delegate lifecycle operations to sandboxd, and their embedded Relays route sandbox traffic. Sandboxes run Execd and workloads with runsc, Kata, Firecracker or optional runc. Distill-fs provides lazy image access. Node Collectors and control Pod sidecars export telemetry to Prometheus, Loki and Tempo, queried through Grafana.</desc>
+  <desc id="description">SDK and CLI clients reach ADX Ingress and API Server over HTTPS/WSS and HTTP/WS. The Coordinator manages sandbox placement; Redis holds shared state and discovery. Worker Adxlets delegate lifecycle operations to sandboxd, and their embedded Relays route sandbox traffic. Sandboxes run Execd and workloads with runsc, Kata, Firecracker or optional runc. Distill-fs provides lazy image access. Node Collectors and control Pod sidecars export telemetry to Prometheus, Loki and Tempo, queried through Grafana.</desc>
   <defs>
     <style>
       text { font-family: Arial, Helvetica, sans-serif; fill: #26364a; text-anchor: middle; }
@@ -42,13 +42,10 @@
   <text class="label" x="555" y="77">AKernel SDK / CLI</text>
   <rect class="box monitor" x="65" y="38" width="220" height="64"/>
   <text class="label" x="175" y="77">Browser</text>
-  <path class="arrow lifecycle" d="M555 102 V210"/>
+  <path class="arrow lifecycle" d="M555 102 V315"/>
   <path class="arrow dependency" d="M175 102 V275"/>
 
-  <rect class="box control" x="345" y="210" width="420" height="76"/>
-  <text class="label" x="555" y="239">Traefik (optional)</text>
-  <text class="detail" x="555" y="266">HTTPS/WSS :443 · HTTP/WS :80</text>
-  <path class="arrow lifecycle" d="M555 286 V315"/>
+  <text class="detail" x="695" y="246">HTTPS/WSS · HTTP/WS</text>
 
   <rect class="box control" x="345" y="315" width="420" height="142"/>
   <text class="label" x="555" y="350">ADX Ingress / API Server</text>
