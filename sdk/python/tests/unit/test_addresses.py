@@ -87,24 +87,6 @@ class AddressConfigTest(unittest.TestCase):
                 ("https", "gw.example.com", 9443, True),
             )
 
-    def test_internal_yr_gateway_does_not_override_exec_endpoint(self):
-        with patch.dict(
-            os.environ,
-            {
-                "AKERNEL_SERVER_ADDRESS": "10.0.0.1",
-                "YR_GATEWAY_ADDRESS": "10.0.0.1:80",
-            },
-            clear=True,
-        ):
-            self.assertEqual(
-                endpoint_tuple(exec_endpoint_from_env()),
-                ("https", "10.0.0.1", 443, True),
-            )
-            self.assertEqual(
-                endpoint_tuple(gateway_endpoint_from_env()),
-                ("http", "10.0.0.1", 80, False),
-            )
-
     def test_missing_server_address_is_clear(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "AKERNEL_SERVER_ADDRESS"):

@@ -102,10 +102,7 @@ def _server_address_raw() -> str:
 
 
 def _gateway_override_raw() -> str:
-    return (
-        os.environ.get("AKERNEL_GATEWAY_ADDRESS", "").strip()
-        or os.environ.get("YR_GATEWAY_ADDRESS", "").strip()
-    )
+    return os.environ.get("AKERNEL_GATEWAY_ADDRESS", "").strip()
 
 
 def api_endpoint_from_env() -> Endpoint:

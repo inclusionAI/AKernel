@@ -402,11 +402,13 @@ from 80 to 8080. ADX terminates TLS using `public.pem` and `public.key` in
 `core.adx.tls.existingSecret`; its bootstrap API key remains in the same Secret.
 Supply a certificate matching the public hostname when client verification is enabled.
 
-Use the existing SDK configuration, or run `make print-env`:
+For the default ports, configure the SDK address and API key, or run
+`make print-env`. The generated environment clears any previous gateway override:
 
 ```bash
 kubectl -n akernel get service akernel-adx-public
 export AKERNEL_SERVER_ADDRESS=<adx-load-balancer-address>
+unset AKERNEL_GATEWAY_ADDRESS
 export AKERNEL_TOKEN="$(kubectl -n akernel get secret akernel-adx-tls \
   -o jsonpath='{.data.admin-key}' | base64 -d)"
 ```

@@ -80,6 +80,8 @@ sdk_env="${dir}/sdk.env"
   printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${server_address}"
   if [[ "${data_port}" != 80 || "${control_port}" != 443 ]]; then
     printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' "${gateway_address}"
+  else
+    printf 'unset AKERNEL_GATEWAY_ADDRESS\n'
   fi
   printf 'export AKERNEL_TOKEN=%q\n' "${token}"
 } > "${sdk_env}"
