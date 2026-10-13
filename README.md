@@ -56,8 +56,7 @@ Built-in OpenTelemetry (OTEL) integration provides complete observability out of
 - **Dashboards**: Pre-configured Grafana dashboards for real-time cluster monitoring
 - **Tracing & Logging**: End-to-end request tracing and centralized log aggregation
 
-See [ADX collection configuration](./deploy/observability.md) for node-local
-Collector wiring, log paths, trace settings and the imported ADX dashboards.
+See the [deployment guide](./deploy/README.md) for deployment settings and the [monitoring chart](./deploy/akernel/charts/monitor/) for backend configuration and the bundled ADX dashboards.
 
 ## Quick Start
 
@@ -188,32 +187,39 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 
 ![AKernel architecture](./assets/akernel-architecture.svg)
 
+The diagram shows the Kubernetes layout. Standalone co-locates the ADX roles in one all-in-one container and exposes Ingress directly. Traefik is an optional external entrypoint for Helm deployments.
+
 ### System Components
 
-**Sandbox management**
+**Agent DX control and data plane**
 
-Agent DX handles sandbox scheduling, lifecycle and request routing.
+- **Ingress / API Server**: public HTTPS/WSS and HTTP/WS listeners, sandbox APIs and request routing; packaged together in the `akernel-adx-ingress-api` Pod
+- **Coordinator**: sandbox placement, resource accounting and lifecycle coordination
+- **Redis**: shared ADX state and discovery, managed by the chart or supplied externally
 
 **Node-Level Infrastructure**
+
+- **Adxlet / Relay**: node control, resource reporting and an embedded relay for sandbox traffic
+- **sandboxd**: sandbox lifecycle daemon with pluggable runtime integration
 - **Sandbox runtimes**: gVisor by default; Kata Containers and Firecracker on
   KVM-capable nodes; and an explicitly enabled native Linux runc backend
-- **sandboxd**: Sandbox lifecycle daemon with pluggable sandbox runtime integration
-- **RRT**: the Agent DX runtime transport packaged into AKernel's own runtime
-  rootfs
+- **Execd**: the in-sandbox Agent DX service for commands, files and PTYs, packaged into AKernel's runtime rootfs
 - **distill-fs**: Rust-based FUSE filesystem for lazy rootfs access, chunk caching, and deduplication; packaged from a static GitHub Release with its version and checksum pinned in AKernel
 
 **Cluster-Wide Services**
-- **Traefik**: external TLS entrypoint in front of Agent DX Edge
+
+- **Traefik**: optional public HTTPS/WSS and HTTP/WS entrypoints in front of ADX Ingress
+- **OCI Registry**: container images for sandbox roots and read-only mounts
 - **Object Storage**: Raw and Nydus rootfs images and read-only sandbox mounts
 - **Cloud Provisioning**: Terraform modules for Alibaba Cloud ACK and Huawei Cloud CCE
 
 ### How It Works
 
 1. **Agent Submits Workload**: Through unified API or SDK
-2. **Scheduler Places Sandbox**: Selects a worker based on requested CPU,
+2. **Coordinator Places Sandbox**: Selects a worker based on requested CPU,
    memory, storage, accelerator model, and available capacity
-3. **Sandbox Created**: Prepares the rootfs and network and starts the selected sandbox runtime on the worker
-4. **Workload Executes**: In secure, isolated sandboxes
+3. **Sandbox Created**: Adxlet delegates to sandboxd to prepare the rootfs and network and start the selected runtime on the worker
+4. **Workload Executes**: Execd serves commands, files and PTYs inside the sandbox; Ingress and the node's embedded Relay route sandbox traffic
 5. **Resources Recycled**: Deletes the sandbox and returns its capacity to the cluster
 
 ## Roadmap

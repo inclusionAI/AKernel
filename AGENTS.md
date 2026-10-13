@@ -680,6 +680,6 @@ Keep the node Collector configuration in `builder/config/` and the core
 chart synchronized. Collect node-local metrics and logs within the node
 container; control-role collectors read shared local logs. Copy the three ADX
 dashboards from the pinned ADX revision and preserve their UIDs and queries.
-Update `deploy/observability.md` whenever collection, labels, or log paths
-change. Validate backend receipt with real SDK requests, not Helm rendering
-alone.
+Keep the deployment guide and relevant Collector/chart configuration in sync
+when collection, labels, or log paths change. Validate backend receipt with
+real SDK requests, not Helm rendering alone.
