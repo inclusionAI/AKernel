@@ -606,6 +606,14 @@ templates, and Python deployment helpers with:
 make deploy-script-check
 ```
 
+For Helm SDK routing changes, exercise the rendered configuration with the
+chart's Traefik image. This requires Helm, PyYAML and a local Docker daemon;
+it uses an unprivileged disposable container on a random loopback port:
+
+```bash
+python deploy/akernel/charts/core/tests/test_adx_traefik.py -v
+```
+
 For standalone lifecycle or launch changes, also run the helper tests without starting containers:
 
 ```bash

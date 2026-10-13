@@ -62,7 +62,7 @@ data:
         adx-control:
           entryPoints:
             - websecure
-          rule: "Path(`/`) || Path(`/healthz`) || PathPrefix(`/api/instances`) || PathPrefix(`/api/sandbox`) || PathPrefix(`/api/admin/v1/keys`)"
+          rule: "Path(`/`) || Path(`/healthz`) || PathPrefix(`/api/instances`) || PathPrefix(`/api/sandbox`) || PathPrefix(`/api/admin/v1/keys`) || PathPrefix(`/direct/`) || Path(`/direct`)"
           service: akernel-adx-ingress-api
           tls: {}
         adx-data:
