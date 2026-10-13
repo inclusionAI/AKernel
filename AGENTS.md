@@ -43,7 +43,11 @@ tunnels. The project overview and deployment quick start are in
   entrypoint scripts for the public all-in-one image.
 - `deploy/` - Helm charts, standalone scripts, Terraform modules, and deployment helper scripts.
 - `deploy/standalone/manage.py` - source-build standalone lifecycle shared by Linux and Apple Silicon Mac with OrbStack.
-- `assets/` - static images used by the root README.
+- `README.md` - project overview and high-level Mermaid architecture diagram.
+
+Maintain the high-level architecture diagram as Mermaid in the root README,
+alongside its component overview. Keep deployment configuration and supporting
+services documented in `deploy/README.md`.
 
 The open-source AKernel repository contains the SDK, deployment configuration,
 build tooling, and examples. Node runtime components such as `sandboxd` and

@@ -185,9 +185,30 @@ See the complete [basic usage example](./sdk/python/examples/basic_usage.py), th
 
 ## Architecture
 
-![AKernel architecture](./assets/akernel-architecture.svg)
+```mermaid
+flowchart TB
+    client["AKernel SDK / CLI"] --> api["ADX Ingress / API Server"]
+    api --> coordinator["ADX Coordinator"]
+    coordinator -->|Sandbox lifecycle| adxlet
+    api -->|Sandbox traffic| adxlet
 
-The diagram focuses on the ADX components: SDK/CLI traffic enters through Ingress/API Server. Standalone co-locates the ADX roles in one all-in-one container. Helm entrypoint configuration is described in the [deployment guide](./deploy/README.md).
+    subgraph worker["Worker node (1..N)"]
+        adxlet["Adxlet / embedded Relay"] --> sandboxd["sandboxd"]
+        sandboxd --> sandbox["Sandbox (Execd + workload)"]
+        adxlet -->|Relay traffic| sandbox
+    end
+
+    api -.- redis[("Redis")]
+    coordinator -.- redis
+    adxlet -.- redis
+```
+
+SDK/CLI traffic enters through ADX Ingress/API Server. The Coordinator manages
+sandbox placement and lifecycle; the embedded Relay carries sandbox traffic
+to Execd and published ports. Dashed connections show shared Redis state and
+discovery. Standalone co-locates the ADX roles in one all-in-one container.
+See the [deployment guide](./deploy/README.md) for Helm entrypoint configuration
+and supporting services.
 
 ### System Components
 
