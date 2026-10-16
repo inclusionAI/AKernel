@@ -139,7 +139,7 @@ class RedisLifecycleIntegrationTest(unittest.TestCase):
             running = self._await_state(sandbox.id, "Running")
             self.assertEqual(running["assignment"]["node_id"], nodes[0])
             self.assertTrue(running["result"]["resources_held"])
-            limits = running["spec"]["sandbox"]["limits"]
+            limits = running["spec"]["execution"]["limits"]
             self.assertEqual(limits["cpu_millis"], 1500)
             self.assertEqual(limits["memory_bytes"], 3072 * 1048576)
             self.assertEqual(
