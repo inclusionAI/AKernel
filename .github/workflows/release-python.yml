@@ -34,6 +34,7 @@ jobs:
       - name: Validate release tag
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$ ]]; then
             echo "Release tag must use vX.Y.Z or vX.Y.ZrcN: ${RELEASE_TAG}" >&2
@@ -56,11 +57,22 @@ jobs:
             exit 1
           fi
 
-          git fetch --no-tags origin \
-            +refs/heads/main:refs/remotes/origin/main
+          release_branch="main"
+          expected_prerelease="false"
+          if [[ "${RELEASE_TAG}" == *rc* ]]; then
+            release_branch="develop"
+            expected_prerelease="true"
+          fi
+          if [[ "${RELEASE_PRERELEASE}" != "${expected_prerelease}" ]]; then
+            echo "Tag ${RELEASE_TAG} requires prerelease=${expected_prerelease}" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags --recurse-submodules=no origin \
+            "+refs/heads/${release_branch}:refs/remotes/origin/${release_branch}"
           if ! git merge-base --is-ancestor \
-            HEAD refs/remotes/origin/main; then
-            echo "Release tag must point to a commit on main" >&2
+            HEAD "refs/remotes/origin/${release_branch}"; then
+            echo "Release tag must point to a commit on ${release_branch}" >&2
             exit 1
           fi
 

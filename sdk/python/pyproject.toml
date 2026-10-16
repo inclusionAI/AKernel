@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akernel-sdk"
-version = "0.1.6rc9"
+version = "0.2.0rc1"
 description = "Python SDK and CLI for AKernel remote sandboxes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -48,10 +48,10 @@ dev = [
 ak = "akernel_sdk.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/akernel-dev/akernel"
-Documentation = "https://github.com/akernel-dev/akernel/tree/main/sdk/python"
-Repository = "https://github.com/akernel-dev/akernel.git"
-Issues = "https://github.com/akernel-dev/akernel/issues"
+Homepage = "https://github.com/inclusionAI/AKernel"
+Documentation = "https://github.com/inclusionAI/AKernel/tree/develop/sdk/python"
+Repository = "https://github.com/inclusionAI/AKernel.git"
+Issues = "https://github.com/inclusionAI/AKernel/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

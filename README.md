@@ -132,8 +132,11 @@ python -m pip install akernel-sdk
 python -m pip install ./sdk/python
 ```
 
-AKernel SDK requires Python 3.10 or newer. This source version declares
-`adx-environment==0.1.0rc1` in `sdk/python/pyproject.toml`. Its ADX adapter uses
+For release candidates and version selection, see
+[SDK installation](sdk/python/README.md#install-and-configure).
+
+AKernel SDK requires Python 3.10 or newer. Its ADX dependency is declared in
+`sdk/python/pyproject.toml`. The ADX adapter uses
 `adx_environment.Environment`; the public `akernel_sdk.Sandbox` API keeps its
 existing names and behavior. Deploy the matching ADX Environment API before
 using this SDK. Source installs and CI resolve the declared dependency from

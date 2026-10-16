@@ -30,22 +30,32 @@ PTYs, port forwarding, and reverse tunnels.
 
 AKernel SDK requires Python 3.10 or newer.
 
+Install the stable SDK from PyPI:
+
 ```bash
-pip install akernel-sdk
+python -m pip install akernel-sdk
 ```
 
-To install from source:
+To include published release candidates:
+
+```bash
+python -m pip install --pre akernel-sdk
+```
+
+Choose an SDK version compatible with the deployed backend and pin its exact
+published version for reproducible installations. For an unpublished source
+revision, install from the repository root:
 
 ```bash
 python -m pip install ./sdk/python
 ```
 
-This source version depends on `adx-environment==0.1.0rc1`, maintained in
-`pyproject.toml`. The ADX adapter translates the public AKernel `Sandbox` API
+The SDK's ADX dependency is declared in `pyproject.toml`.
+The ADX adapter translates the public AKernel `Sandbox` API
 to `adx_environment.Environment`. Deploy a matching ADX release exposing
 `/api/environment/v1` for lifecycle, resources and command subscriptions.
 
-Source installs and CI resolve `adx-environment==0.1.0rc1` from PyPI.
+Source installs and CI resolve the declared ADX dependency from the package index.
 CI checks AKernel wheel and source distribution installs in separate clean
 environments, including `pip check`, imports, version checks, and the `ak` CLI.
 
