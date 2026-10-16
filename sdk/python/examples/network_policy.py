@@ -14,6 +14,7 @@
 
 """Exercise unrestricted, blocked, DNS-filtered, and allowlisted networking."""
 
+import os
 import shlex
 
 from akernel_sdk import (
@@ -23,6 +24,12 @@ from akernel_sdk import (
     PortRange,
     Sandbox,
 )
+
+RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
+BLOCKED_HOST = os.environ.get("AKERNEL_TEST_NETWORK_BLOCKED_HOST", "github.com")
+ALLOWED_HOST = os.environ.get("AKERNEL_TEST_NETWORK_ALLOWED_HOST", "example.com")
+WILDCARD_HOST = os.environ.get("AKERNEL_TEST_NETWORK_WILDCARD_HOST", "api.github.com")
+NETWORK_PORT = int(os.environ.get("AKERNEL_TEST_NETWORK_PORT", "443"))
 
 
 def tcp_connection(host: str, port: int) -> str:
@@ -49,14 +56,14 @@ def assert_connection_denied(sandbox: Sandbox, command: str, timeout: int) -> No
 
 
 def main() -> None:
-    with Sandbox() as unrestricted:
+    with Sandbox(runtime=RUNTIME) as unrestricted:
         result = unrestricted.commands.run(
-            tcp_connection("github.com", 443), timeout=30
+            tcp_connection(BLOCKED_HOST, NETWORK_PORT), timeout=30
         )
         assert result.exit_code == 0, result.stderr
         print("Unrestricted DNS and connection succeeded.")
 
-    with Sandbox(network_policy=NetworkPolicy.block()) as blocked:
+    with Sandbox(runtime=RUNTIME, network_policy=NetworkPolicy.block()) as blocked:
         control = blocked.commands.run("printf 'control plane works'")
         assert control.exit_code == 0, control.stderr
 
@@ -67,14 +74,14 @@ def main() -> None:
         assert blocked.files.read("/tmp/acl.txt") == "RuntimeRPC fallback"
         print("Commands and filesystem operations remain available.")
 
-    dns_policy = NetworkPolicy.deny_dns("github.com", "*.github.com")
-    with Sandbox(network_policy=dns_policy) as dns_filtered:
+    dns_policy = NetworkPolicy.deny_dns(BLOCKED_HOST, "*." + BLOCKED_HOST)
+    with Sandbox(runtime=RUNTIME, network_policy=dns_policy) as dns_filtered:
         assert_connection_denied(
-            dns_filtered, tcp_connection("github.com", 443), timeout=30
+            dns_filtered, tcp_connection(BLOCKED_HOST, NETWORK_PORT), timeout=30
         )
 
         allowed = dns_filtered.commands.run(
-            tcp_connection("example.com", 443), timeout=30
+            tcp_connection(ALLOWED_HOST, NETWORK_PORT), timeout=30
         )
         assert allowed.exit_code == 0, allowed.stderr
         print("Allowed DNS and connection succeeded.")
@@ -82,9 +89,9 @@ def main() -> None:
     allowlist = NetworkPolicy.allowlist(
         [
             NetworkRule(
-                domain="*.github.com",
+                domain="*." + BLOCKED_HOST,
                 protocol="tcp",
-                port_range=PortRange(443),
+                port_range=PortRange(NETWORK_PORT),
                 priority=200,
             ),
             NetworkRule(
@@ -94,28 +101,32 @@ def main() -> None:
             ),
         ]
     )
-    with Sandbox(network_policy=allowlist) as restricted:
+    with Sandbox(runtime=RUNTIME, network_policy=allowlist) as restricted:
         allowed = restricted.commands.run(
-            tcp_connection("api.github.com", 443), timeout=30
+            tcp_connection(WILDCARD_HOST, NETWORK_PORT), timeout=30
         )
         assert allowed.exit_code == 0, allowed.stderr
 
         assert_connection_denied(
-            restricted, tcp_connection("example.com", 443), timeout=10
+            restricted, tcp_connection(ALLOWED_HOST, NETWORK_PORT), timeout=10
         )
         print("Generic egress allowlist enforced domain and port rules.")
-    with Sandbox() as dynamic:
+    with Sandbox(runtime=RUNTIME) as dynamic:
         dynamic.update_network_policy(NetworkPolicy.block())
         assert_connection_denied(dynamic, direct_connection(), timeout=10)
 
         dynamic.update_network_policy(
-            NetworkPolicy.deny_dns("github.com", "*.github.com")
+            NetworkPolicy.deny_dns(BLOCKED_HOST, "*." + BLOCKED_HOST)
         )
-        allowed = dynamic.commands.run(tcp_connection("example.com", 443), timeout=30)
+        allowed = dynamic.commands.run(
+            tcp_connection(ALLOWED_HOST, NETWORK_PORT), timeout=30
+        )
         assert allowed.exit_code == 0, allowed.stderr
 
         dynamic.update_network_policy(None)
-        cleared = dynamic.commands.run(tcp_connection("github.com", 443), timeout=30)
+        cleared = dynamic.commands.run(
+            tcp_connection(BLOCKED_HOST, NETWORK_PORT), timeout=30
+        )
         assert cleared.exit_code == 0, cleared.stderr
         print("Dynamic policy replacement and clearing succeeded.")
 

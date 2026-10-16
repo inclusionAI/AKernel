@@ -14,6 +14,7 @@ repository=""
 tag=""
 env_name=""
 runtime_image=""
+firecracker_kernel_profile="${FIRECRACKER_KERNEL_PROFILE:-kvm}"
 runtime_versions_file="${ROOT}/src/sandboxd/third_party/runtime-versions.env"
 distill_fs_versions_file="${ROOT}/builder/distill-fs-versions.env"
 adx_release_url="${ADX_RELEASE_URL:-}"
@@ -121,6 +122,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "${firecracker_kernel_profile}" in
+  kvm|pvm) ;;
+  *) die "FIRECRACKER_KERNEL_PROFILE must be kvm or pvm" ;;
+esac
 
 
 # Select the caller's platform before loading saved deployment settings.
@@ -252,6 +258,9 @@ if [[ "${DOCKER_BUILDKIT-}" == 0 ]]; then
 fi
 
 if [[ "${target_arch}" == arm64 ]]; then
+  if [[ "${firecracker_kernel_profile}" == pvm ]]; then
+    die "the PVM guest profile requires linux/amd64"
+  fi
   if [[ "${AKERNEL_ENABLE_KATA}" != false ||
         "${AKERNEL_ENABLE_FIRECRACKER}" != false ]]; then
     die "linux/arm64 requires AKERNEL_ENABLE_KATA=false AKERNEL_ENABLE_FIRECRACKER=false; VM payloads are unsupported"
@@ -260,6 +269,15 @@ if [[ "${target_arch}" == arm64 ]]; then
     die "linux/arm64 does not support the NVIDIA GPU payload"
   fi
 fi
+
+if [[ "${firecracker_kernel_profile}" = pvm ]]; then
+  mapfile -t pvm_fields < <(python3 "${ROOT}/src/sandboxd/third_party/prepare-firecracker-pvm.py" --fields)
+  [[ ${#pvm_fields[@]} -eq 3 ]] || die "invalid sandboxd PVM candidate pin"
+  firecracker_release="${pvm_fields[0]}"
+  firecracker_amd64_sha256="${pvm_fields[1]}"
+  firecracker_amd64_url="${pvm_fields[2]}"
+fi
+
 
 # Fail before building either image if the release has not been published/pinned.
 if [[ -z "${DISTILL_FS_RELEASE:-}" || -z "${distill_fs_url}" ||
@@ -358,6 +376,14 @@ if [[ -n "${adx_execd_url}" ]]; then
   runtime_build_args+=(--build-arg "ADX_EXECD_URL=${adx_execd_url}" --build-arg "ADX_EXECD_SHA256=${adx_execd_sha256}")
 fi
 
+if [[ "${firecracker_kernel_profile}" = pvm && "${AKERNEL_ENABLE_FIRECRACKER}" = true ]]; then
+  candidate_args=()
+  if [[ -n "${PVM_CANDIDATE_ARCHIVE:-}" ]]; then
+    candidate_args+=(--archive "${PVM_CANDIDATE_ARCHIVE}")
+  fi
+  python3 "${ROOT}/src/sandboxd/third_party/prepare-firecracker-pvm.py" "${candidate_args[@]}"
+fi
+
 info "building ${runtime_image} with the EXECD runtime profile"
 docker build \
   "${runtime_build_args[@]}" \
@@ -384,6 +410,7 @@ node_build_args=(
   --build-arg "FIRECRACKER_RELEASE=${firecracker_release}"
   --build-arg "FIRECRACKER_AMD64_URL=${firecracker_amd64_url}"
   --build-arg "FIRECRACKER_AMD64_SHA256=${firecracker_amd64_sha256}"
+  --build-arg "FIRECRACKER_KERNEL_PROFILE=${firecracker_kernel_profile}"
 )
 if [[ ${#mirror_build_args[@]} -gt 0 ]]; then
   node_build_args+=("${mirror_build_args[@]}")

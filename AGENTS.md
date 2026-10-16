@@ -168,6 +168,10 @@ The build selects architecture-matched gVisor and runc pins from the sandboxd ma
 
 Keep official build-download sources as the default and mirror/proxy selection explicit. Preserve third-party repository URLs, release pins, signing keys, checksums, and TLS verification. Forward proxy credentials only through Docker's predefined build arguments by name, without exposing or persisting values. The [build download guide](builder/README.md) owns mirror scope, override precedence, proxy/network options, and release URL/checksum pairs; update it when changing those interfaces.
 
+PVM is an experimental opt-in node profile. Standalone selects `AKERNEL_FIRECRACKER_BACKEND=pvm`; Helm selects `node.config.sandboxd.firecrackerBackend=pvm`. This selects `firecracker-pvm`, removes Kata from that profile, and requires the validated PVM guest bundle and matched OOT host `kvm.ko`/`kvm-pvm.ko` modules. `deploy/pvm/oot-host.env` separately pins the source, generic OOT baseline and target patch profile. Prepare that profile into a fresh export, verify the exact host inputs and build against the existing distribution kernel; do not build or replace the host kernel. The host-only OOT source and PVM guest source are distinct. VMX/SVM is unnecessary on the host/L1, but the other CPU features, supported boot settings and module-loading policy still apply. Sandboxd verifies the actual backend before advertising it. Keep default KVM behavior unchanged; see `deploy/pvm-runtime.md` for module preparation, placement, restore and rollout boundaries.
+
+PVM integration targets `inclusionAI/AKernel:develop` after the sandboxd runtime change targeting `inclusionAI/sandboxd:main`. Fork feature branches provide isolated qualification before upstream review. Keep the sandboxd submodule URL and gitlink consistent. The OOT host profile includes the upstream OSPKE guard fix and NX recovery-worker retry backport; guest TSC changes and the optional DEBUGCTL optimization remain separate. The opt-in PVM bundle is independently pinned by sandboxd in `third_party/firecracker-pvm.json` and consumed without changing ordinary KVM releases. That descriptor selects either a locked Actions candidate or its unchanged promoted public asset; release downloads require neither a GitHub token nor an unexpired Actions artifact. The disposable PVM CI checkout must also clean ignored build files inside the separately initialized sandboxd submodule; cleaning only the parent repository leaves stale staged bundles behind. Keep checksum failures fatal. Strict TSC improves POSIX clock/timer recovery, but raw-TSC continuity and heterogeneous migration remain unqualified. The independent PVM workflow requires a bounded disposable L1; ordinary hardware-KVM CI does not qualify PVM. See `deploy/pvm-runtime.md` before changing guest pins or CI.
+
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all
 four adjacent `gvisor-bin/` helpers in the final image. The manifest SHA-512
@@ -679,7 +683,12 @@ to run integration and reload coverage against an OCI/Nydus image root. This
 also verifies that two sandboxes using the same image have private writes.
 Test both an ordinary OCI image and a Nydus image resolved through the deployed
 image manager. The pinned distill-fs supports RAFS v5; use
-`nydusify convert --fs-version 5` when preparing Nydus test images.
+`nydusify convert --fs-version 5` when preparing Nydus test images. Select
+`AKERNEL_TEST_RUNTIME=firecracker-pvm` for a PVM-enabled node. For isolated
+network verification, set `AKERNEL_TEST_NETWORK_URL` to a reachable private
+HTTP endpoint and use a test image with curl and CA certificates preinstalled.
+The image integration checks include network policy replacement while retaining
+SDK control-plane access.
 
 ## Maintenance Rules
 

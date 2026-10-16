@@ -25,6 +25,7 @@ ARG FIRECRACKER_BUILD_IMAGE=ubuntu:24.04
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
+ARG FIRECRACKER_KERNEL_PROFILE=kvm
 ARG VIRTIOFSD_BUILD_IMAGE=rust:1.90.0-bookworm
 # virtiofsd v1.14.0, including the release Cargo.lock.
 ARG VIRTIOFSD_REVISION=c2540f8db14caba81c1e37fba23fc7bf2cd7f0dd
@@ -185,9 +186,11 @@ RUN git init && \
     cargo build --release --locked
 
 FROM ${FIRECRACKER_BUILD_IMAGE} AS firecracker-runtime-true
+COPY src/sandboxd/third_party/firecracker-candidate/ /tmp/firecracker-candidate/
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
+ARG FIRECRACKER_KERNEL_PROFILE
 ARG TARGETARCH
 ARG AKERNEL_APT_UBUNTU_MIRROR
 ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
@@ -203,9 +206,12 @@ RUN set -eux; \
     test -n "${FIRECRACKER_AMD64_SHA256}"; \
     test -n "${FIRECRACKER_AMD64_URL}"; \
     archive="/tmp/firecracker-${FIRECRACKER_RELEASE}-x86_64.tgz"; \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-      "${FIRECRACKER_AMD64_URL}" \
-      -o "${archive}"; \
+    if [ "${FIRECRACKER_KERNEL_PROFILE}" = pvm ]; then \
+      cp /tmp/firecracker-candidate/firecracker.tgz "${archive}"; \
+    else \
+      curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+        "${FIRECRACKER_AMD64_URL}" -o "${archive}"; \
+    fi; \
     echo "${FIRECRACKER_AMD64_SHA256}  ${archive}" | sha256sum -c -; \
     mkdir -p /tmp/firecracker-release \
       /firecracker/usr/local/bin \
@@ -214,12 +220,20 @@ RUN set -eux; \
     tar -xzf "${archive}" -C /tmp/firecracker-release; \
     bundle="/tmp/firecracker-release/release-${FIRECRACKER_RELEASE}-x86_64"; \
     jq -e --arg release "${FIRECRACKER_RELEASE}" \
+      --arg profile "${FIRECRACKER_KERNEL_PROFILE}" \
       '.component == "akernel-firecracker-runtime" and \
        .repository == "akernel-dev/firecracker" and \
        .release_tag == $release and \
-       .architecture == "x86_64"' \
+       .architecture == "x86_64" and \
+       (.kernel_profile // "kvm") == $profile and \
+       ($profile == "kvm" or $profile == "pvm")' \
       "${bundle}/manifest.json" >/dev/null; \
     (cd "${bundle}"; sha256sum -c SHA256SUMS); \
+    if [ "${FIRECRACKER_KERNEL_PROFILE}" = pvm ]; then \
+      for config in PVM_GUEST X86_PIE X86_INTEL_MEMORY_PROTECTION_KEYS; do \
+        grep -qx "CONFIG_${config}=y" "${bundle}/kernel.config"; \
+      done; \
+    fi; \
     install -m 0755 "${bundle}/firecracker" \
       /firecracker/usr/local/bin/firecracker; \
     install -m 0644 \
@@ -227,7 +241,8 @@ RUN set -eux; \
       "${bundle}/kernel.config" \
       "${bundle}/manifest.json" \
       /firecracker/opt/firecracker/; \
-    cp -a "${bundle}/licenses/." /firecracker/opt/firecracker/licenses/
+    cp -a "${bundle}/licenses/." /firecracker/opt/firecracker/licenses/; \
+    rm -rf /tmp/firecracker-candidate
 
 COPY --from=virtiofsd-builder /src/virtiofsd/target/release/virtiofsd /firecracker/usr/local/bin/virtiofsd
 COPY --from=virtiofsd-builder /src/virtiofsd/LICENSE-APACHE /firecracker/opt/firecracker/licenses/virtiofsd-LICENSE-APACHE
@@ -430,7 +445,14 @@ COPY ./builder/scripts/akernel-entrypoint.sh /usr/local/bin/akernel-entrypoint
 COPY ./builder/scripts/adx-service.sh /usr/local/bin/adx-service
 COPY ./builder/scripts/otel-collector-service.sh /usr/local/bin/otel-collector-service
 COPY ./builder/scripts/sandboxd_network_prepare.sh /usr/local/bin/sandboxd-network-prepare
+ARG FIRECRACKER_KERNEL_PROFILE
 COPY ./builder/config/adx-standalone.yaml /etc/akernel/adx-standalone.yaml
+COPY ./builder/config/adx-pvm.yaml /etc/akernel/adx-pvm.yaml
+RUN case "${FIRECRACKER_KERNEL_PROFILE}" in \
+      pvm) cp /etc/akernel/adx-pvm.yaml /etc/akernel/adx-standalone.yaml ;; \
+      kvm) ;; \
+      *) echo "invalid Firecracker kernel profile" >&2; exit 1 ;; \
+    esac
 RUN chmod 0755 \
         /usr/local/bin/runsc \
         /usr/local/bin/sandboxd \

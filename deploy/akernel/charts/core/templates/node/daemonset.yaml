@@ -98,6 +98,8 @@ spec:
           value: "oci"
         - name: AKERNEL_ROLE
           value: "node"
+        - name: AKERNEL_FIRECRACKER_BACKEND
+          value: {{ .Values.node.config.sandboxd.firecrackerBackend | default "kvm" | quote }}
         - name: AKERNEL_ADX_CONFIG
           value: /etc/akernel/adx-node.yaml
         - name: AKERNEL_ADX_MANAGED_CREDENTIALS

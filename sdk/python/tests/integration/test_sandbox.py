@@ -21,7 +21,7 @@ import time
 import unittest
 import uuid
 
-from akernel_sdk import HttpReverseTunnel, Sandbox
+from akernel_sdk import HttpReverseTunnel, NetworkPolicy, Sandbox
 
 _ENABLED = (
     os.environ.get("AKERNEL_RUN_INTEGRATION") == "1"
@@ -34,6 +34,8 @@ _IMAGE = (
     or os.environ.get("AKERNEL_TEST_IMAGE")
     or None
 )
+
+_NETWORK_URL = os.environ.get("AKERNEL_TEST_NETWORK_URL", "https://example.com/")
 
 _INSTALL_CURL_COMMAND = (
     "command -v curl >/dev/null || ("
@@ -139,6 +141,27 @@ class SandboxIntegrationTest(unittest.TestCase):
         finally:
             self.sandbox.files.write("/etc/os-release", original)
 
+    @unittest.skipUnless(_IMAGE, "set AKERNEL_TEST_IMAGE for network policy checks")
+    def test_network_policy_update(self):
+        install_curl = self.sandbox.commands.run(_INSTALL_CURL_COMMAND, timeout=300)
+        self.assertEqual(install_curl.exit_code, 0, install_curl.stderr)
+        probe = (
+            "curl --fail --silent --show-error --max-time 3 "
+            f"--output /dev/null {shlex.quote(_NETWORK_URL)}"
+        )
+        allowed = self.sandbox.commands.run(probe, timeout=10)
+        self.assertEqual(allowed.exit_code, 0, allowed.stderr)
+        try:
+            self.sandbox.update_network_policy(NetworkPolicy.block())
+            blocked = self.sandbox.commands.run(probe, timeout=10)
+            self.assertNotEqual(blocked.exit_code, 0)
+            control = self.sandbox.commands.run("printf AKERNEL_CONTROL_OK")
+            self.assertEqual(control.stdout, "AKERNEL_CONTROL_OK")
+        finally:
+            self.sandbox.update_network_policy(None)
+        restored = self.sandbox.commands.run(probe, timeout=10)
+        self.assertEqual(restored.exit_code, 0, restored.stderr)
+
     def test_pty(self):
         output = bytearray()
         with self.sandbox.pty.create(on_data=output.extend) as session:
@@ -225,7 +248,9 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
         try:
             sandbox = Sandbox(
                 cpu=1000,
-                memory=2048,
+                memory=int(
+                    os.environ.get("AKERNEL_TEST_CHECKPOINT_MEMORY_MIB", "2048")
+                ),
                 storage_mb=256,
                 runtime=_RUNTIME,
                 image=_IMAGE,
@@ -267,7 +292,7 @@ class SandboxReloadIntegrationTest(unittest.TestCase):
             self._wait_for_reverse_tunnel(sandbox)
             network = sandbox.commands.run(
                 "curl --fail --silent --show-error --max-time 10 "
-                "--output /dev/null https://example.com/",
+                f"--output /dev/null {shlex.quote(_NETWORK_URL)}",
                 timeout=30,
             )
             self.assertEqual(network.exit_code, 0, network.stderr)

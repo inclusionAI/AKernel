@@ -73,6 +73,16 @@ class BuildImageTests(unittest.TestCase):
             "FIRECRACKER_AMD64_URL=https://example.test/firecracker.tgz\n"
             f"FIRECRACKER_AMD64_SHA256={'e' * 64}\n"
         )
+        # Candidate transport/provenance validation has its own sandboxd tests.
+        # This fixture exposes distinct pinned PVM fields to check build wiring.
+        helper = self.manifest.with_name("prepare-firecracker-pvm.py")
+        helper.write_text(
+            "import sys\n"
+            "if '--fields' in sys.argv:\n"
+            " print('v1.16.1-akernel.4')\n"
+            f" print('{ '4' * 64 }')\n"
+            " print('github-actions://akernel-dev/firecracker/123/firecracker.tgz')\n"
+        )
         version = self.root / "src/sandboxd/version/VERSION"
         version.parent.mkdir()
         version.write_text("v1.0.0\n")
@@ -234,6 +244,35 @@ class BuildImageTests(unittest.TestCase):
         self.assertIn(f"DISTILL_FS_SHA256={'1' * 64}", node)
         self.assertIn("AKERNEL_ENABLE_KATA=true", node)
         self.assertIn("AKERNEL_ENABLE_FIRECRACKER=true", node)
+
+    def test_pvm_guest_profile_uses_manifest_pins(self):
+        result = self.run_helper(
+            AKERNEL_TARGETARCH="amd64", AKERNEL_ENABLE_FIRECRACKER="true",
+            FIRECRACKER_KERNEL_PROFILE="pvm",
+            FIRECRACKER_RELEASE="PRIVATE_INVALID_VALUE",
+            FIRECRACKER_AMD64_URL="https://private-override.invalid/firecracker",
+            FIRECRACKER_AMD64_SHA256="f" * 64,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        node = self.docker_calls()[1]
+        self.assertIn("FIRECRACKER_KERNEL_PROFILE=pvm", node)
+        self.assertIn("FIRECRACKER_RELEASE=v1.16.1-akernel.4", node)
+        self.assertIn("FIRECRACKER_AMD64_URL=github-actions://akernel-dev/firecracker/123/firecracker.tgz", node)
+        self.assertIn(f"FIRECRACKER_AMD64_SHA256={'4' * 64}", node)
+        self.assertNotIn("PRIVATE_INVALID_VALUE", json.dumps(node))
+        self.assertNotIn("private-override.invalid", json.dumps(node))
+
+    def test_invalid_guest_profile_fails_before_build(self):
+        result = self.run_helper(FIRECRACKER_KERNEL_PROFILE="invalid")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FIRECRACKER_KERNEL_PROFILE must be kvm or pvm", result.stdout)
+        self.assertEqual(self.docker_calls(), [])
+
+    def test_arm64_rejects_pvm_guest_profile_before_build(self):
+        result = self.run_helper(FIRECRACKER_KERNEL_PROFILE="pvm")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PVM guest profile requires linux/amd64", result.stdout)
+        self.assertEqual(self.docker_calls(), [])
 
     def test_target_precedence_and_stable_amd64_default(self):
         cases = (

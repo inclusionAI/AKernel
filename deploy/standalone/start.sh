@@ -23,6 +23,7 @@ AKERNEL_DATA_BIND="${AKERNEL_DATA_BIND:-0.0.0.0}"
 AKERNEL_DATA_PORT="${AKERNEL_DATA_PORT:-80}"
 AKERNEL_ENDPOINT_HOST="${AKERNEL_ENDPOINT_HOST:-127.0.0.1}"
 AKERNEL_CHUNK_DB_SIZE="${AKERNEL_CHUNK_DB_SIZE:-}"
+AKERNEL_FIRECRACKER_BACKEND="${AKERNEL_FIRECRACKER_BACKEND:-kvm}"
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
@@ -182,6 +183,13 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    case "${AKERNEL_FIRECRACKER_BACKEND}" in
+        kvm|pvm) ;;
+        *)
+            log_error "AKERNEL_FIRECRACKER_BACKEND must be kvm or pvm"
+            exit 1
+            ;;
+    esac
     if [[ "${DATA_DIR}" != /* ]]; then
         log_error "AKERNEL_STANDALONE_DATA_DIR must be an absolute path"
         exit 1
@@ -312,6 +320,21 @@ configure_network() {
         -E
         -e "s/^[[:space:]]*nat_backend[[:space:]]*=.*/nat_backend=\"${AKERNEL_NAT_BACKEND}\"/"
     )
+
+    if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]]; then
+        if ! grep -q '^\[plugin.runtime.firecracker\]$' \
+            "${CONFIG_DIR}/sandboxd_config.toml" || \
+           ! grep -q '^firecracker="/usr/local/bin/firecracker"$' \
+            "${CONFIG_DIR}/sandboxd_config.toml"; then
+            log_error "PVM selection requires the standard Firecracker config section and binary entry"
+            exit 1
+        fi
+        sed_args+=(
+            -e 's/^firecracker=/firecracker-pvm=/'
+            -e 's/^\[plugin.runtime.firecracker\]$/[plugin.runtime.firecracker_pvm]/'
+            -e '/^kata=/d'
+        )
+    fi
 
     case "${AKERNEL_NAT_BACKEND}" in
         iptables|bpfnat)
@@ -553,6 +576,7 @@ start_node_container() {
         -p "${AKERNEL_CONTROL_BIND}:${AKERNEL_CONTROL_PORT}:8443" \
         -p "${AKERNEL_DATA_BIND}:${AKERNEL_DATA_PORT}:8080" \
         -e container=oci \
+        -e "AKERNEL_FIRECRACKER_BACKEND=${AKERNEL_FIRECRACKER_BACKEND}" \
         -e AKS_LOCAL_MODE="true" \
         -e NODE_NAME="$(hostname)" \
         -e POD_NAME=akernel-node-local \

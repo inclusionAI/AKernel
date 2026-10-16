@@ -1,0 +1,119 @@
+name: PVM Agent DX isolated L1 E2E
+"on":
+  push:
+    branches: [feat/pvm-candidate-adx]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pvm-isolated-l1
+  cancel-in-progress: false
+jobs:
+  pvm-adx:
+    if: github.repository == 'hky1999/AKernel' && github.ref_name == 'feat/pvm-candidate-adx'
+    runs-on: [self-hosted, linux, x64, pvm-l1-ubuntu7]
+    timeout-minutes: 180
+    env:
+      DOCKER_HOST: unix:///run/pvm-ci-docker.sock
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Initialize pinned sandboxd
+        run: |
+          set -euo pipefail
+          git submodule update --init src/sandboxd
+          # Checkout does not clean ignored files inside a separately
+          # initialized submodule. Never reuse another pin's staged bundle.
+          git -C src/sandboxd clean -ffdx
+      - name: Verify disposable L1 boundary
+        run: |
+          echo "PVM_CI_OUTPUT=${RUNNER_TEMP}/pvm-ci" >>"${GITHUB_ENV}"
+          python3 src/sandboxd/test/e2e/pvm-l1.py
+      - name: Install L1 test dependencies
+        run: |
+          set -euo pipefail
+          python3 src/sandboxd/test/e2e/pvm-l1.py
+          apt-get update
+          apt-get install -y build-essential jq erofs-utils fuse3 xfsprogs \
+            iproute2 iptables e2fsprogs curl git
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - name: Install the pinned ADX SDK dependencies
+        run: python -m pip install -e './sdk/python[dev]'
+      - name: Build and verify the exact PVM image and run Agent DX
+        run: bash deploy/pvm/run-adx-ci.sh
+      - name: Stop the owned ADX deployment
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 src/sandboxd/test/e2e/pvm-l1.py
+          export AKERNEL_STANDALONE_DATA_DIR="/root/pvm-ci/adx-${GITHUB_RUN_ID}"
+          if docker inspect akernel-node >/dev/null 2>&1; then
+            test "$(docker inspect --format '{{.Config.Image}}' akernel-node)" = "pvm-ci/all-in-one:${GITHUB_SHA}"
+            bash deploy/standalone/stop.sh
+          fi
+      - name: Stop owned L1 network fixtures
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 src/sandboxd/test/e2e/pvm-l1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,signal,subprocess
+          root=Path(os.environ['PVM_CI_OUTPUT'])
+          for name,needle in [('dns-fixture',b'deploy/pvm/dns-fixture.py'),('private-http',b'http.server')]:
+              file=root/(name+'.pid')
+              if not file.exists():continue
+              pid=int(file.read_text());proc=Path(f'/proc/{pid}/cmdline')
+              if proc.exists() and needle in proc.read_bytes():os.kill(pid,signal.SIGTERM)
+          ip=root/'private-http-ip.txt'
+          if ip.exists():
+              assert ip.read_text().strip()=='192.0.2.44/32 lo'
+              subprocess.run(['ip','addr','del','192.0.2.44/32','dev','lo'],check=True)
+          PY
+      - name: Unmount owned L1 runtime storage
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 src/sandboxd/test/e2e/pvm-l1.py
+          python3 - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          file=Path(os.environ['PVM_CI_OUTPUT'])/'storage-layout.json'
+          if file.exists():
+              for mount in reversed(json.loads(file.read_text())['mounts']):
+                  source,target=map(Path,(mount['source'],mount['target']))
+                  root=Path('/root/pvm-ci')/('adx-'+os.environ['GITHUB_RUN_ID'])
+                  assert target in (root/'filestore',root/'adx/checkpoints')
+                  assert source.is_relative_to('/audit-xfs/pvm-ci')
+                  if subprocess.run(['mountpoint','-q',str(target)]).returncode:continue
+                  assert source.stat().st_dev==target.stat().st_dev and source.stat().st_ino==target.stat().st_ino
+                  subprocess.run(['umount','--',str(target)],check=True)
+          PY
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pvm-adx-evidence-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pvm-ci/*.json
+            ${{ runner.temp }}/pvm-ci/*.log
+            ${{ runner.temp }}/pvm-ci/*.txt
+            ${{ runner.temp }}/pvm-ci/payload/*.json
+            ${{ runner.temp }}/pvm-ci/adx-standalone
+            ${{ runner.temp }}/pvm-ci/adx-nydus
+          retention-days: 30
+          if-no-files-found: error
+      - name: Unload the owned L1 modules
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 src/sandboxd/test/e2e/pvm-l1.py
+          if [[ -d /sys/module/kvm_pvm ]]; then rmmod kvm_pvm; fi
+          if [[ -d /sys/module/kvm ]]; then rmmod kvm; fi

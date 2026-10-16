@@ -14,8 +14,11 @@
 
 """Verify gVisor writable storage limits with equal and smaller scheduling quotas."""
 
+import os
+
 from akernel_sdk import Sandbox
 
+RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
 HARD_LIMIT_MB = 256
 SCHEDULING_QUOTA_MB = 64
 
@@ -41,11 +44,18 @@ def verify_hard_limit(sandbox: Sandbox, *, successful_write_mb: int) -> None:
 
 
 def main() -> None:
-    with Sandbox(storage_mb=HARD_LIMIT_MB, cpu=1000, memory=2048) as sandbox:
+    with Sandbox(
+        runtime=RUNTIME, storage_mb=HARD_LIMIT_MB, cpu=1000, memory=2048
+    ) as sandbox:
         verify_hard_limit(sandbox, successful_write_mb=32)
         print(f"Omitted hard limit follows the {HARD_LIMIT_MB} MiB scheduling quota")
 
+    if RUNTIME != "runsc":
+        # Distinct scheduling and hard limits are a runsc-specific contract.
+        return
+
     with Sandbox(
+        runtime=RUNTIME,
         storage_mb=SCHEDULING_QUOTA_MB,
         storage_limit_mb=HARD_LIMIT_MB,
         cpu=1000,
