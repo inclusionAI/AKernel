@@ -49,7 +49,7 @@ ak = "akernel_sdk.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/inclusionAI/AKernel"
-Documentation = "https://github.com/inclusionAI/AKernel/tree/develop/sdk/python"
+Documentation = "https://github.com/inclusionAI/AKernel/tree/main/sdk/python"
 Repository = "https://github.com/inclusionAI/AKernel.git"
 Issues = "https://github.com/inclusionAI/AKernel/issues"
 

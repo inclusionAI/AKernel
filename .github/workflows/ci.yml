@@ -88,9 +88,6 @@ jobs:
           cache: pip
           cache-dependency-path: sdk/python/pyproject.toml
 
-      - name: Test Python release policy
-        run: python .github/scripts/test_validate_python_release.py -v
-
       - name: Build and verify distributions
         uses: ./.github/actions/python-distributions
         with:

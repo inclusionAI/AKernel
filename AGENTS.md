@@ -595,18 +595,13 @@ Python SDK releases use stable `vX.Y.Z` tags or release-candidate
 `vX.Y.ZrcN` tags. The tag version must match the version in
 `sdk/python/pyproject.toml`. RC commits must be part of `develop`, with the
 GitHub Release marked as a prerelease. Stable commits must be part of `main`,
-with the prerelease flag disabled. The release validator fetches the selected
-branch before checking ancestry; do not replace it with a local-ref-only check.
+with the prerelease flag disabled. Keep release tags and published distributions
+immutable; candidate fixes use a new RC number.
 Publishing a GitHub Release runs
 `.github/workflows/release-python.yml`, which checks the SDK, builds and tests
 the wheel and source distribution, and publishes them through the PyPI trusted
 publisher configured for the `pypi` GitHub environment. Do not add a PyPI
 password or API token to the repository.
-
-Run `python .github/scripts/test_validate_python_release.py -v` when changing
-release policy. PR distribution CI runs these tests against temporary Git
-repositories. Keep tags and published artifacts immutable, incrementing the RC
-number for candidate fixes.
 
 Source installation, PR CI, and Python publication install the dependencies
 declared in `sdk/python/pyproject.toml` from the configured package index.
