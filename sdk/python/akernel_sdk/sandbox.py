@@ -199,7 +199,9 @@ class Sandbox:
                 which uses the image's OCI WORKDIR when
                 ``inherit_entrypoint=True``.
             port_forwardings: Sandbox TCP ports exposed through the gateway.
-            mounts: Additional read-only OCI or S3-backed mounts.
+            mounts: Additional read-only OCI/S3 mounts or explicit node HostPath
+                bind mounts for trusted management callers. HostPath writes
+                require ``Mount(..., read_only=False)``.
             reverse_tunnel: SDK-side HTTP service exposed inside the sandbox.
             detached: Keep the sandbox alive when this client closes.
             node_id: Require placement on a specific AKernel node.

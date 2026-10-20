@@ -169,6 +169,75 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
         with self.assertRaisesRegex(ValueError, "absolute"):
             Mount(target="relative", image_url="ubuntu:24.04")
 
+    def test_host_path_mount_defaults_to_read_only(self):
+        # This path belongs to a remote node; it need not exist on the client.
+        mount = Mount(target="/logs", host_path="/node-only/apps/logs")
+        self.assertEqual(
+            mount.to_dict(),
+            {
+                "type": "bind",
+                "target": "/logs",
+                "host_path": "/node-only/apps/logs",
+                "options": ["ro"],
+                "create_if_missing": False,
+            },
+        )
+
+    def test_host_path_mount_requires_explicit_writable_mode(self):
+        mount = Mount(
+            target="/apps/logs", host_path="/apps/logs", read_only=False
+        )
+        self.assertEqual(mount.to_dict()["options"], ["rw"])
+        self.assertFalse(mount.to_dict()["create_if_missing"])
+
+    def test_host_path_cannot_be_combined_with_other_mount_sources(self):
+        s3 = S3Config("https://s3.example.com", "data", "weights.img")
+        for extra in (
+            {"image_url": "tools:v1"},
+            {"s3_config": s3},
+            {"image_url": "tools:v1", "s3_config": s3},
+        ):
+            with self.subTest(extra=extra), self.assertRaisesRegex(
+                ValueError, "exactly one"
+            ):
+                Mount(target="/logs", host_path="/apps/logs", **extra)
+
+    def test_host_path_rejects_relative_traversal_and_control_paths(self):
+        for source in (
+            "", "apps/logs", "~/logs", "/apps/../logs", "/apps/./logs",
+            "/apps/\0logs", "/apps/\nlogs", "/apps/\x85logs", 123,
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                ValueError, "host_path"
+            ):
+                Mount(target="/logs", host_path=source)
+
+    def test_host_path_supports_only_bind_mounts(self):
+        with self.assertRaisesRegex(ValueError, "bind"):
+            Mount(target="/logs", host_path="/apps/logs", type="erofs")
+
+    def test_mount_read_only_must_be_boolean(self):
+        for read_only in (0, 1, None, "false"):
+            with self.subTest(read_only=read_only), self.assertRaisesRegex(
+                TypeError, "read_only"
+            ):
+                Mount(target="/logs", host_path="/apps/logs", read_only=read_only)
+
+    def test_image_and_s3_mounts_remain_read_only(self):
+        s3 = S3Config("https://s3.example.com", "data", "weights.img")
+        for source in ({"image_url": "tools:v1"}, {"s3_config": s3}):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                ValueError, "read.only"
+            ):
+                Mount(target="/tools", read_only=False, **source)
+        self.assertEqual(
+            Mount("/tools", "tools:v1", None, "bind").to_dict(),
+            {
+                "type": "bind", "target": "/tools", "options": ["ro"],
+                "image_url": "tools:v1",
+            },
+        )
+
     def test_http_reverse_tunnel_supports_http_and_https(self):
         self.assertEqual(
             HttpReverseTunnel("http://127.0.0.1:8000").url,

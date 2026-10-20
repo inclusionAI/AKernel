@@ -388,6 +388,15 @@ quota or cluster default. A positive limit without an explicit scheduling
 quota also reserves that amount for scheduling. Keep this distinction in SDK
 documentation and examples; see `sdk/python/README.md` for runtime support.
 
+`Mount(host_path=...)` binds an existing path visible to the selected node's
+runtime. HostPath mounts default to read-only; writable binds require
+`read_only=False`. Image/S3 mounts remain read-only. Keep the pinned ADX SDK's
+HostPath serialization adapter under `_backends`, and preserve server-side
+permission errors. This interface is for trusted management callers: client
+validation is not source-path authorization, and #110 remains unresolved.
+The SDK does not create host directories, mount node storage, or replicate
+node-local data. See the SDK guide and `sdk/python/examples/hostpath_mounts.py`.
+
 Same-node failover and explicit rollback retain the logical sandbox identity:
 
 ```python

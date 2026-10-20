@@ -507,31 +507,59 @@ class S3Config:
 
 @dataclass(frozen=True)
 class Mount:
-    """Read-only OCI image or S3 object mounted inside a sandbox.
+    """OCI/S3 read-only mount or a trusted-management node HostPath bind.
 
-    Exactly one of ``image_url`` and ``s3_config`` must be supplied. ``type``
-    selects a read-only bind mount or an EROFS image mount.
+    Supply exactly one of ``image_url``, ``s3_config``, or ``host_path``.
+    HostPath sources must already be visible to the node runtime; they are not
+    resolved on the client. HostPath supports ``type="bind"`` and defaults to
+    read-only; writes require ``read_only=False``. Image/S3 sources are always
+    read-only. This type does not authorize access to the node's filesystem.
     """
 
     target: str
     image_url: str | None = None
     s3_config: S3Config | None = None
     type: str = "bind"
+    host_path: str | None = None
+    read_only: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, str) or not self.target.startswith("/"):
             raise ValueError("target must be an absolute sandbox path")
         source_count = sum(
-            source is not None for source in (self.image_url, self.s3_config)
+            source is not None
+            for source in (self.image_url, self.s3_config, self.host_path)
         )
         if source_count != 1:
-            raise ValueError("exactly one of image_url and s3_config must be specified")
+            raise ValueError(
+                "exactly one of image_url, s3_config, host_path must be specified"
+            )
         if self.image_url is not None and (
             not isinstance(self.image_url, str) or not self.image_url.strip()
         ):
             raise ValueError("image_url must be a non-empty string")
         if self.type not in ("bind", "erofs"):
             raise ValueError("type must be 'bind' or 'erofs'")
+        if not isinstance(self.read_only, bool):
+            raise TypeError("read_only must be a boolean")
+        if self.host_path is not None:
+            if (
+                not isinstance(self.host_path, str)
+                or not self.host_path.startswith("/")
+                or any(part in (".", "..") for part in self.host_path.split("/"))
+                or any(
+                    ord(char) < 32 or 127 <= ord(char) <= 159
+                    for char in self.host_path
+                )
+            ):
+                raise ValueError(
+                    "host_path must be an absolute path without traversal "
+                    "or control characters"
+                )
+            if self.type != "bind":
+                raise ValueError("host_path supports only type='bind'")
+        elif not self.read_only:
+            raise ValueError("image and S3 mounts must be read-only")
 
     def to_dict(self) -> dict[str, Any]:
         """Return the JSON-compatible representation expected by AKernel."""
@@ -539,12 +567,15 @@ class Mount:
         value: dict[str, Any] = {
             "type": self.type,
             "target": self.target,
-            "options": ["ro"],
+            "options": ["ro" if self.read_only else "rw"],
         }
         if self.image_url is not None:
             value["image_url"] = self.image_url
         if self.s3_config is not None:
             value["s3_config"] = self.s3_config.to_dict()
+        if self.host_path is not None:
+            value["host_path"] = self.host_path
+            value["create_if_missing"] = False
         return value
 
 

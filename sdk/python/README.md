@@ -701,6 +701,59 @@ mount = Mount(target="/opt/tools", image_url="ubuntu:24.04")
 Firecracker mounts must instead use `type="erofs"` with an S3 object containing
 a raw EROFS image; it rejects `image_url` and directory-backed mounts.
 
+### Node HostPath bind mounts
+
+HostPath support requires an SDK revision containing this change; it is not
+included in the published `akernel-sdk==0.2.0rc2` package.
+
+Trusted management clients can bind an existing node-visible path into a
+sandbox. For example, expose a prepared log directory on a selected runsc node:
+
+```python
+from akernel_sdk import Mount, Sandbox
+
+logs = Mount(
+    target="/apps/logs",       # Path inside the sandbox.
+    host_path="/apps/logs",    # Path visible to sandboxd on the selected node.
+    read_only=False,           # Explicitly allow application log writes.
+)
+with Sandbox(node_id="<prepared-node-id>", mounts=[logs]) as sandbox:
+    print(sandbox.commands.run("ls -ld /apps/logs").stdout)
+```
+
+`read_only=True` is the default. HostPath supports `type="bind"` only;
+`read_only=False` is rejected for Image/S3 mounts, which remain read-only.
+Exactly one of `image_url`, `s3_config`, or `host_path` is required. The source
+must be an absolute POSIX path without traversal components or control
+characters. The SDK does not inspect the client machine's filesystem or create
+the source directory; it sends `create_if_missing=false`. An absent source or
+insufficient filesystem permissions is a node-side error.
+
+In Kubernetes, the node Pod must first see the source, for example through an
+operator-managed `hostPath` volume and matching `volumeMount`. An ECS directory
+does not become visible to sandboxd merely because its path is in the SDK
+request. Directory ownership and permissions must allow the sandbox's process
+UID/GID to use it. Separate workers' local directories are separate data;
+`node_id` selects the prepared node but does not replicate storage. Data written
+through a bind can outlive the sandbox. Runtime-specific mount restrictions
+still apply; Firecracker does not support these directory-backed binds.
+
+**Authorization boundary:** this client API does not authorize node paths. The
+current ADX server does not enforce per-tenant HostPath authorization; see
+[#110](https://github.com/inclusionAI/AKernel/issues/110). Use only trusted
+management credentials and node paths controlled by the operator. SDK path
+validation and read-only defaults do not resolve #110. Server permission errors
+are returned through the normal `BackendOperationError` fields.
+
+The maintained example requires an explicit node and source. It lists the
+read-only mount by default; `--write` creates one uniquely named log file and
+leaves that file on the node:
+
+```bash
+python sdk/python/examples/hostpath_mounts.py \
+  --node-id <prepared-node-id> --host-path /apps/logs --write
+```
+
 ## Launch from a Dockerfile
 
 Dockerfile direct launch is a supported AKernel SDK capability and will remain
@@ -816,6 +869,7 @@ Maintained examples are under [`examples/`](./examples):
 - `dockerfile_launch.py`
 - `failover_reload.py`
 - `gpu_sandbox.py`
+- `hostpath_mounts.py`
 - `named_sandbox.py`
 - `network_policy.py`
 - `pty.py`
@@ -860,7 +914,7 @@ not part of the default test suite.
 | `SandboxInfo` | `id`, `state`, `cpu`, `memory`, `image`, `xpu`, `storage_mb` |
 | `NodeInfo` | `id`, `status`, `capacity`, `allocatable`, `labels` |
 | `S3Config` | `endpoint`, `bucket`, `object`, optional credentials |
-| `Mount` | `target`, one source, and `type` |
+| `Mount` | `target`, exactly one of `image_url` / `s3_config` / `host_path`, `type`, `read_only` (default `True`; writable only for HostPath) |
 | `HttpReverseTunnel` | `target`, `reverse_port`, `listen_port`, `connect_timeout` |
 | `PortRange` | `first`, `last` |
 | `NetworkRule` | action, direction, protocol, peer and sandbox port selectors, priority |

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 from adx_environment._transport import EnvironmentHTTPError
 from adx_environment.commands import Commands as NativeCommands
 
@@ -68,6 +70,68 @@ class AdxBackendTest(unittest.TestCase):
             gateway_endpoint=Endpoint("gateway.example", 8443, "https", True),
             token="secret",
         )
+
+    def test_host_path_reaches_real_native_constructor_and_preserves_denial(self):
+        mount = Mount(target="/apps/logs", host_path="/apps/logs", read_only=False)
+        requests = []
+
+        def deny(_client, request, **_kwargs):
+            requests.append(request)
+            return httpx.Response(
+                403,
+                json={
+                    "code": 403, "message": "host mount is not authorized",
+                    "error": {
+                        "code": "PERMISSION_DENIED", "retry": "never",
+                        "outcome": "not_started", "requestId": "host-path-test",
+                    },
+                },
+                request=request,
+            )
+
+        # Keep the pinned native constructor, Mount type check, request encoder
+        # and HTTP error parser. Stop at HTTPX send: no cloud or filesystem call.
+        with (
+            patch.object(httpx.Client, "send", autospec=True, side_effect=deny),
+            self.assertRaises(BackendOperationError) as raised,
+        ):
+            adx.AdxBackend(self.config).create(
+                _spec(mounts=(mount,), node_id="node-logs")
+            )
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].method, "POST")
+        self.assertTrue(requests[0].url.path.endswith("/environments"))
+        body = json.loads(requests[0].content)
+        self.assertEqual(body["mounts"], [mount.to_dict()])
+        self.assertEqual(
+            body["scheduleAffinities"][0]["labelOps"],
+            [{"type": 0, "labelKey": "NODE_ID", "labelValues": ["node-logs"]}],
+        )
+        self.assertEqual(raised.exception.code, "PERMISSION_DENIED")
+        self.assertEqual(raised.exception.retry, "never")
+        self.assertEqual(raised.exception.outcome, "not_started")
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertIsInstance(raised.exception.__cause__, EnvironmentHTTPError)
+
+    def test_create_converts_mixed_mount_sources_without_changing_permissions(self):
+        native = MagicMock()
+        native.id = "default-mounts"
+        mounts = (
+            Mount(target="/logs", host_path="/apps/logs", read_only=False),
+            Mount(target="/inputs", host_path="/apps/inputs"),
+            Mount(target="/tools", image_url="tools:v1"),
+            Mount(
+                target="/weights", type="erofs",
+                s3_config=S3Config("https://s3.example", "data", "weights.img"),
+            ),
+        )
+        with patch.object(adx, "_OwnedSandbox", return_value=native) as create:
+            adx.AdxBackend(self.config).create(_spec(mounts=mounts))
+        converted = create.call_args.kwargs["mounts"]
+        for source, actual in zip(mounts, converted, strict=True):
+            with self.subTest(target=source.target):
+                self.assertIsInstance(actual, adx.adx_environment.Mount)
+                self.assertEqual(actual.to_dict(), source.to_dict())
 
     def test_create_preserves_public_error_context_and_cause(self):
         error = EnvironmentHTTPError(
