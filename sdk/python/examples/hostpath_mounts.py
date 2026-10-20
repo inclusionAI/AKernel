@@ -17,8 +17,8 @@
 The node runtime must already see the source and allow the sandbox process to
 access it. Default mode only lists the read-only mount. --write explicitly
 creates one unique log file and leaves it on the node after sandbox deletion.
-This SDK interface does not enforce the server-side authorization tracked in
-AKernel #110. It is not included in the published SDK 0.2.0rc2 package.
+Use operator-controlled source paths; SDK validation does not authorize access
+to the node's filesystem.
 """
 
 import argparse

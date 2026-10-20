@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class _NativeHostPathMount(adx_environment.Mount):
-    """Extend rc2's public Mount serialization hook for its server's Local source.
+    """Adapt node HostPath sources through the pinned native Mount serializer.
 
     The pinned native SDK checks isinstance(Mount) before calling to_dict, but
     its stock value type only represents Image/S3. Keep that constructor and

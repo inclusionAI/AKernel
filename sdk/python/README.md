@@ -703,9 +703,6 @@ a raw EROFS image; it rejects `image_url` and directory-backed mounts.
 
 ### Node HostPath bind mounts
 
-HostPath support requires an SDK revision containing this change; it is not
-included in the published `akernel-sdk==0.2.0rc2` package.
-
 Trusted management clients can bind an existing node-visible path into a
 sandbox. For example, expose a prepared log directory on a selected runsc node:
 
@@ -738,12 +735,11 @@ UID/GID to use it. Separate workers' local directories are separate data;
 through a bind can outlive the sandbox. Runtime-specific mount restrictions
 still apply; Firecracker does not support these directory-backed binds.
 
-**Authorization boundary:** this client API does not authorize node paths. The
-current ADX server does not enforce per-tenant HostPath authorization; see
-[#110](https://github.com/inclusionAI/AKernel/issues/110). Use only trusted
-management credentials and node paths controlled by the operator. SDK path
-validation and read-only defaults do not resolve #110. Server permission errors
-are returned through the normal `BackendOperationError` fields.
+Restrict HostPath creation to trusted management clients and source paths
+controlled by the operator. These mounts do not provide per-tenant source-path
+isolation; SDK path validation and read-only defaults do not authorize access
+to the node's filesystem. Server permission errors are returned through the
+normal `BackendOperationError` fields.
 
 The maintained example requires an explicit node and source. It lists the
 read-only mount by default; `--write` creates one uniquely named log file and

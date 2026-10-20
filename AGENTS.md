@@ -392,8 +392,9 @@ documentation and examples; see `sdk/python/README.md` for runtime support.
 runtime. HostPath mounts default to read-only; writable binds require
 `read_only=False`. Image/S3 mounts remain read-only. Keep the pinned ADX SDK's
 HostPath serialization adapter under `_backends`, and preserve server-side
-permission errors. This interface is for trusted management callers: client
-validation is not source-path authorization, and #110 remains unresolved.
+permission errors. Restrict this interface to trusted management callers and
+operator-controlled source paths; client validation is not authorization to
+access the node's filesystem.
 The SDK does not create host directories, mount node storage, or replicate
 node-local data. See the SDK guide and `sdk/python/examples/hostpath_mounts.py`.
 
