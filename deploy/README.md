@@ -78,7 +78,7 @@ Drain sandboxes before replacing the Firecracker stack. Checkpoints record
 VMM, kernel, initrd, and, when used, virtiofsd digests; mismatched stacks are
 rejected on restore. Changing the writable I/O default does not convert the
 engine saved in an existing checkpoint. For the full contract, see the
-[sandbox runtime comparison](https://github.com/inclusionAI/sandboxd/blob/b8f4656c57432bce1b50111e766bcd21510ee482/doc/runtime.md).
+[sandbox runtime comparison](https://github.com/inclusionAI/sandboxd/blob/02386fea2050c4a77cfaa9df5edfe72fd35fc987/doc/runtime.md).
 
 The native Linux runc backend is opt-in because it uses the host kernel. For a
 guided cloud profile, `make config ENABLE_RUNC=true` records both sides of the
