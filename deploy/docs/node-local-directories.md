@@ -70,6 +70,18 @@ Validate only runtimes supported by the deployed stack. Runsc has local C/R supp
 
 The pinned sandboxd `test/e2e/host-mount-rw.sh` exercises mixed RO/RW binds, rotation of an open append FD, checkpoint/delete/restore, retained read offsets and process memory, post-checkpoint host changes, and source retention. Reuse it for runtime qualification. An SDK-level acceptance should additionally bind the prepared source, create a checkpoint using the deployed internal workload checkpoint mechanism, reload the same logical sandbox, verify continued writes and unchanged external data, and clean up only its own instances/files. The checkpoint mechanism is not a new public SDK API.
 
+The maintained [SDK acceptance](../akernel/tests/test_node_directories_live.py) exercises the example's UID/GID 1000, file mode `0640`, RO rejection, retention after sandbox deletion, and optionally runsc checkpoint/reload with a live append FD. Run it with an independently installed SDK, a dedicated disposable prepared source, trusted credentials, and the configured TLS policy:
+
+```bash
+AKERNEL_TEST_NODE_DIRECTORIES=1 \
+AKERNEL_TEST_HOSTPATH_SOURCE=/home/akernel/shared/app-logs \
+AKERNEL_TEST_NODE_ID='<prepared-node-id>' \
+AKERNEL_TEST_HOSTPATH_CHECKPOINT=1 \
+python -I deploy/akernel/tests/test_node_directories_live.py -v
+```
+
+The test defaults to `python:3.12-slim`; set `AKERNEL_TEST_IMAGE` to a tested immutable image fixture when recording acceptance. Omit the checkpoint opt-in when only checking the basic directory lifecycle; that produces an explicit checkpoint skip. Each run prints its instance IDs and unique `directory-<UUID>` file prefix. It deletes its sandboxes, leaves those files for independent node-side inspection, and never removes host data. Confirm physical sandbox/mount cleanup before removing only the run's files. Repeat against each eligible worker and record any skips as untested coverage.
+
 ## Validation checklist
 
 - Render the core and umbrella examples with hostPath and ephemeral PVC backing; verify script bytes, volume mounts, initializer order, and unchanged unconfigured behavior.
