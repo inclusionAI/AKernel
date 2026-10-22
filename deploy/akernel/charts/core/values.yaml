@@ -107,6 +107,8 @@ node:
     requests:
       ephemeral-storage: 50Gi
   annotations: {}
+  # Operator-managed preparation; see deploy/docs/node-local-directories.md
+  # and deploy/akernel/examples/node-local-directories.yaml. Lists replace on merge.
   initContainers: []
   hostDiskPath: "/home/akernel"
   homeDisk:

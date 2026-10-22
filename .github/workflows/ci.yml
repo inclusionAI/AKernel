@@ -144,6 +144,7 @@ jobs:
           python deploy/scripts/test_ensure_adx_secret.py -v
           python deploy/scripts/test_get_adx_admin_key.py -v
           python deploy/akernel/charts/core/tests/test_adx_chart.py -v
+          python deploy/akernel/charts/core/tests/test_node_directories.py -v
           python deploy/terraform/test_adx_contract.py -v
 
   standalone-e2e:

@@ -42,3 +42,6 @@ data:
 
   prepare_node.sh: |
 {{ .Files.Get "scripts/prepare_node.sh" | indent 4 }}
+
+  prepare-node-directories.py: |
+{{ .Files.Get "scripts/prepare-node-directories.py" | indent 4 }}

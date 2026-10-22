@@ -224,6 +224,8 @@ From the repository root, `make standalone` builds the current source and starts
 
 ## 2. Kubernetes (Helm)
 
+For operator-owned application directories exposed through sandbox HostPath mounts, see [node-local directory preparation](docs/node-local-directories.md) and its supported init-container values example. It defines ownership, startup validation, hostPath versus ephemeral-PVC retention, and checkpoint/restore boundaries.
+
 The umbrella chart in [`akernel/`](./akernel/) deploys AKernel's control
 service, persistent state store, one worker Pod per eligible node, and the
 public ingress. They use the same AKernel all-in-one image.

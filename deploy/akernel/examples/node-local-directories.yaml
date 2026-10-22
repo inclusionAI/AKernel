@@ -1,0 +1,37 @@
+# Umbrella chart overlay. For the core chart alone, use the contents of core.
+# Select the same tested image/digest as the node workload; values are not tpl.
+# Read deploy/docs/node-local-directories.md before applying to existing nodes.
+core:
+  node:
+    initContainers:
+      - name: prepare-node-directories
+        image: registry.example.com/akernel/all-in-one:your-tested-tag
+        imagePullPolicy: IfNotPresent
+        command: [python3, /opt/akernel/prepare-node-directories.py]
+        args:
+          - --root
+          - /home/akernel
+          - --directories-json
+          - '[{"path":"shared/app-logs","uid":1000,"gid":1000,"mode":"0770"}]'
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+            add: [CHOWN, FOWNER, DAC_OVERRIDE]
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+        volumeMounts:
+          - name: home-disk
+            mountPath: /home/akernel
+          - name: akernel-node-config
+            mountPath: /opt/akernel/prepare-node-directories.py
+            subPath: prepare-node-directories.py
+            readOnly: true

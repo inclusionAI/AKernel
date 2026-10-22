@@ -733,7 +733,13 @@ request. Directory ownership and permissions must allow the sandbox's process
 UID/GID to use it. Separate workers' local directories are separate data;
 `node_id` selects the prepared node but does not replicate storage. Data written
 through a bind can outlive the sandbox. Runtime-specific mount restrictions
-still apply; Firecracker does not support these directory-backed binds.
+are enforced by the deployed backend.
+
+For operator-managed Kubernetes preparation and the retention/C/R contract, see
+[node-local application directories](../../deploy/docs/node-local-directories.md).
+The pinned sandboxd has additional Firecracker virtio-fs directory-bind support;
+qualify the actual deployed image and runtime stack before using it. The
+example above targets runsc.
 
 Restrict HostPath creation to trusted management clients and source paths
 controlled by the operator. These mounts do not provide per-tenant source-path

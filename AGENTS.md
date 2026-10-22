@@ -265,10 +265,12 @@ scheduling with a no-resource error when no eligible node exists. Do not treat
 a configured runtime as an advertised runtime.
 
 Firecracker supports commands, files, PTYs, network policies, published ports,
-reverse tunnels, EROFS roots and mounts, OCI/Nydus directory roots and read-only
-host directory mounts through virtio-fs, explicit `storage_mb` quotas, and
-recovery across sandboxd restarts. OCI image mounts, writable live host binds,
-NVIDIA GPUs, and nested KVM remain unsupported.
+reverse tunnels, EROFS roots and mounts, OCI/Nydus directory roots and explicitly
+read-only or writable host directory mounts through virtio-fs, explicit
+`storage_mb` quotas, and recovery across sandboxd restarts. Writable external
+directories remain caller-owned and require their original backing files for
+local C/R. Qualify the actual deployed image and virtio-fs stack. OCI image
+mounts, NVIDIA GPUs, and nested KVM remain unsupported.
 
 Do not add Firecracker-specific directory conversion, image caching, or
 artifact reference counting to sandboxd or its image manager. Consume OCI/Nydus
@@ -397,6 +399,13 @@ operator-controlled source paths; client validation is not authorization to
 access the node's filesystem.
 The SDK does not create host directories, mount node storage, or replicate
 node-local data. See the SDK guide and `sdk/python/examples/hostpath_mounts.py`.
+Operator-owned node directories can be prepared through the existing Helm
+`node.initContainers` extension. The chart packages a strict directory helper
+in `akernel-node-config`; the supported overlay, ownership and retention
+contract, and validation checklist are in
+`deploy/docs/node-local-directories.md`. Keep helper lifecycle tests and core/
+umbrella rendering tests synchronized. Directory provisioning does not grant
+HostPath authorization or make node-local application files checkpoint-owned.
 
 Same-node failover and explicit rollback retain the logical sandbox identity:
 
