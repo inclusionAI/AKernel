@@ -157,8 +157,9 @@ matching guest-agent initrd. Runc remains build-time optional, and
 AKernel builds virtiofsd 1.14.0 from the pinned source commit and release
 Cargo.lock in `builder/node.Dockerfile`. Keep its shared-library dependencies
 and licenses packaged with the Firecracker payload. Both standalone and Helm
-enable read-only virtio-fs by default; disabling the Firecracker image payload
-also excludes virtiofsd.
+enable virtio-fs for read-only image roots and explicitly read-only or writable
+host directory mounts; disabling the Firecracker image payload also excludes
+virtiofsd.
 
 The sandboxd submodule's runtime manifest is the source of truth for the gVisor, runc, and Firecracker releases used by both sandboxd E2E and AKernel packaging. Test an unreleased runtime by checking out the sandboxd commit that pins it rather than overriding manifest fields from the AKernel build. Keep sandboxd's pooled-TAP contract and the matching gVisor compatibility patches validated together when upgrading.
 
@@ -400,9 +401,10 @@ access the node's filesystem.
 The SDK does not create host directories, mount node storage, or replicate
 node-local data. See the SDK guide and `sdk/python/examples/hostpath_mounts.py`.
 Operator-owned node directories can be prepared through the existing Helm
-`node.initContainers` extension. The chart packages a strict directory helper
-in `akernel-node-config`; the supported overlay, ownership and retention
-contract, and validation checklist are in
+`node.initContainers` extension. Opt in with `node.directoryHelper.enabled`
+to package the strict directory helper in `akernel-node-config`; leaving it
+disabled preserves the node ConfigMap and its rollout checksum. The supported
+overlay, ownership and retention contract, and validation checklist are in
 `deploy/docs/node-local-directories.md`. Keep helper lifecycle tests and core/
 umbrella rendering tests synchronized. Directory provisioning does not grant
 HostPath authorization or make node-local application files checkpoint-owned.

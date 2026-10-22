@@ -3,6 +3,8 @@
 # Read deploy/docs/node-local-directories.md before applying to existing nodes.
 core:
   node:
+    directoryHelper:
+      enabled: true
     initContainers:
       - name: prepare-node-directories
         image: registry.example.com/akernel/all-in-one:your-tested-tag
@@ -20,7 +22,8 @@ core:
           readOnlyRootFilesystem: true
           capabilities:
             drop: [ALL]
-            add: [CHOWN, FOWNER, DAC_OVERRIDE]
+            # FSETID is needed to preserve 2770 with a non-root target GID.
+            add: [CHOWN, FOWNER, DAC_OVERRIDE, FSETID]
         resources:
           requests:
             cpu: 10m

@@ -378,9 +378,10 @@ Kata and Firecracker require at least one cluster node whose sandboxd instance
 successfully initialized the requested runtime with a usable `/dev/kvm`
 device. Nodes without KVM remain available for runsc workloads and do not
 advertise either VM runtime. The bundled Firecracker configuration enables
-read-only virtio-fs for OCI/Nydus image roots and read-only host directories,
-while retaining EROFS image roots and mounts. OCI image mounts, writable host
-binds, GPUs, and nested KVM remain unsupported.
+virtio-fs for read-only OCI/Nydus image roots and explicitly read-only or
+writable host directories, while retaining EROFS image roots and mounts.
+Qualify the deployed sandboxd image and virtio-fs stack before using directory
+binds. OCI image mounts, GPUs, and nested KVM remain unsupported.
 
 The all-in-one image can optionally package a native Linux `runc` backend.
 Operators build it with `AKERNEL_ENABLE_RUNC=true` and enable it explicitly

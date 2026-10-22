@@ -55,12 +55,15 @@ requested runtime, `Sandbox(runtime="kata")` or
 The bundled Firecracker VMM and guest kernel are selected by sandboxd's shared
 runtime manifest, and its guest-agent initrd is built from that same sandboxd
 revision. AKernel also builds pinned virtiofsd 1.14.0 with its release lockfile
-and enables read-only virtio-fs in standalone and Helm. OCI/Nydus image roots
-use the directory provided by the image manager directly, without EROFS
-conversion. The sandbox's writable layer remains a private ext4 image;
-writable host sharing and OCI image mounts are unsupported. EROFS roots and
-mounts remain supported. Set `AKERNEL_ENABLE_FIRECRACKER=false` while building
-to exclude the VMM, kernel, virtiofsd, and initrd.
+and enables virtio-fs in standalone and Helm. OCI/Nydus image roots use the
+read-only directory provided by the image manager directly, without EROFS
+conversion. The pinned sandboxd also supports explicitly read-only or writable
+host directory binds; their backing files remain caller-owned and must be
+retained for local checkpoint/restore. Qualify the deployed image and virtio-fs
+stack before use. The sandbox's writable layer remains a private ext4 image;
+OCI image mounts are unsupported. EROFS roots and mounts remain supported. Set
+`AKERNEL_ENABLE_FIRECRACKER=false` while building to exclude the VMM, kernel,
+virtiofsd, and initrd.
 
 The default writable disk policy is `AsyncDirect` with `Writeback`. Hosts must
 provide usable `io_uring` and filesystem alignment queries through

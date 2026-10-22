@@ -42,6 +42,8 @@ data:
 
   prepare_node.sh: |
 {{ .Files.Get "scripts/prepare_node.sh" | indent 4 }}
+{{- if (.Values.node.directoryHelper | default dict).enabled }}
 
   prepare-node-directories.py: |
 {{ .Files.Get "scripts/prepare-node-directories.py" | indent 4 }}
+{{- end }}

@@ -6,10 +6,10 @@ This is deployment-time preparation for trusted management clients. It does not 
 
 ## Configure the node initializer
 
-The core chart packages `scripts/prepare-node-directories.py` as the `prepare-node-directories.py` key of `akernel-node-config`. The [supported values overlay](../akernel/examples/node-local-directories.yaml) mounts this script and the existing `home-disk` into an unprivileged init container with only the capabilities needed for directory ownership and permission setup. It uses Python 3 from the existing all-in-one image; no new runtime image is required.
+With `core.node.directoryHelper.enabled: true`, the core chart packages `scripts/prepare-node-directories.py` as the `prepare-node-directories.py` key of `akernel-node-config`. The [supported values overlay](../akernel/examples/node-local-directories.yaml) enables the helper and mounts it with the existing `home-disk` into a root init container with `privileged` unset and only the capabilities needed for directory ownership and permission setup. `FSETID` allows setting a shared-group mode such as `2770` when the target GID is outside the initializer's groups. It uses Python 3 from the existing all-in-one image; no new runtime image is required.
 
 1. Choose the backing storage with `core.node.hostDiskPath` or `core.node.homeDisk.useEphemeralPVC` and its StorageClass/size. These settings select the whole existing node `home-disk`; they do not add a separate application disk. Additional volumes require a separate chart extension.
-2. Copy the overlay and set its initializer image to the same tested image/digest as the node workload. `node.initContainers` is literal Kubernetes configuration, not a Helm `tpl`: image template expressions in values are not evaluated. Keep any required image pull secrets in the deployment's existing values.
+2. Copy the complete overlay, including `directoryHelper.enabled: true`, and set its initializer image to the same tested image/digest as the node workload. `node.initContainers` is literal Kubernetes configuration, not a Helm `tpl`: image template expressions in values are not evaluated. Keep any required image pull secrets in the deployment's existing values.
 3. Set `--directories-json` to an array of objects with exactly `path`, `uid`, `gid`, and `mode`. Paths are relative to the mounted `--root`. Use a dedicated application subtree, outside AKernel's `adx`, `sandboxd`, `images`, and `filestore` state. Each declaration needs an explicit numeric UID/GID and a four-digit octal mode string, such as `0770` or `2770`.
 4. Review the complete rendered node Pod and schedule a maintenance window for existing nodes. Changing init containers changes the Pod template and rolls node Pods; an initializer cannot run retroactively inside an existing Pod. Helm merges replace lists: combine any existing `node.initContainers` with this entry instead of silently dropping them. The built-in `migrate-adx-state` remains first, followed by configured initializers.
 
@@ -21,7 +21,7 @@ helm template akernel deploy/akernel -n akernel \
   -f /path/to/reviewed-node-directories.yaml
 ```
 
-For `deploy/akernel/charts/core` alone, remove the outer `core:` key from the overlay. Without an initializer entry, the chart does not create application directories or add an application initializer. The helper's ConfigMap key is inert until explicitly mounted and invoked.
+For `deploy/akernel/charts/core` alone, remove the outer `core:` key from the overlay. By default the helper is disabled: the ConfigMap has no helper key, and this feature leaves the node Pod template and its checksum unchanged, including when unrelated `node.initContainers` are configured. Enabling the helper adds its contents to the node-config checksum, so helper updates roll the opted-in node Pods. Enabling it does not invoke it or create directories; the initializer entry is also required. Keep the flag enabled for as long as an initializer mounts this key.
 
 Kubernetes completes all init containers before starting the node container. A missing/unavailable PVC prevents volume setup; a missing `home-disk` volumeMount is rejected by the helper because `--root` must be an actual mountpoint in Linux `/proc/self/mountinfo`. This check establishes a container volume boundary, not the identity of a physical host disk. In hostPath mode, `DirectoryOrCreate` can create the source on the host's root filesystem if an expected data disk is absent. Operators must verify the host disk mount and provision it before starting node Pods; the initializer does not mount disks or fall back to alternate storage.
 
@@ -84,7 +84,7 @@ The test defaults to `python:3.12-slim`; set `AKERNEL_TEST_IMAGE` to a tested im
 
 ## Validation checklist
 
-- Render the core and umbrella examples with hostPath and ephemeral PVC backing; verify script bytes, volume mounts, initializer order, and unchanged unconfigured behavior.
+- Render the core and umbrella examples with hostPath and ephemeral PVC backing; verify script bytes, volume mounts, initializer order, and unchanged unconfigured Pod templates/checksums. Helper changes must roll opted-in nodes while leaving disabled deployments unchanged.
 - Run `python deploy/akernel/charts/core/tests/test_node_directories.py -v` and the existing chart tests. They exercise real temporary directories without requiring a mounted volume; runtime mountpoint verification is tested separately.
 - On a permitted test cluster, check every eligible worker's prepared directory, actual UID/GID/mode, writable access as the intended application user, RO rejection, and node-visible data after deleting the sandbox.
 - Replace a node Pod while empty, confirm the initializer reruns, and check the documented host-backed retention. Use an independent small ephemeral PVC test to verify old-Pod claim cleanup and replacement isolation; do not switch an existing node's storage mode merely to test retention.

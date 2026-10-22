@@ -147,6 +147,10 @@ jobs:
           python deploy/akernel/charts/core/tests/test_node_directories.py -v
           python deploy/terraform/test_adx_contract.py -v
 
+      - name: Verify node-directory ownership with restricted Linux capabilities
+        run: |
+          sudo -n "$(command -v python)" deploy/akernel/charts/core/tests/test_node_directories.py DirectoryPreparationTest.test_example_capabilities_preserve_setgid_for_application_group -v
+
   standalone-e2e:
     name: Standalone E2E
     needs:

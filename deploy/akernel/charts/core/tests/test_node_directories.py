@@ -7,8 +7,10 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -54,6 +56,37 @@ class DirectoryPreparationTest(unittest.TestCase):
     def test_setgid_mode_is_preserved(self):
         self.prepare(dict(self.item, mode="2770"))
         self.assertEqual(stat.S_IMODE((self.root / "shared/logs").stat().st_mode), 0o2770)
+
+    def test_example_capabilities_preserve_setgid_for_application_group(self):
+        if os.geteuid() != 0 or not shutil.which("setpriv"):
+            self.skipTest("requires Linux root and setpriv to restrict capabilities")
+        initializer = yaml.safe_load(EXAMPLE.read_text())["core"]["node"]["initContainers"][0]
+        caps = initializer["securityContext"]["capabilities"]["add"]
+        numbers = {"CHOWN": 0, "DAC_OVERRIDE": 1, "FOWNER": 3, "FSETID": 4}
+        bounding = next(line.split()[1] for line in Path("/proc/self/status").read_text().splitlines()
+                        if line.startswith("CapBnd:"))
+        if any(not int(bounding, 16) & (1 << numbers[cap]) for cap in caps):
+            self.skipTest("parent capability bounding set cannot grant the example's capabilities")
+        program = """import importlib.util,sys
+from unittest.mock import patch
+spec=importlib.util.spec_from_file_location('directories',sys.argv[1])
+helper=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(helper)
+with patch.object(helper,'is_volume_root',return_value=True):
+    raise SystemExit(helper.main(sys.argv[2:]))
+"""
+        target_gid = 1000
+        while target_gid in {*os.getgroups(), os.getegid()}:
+            target_gid += 1
+        item = dict(self.item, uid=1000, gid=target_gid, mode="2770")
+        result = subprocess.run(
+            ["setpriv", "--no-new-privs", "--bounding-set=-all," + ",".join("+" + cap.lower() for cap in caps),
+             "--", sys.executable, "-c", program, str(SCRIPT), "--root", str(self.root),
+             "--directories-json", json.dumps([item])], capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        info = (self.root / item["path"]).stat()
+        self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)), (1000, target_gid, 0o2770))
 
     def test_permission_mismatch_does_not_repair_or_delete_existing_data(self):
         self.prepare()
@@ -163,12 +196,46 @@ class DirectoryChartTest(unittest.TestCase):
         resources = [r for r in yaml.safe_load_all(result.stdout) if r]
         ds = next(r for r in resources if r["kind"] == "DaemonSet")
         config = next(r for r in resources if r["kind"] == "ConfigMap" and r["metadata"]["name"] == "akernel-node-config")
-        return ds["spec"]["template"]["spec"], config["data"]
+        return ds["spec"]["template"], config["data"]
 
     def test_default_does_not_prepare_operator_directories(self):
-        pod, _ = self.render(CHART, {})
-        self.assertEqual([c["name"] for c in pod["initContainers"]], ["migrate-adx-state"])
-        self.assertNotIn("prepare-node-directories.py", json.dumps(pod))
+        template, config = self.render(CHART, {})
+        self.assertEqual([c["name"] for c in template["spec"]["initContainers"]], ["migrate-adx-state"])
+        self.assertNotIn("prepare-node-directories.py", json.dumps(template))
+        self.assertNotIn("prepare-node-directories.py", config)
+
+    def test_unused_helper_changes_preserve_pod_template_and_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            changed = Path(directory) / "core"
+            shutil.copytree(CHART, changed)
+            (changed / SCRIPT.relative_to(CHART)).write_text(SCRIPT.read_text() + "\n# helper update\n")
+            existing_init = {"name": "existing-preparation", "image": "busybox:1.37", "command": ["true"]}
+            for initializers in ([], [existing_init]):
+                with self.subTest(initializers=initializers):
+                    values = {"node": {"initContainers": initializers}}
+                    self.assertEqual(self.render(CHART, values), self.render(changed, values))
+
+    def test_old_release_values_without_helper_setting_render_unchanged(self):
+        # --reuse-values can retain the old chart defaults without new keys.
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "core"
+            shutil.copytree(CHART, legacy)
+            defaults = yaml.safe_load((legacy / "values.yaml").read_text())
+            del defaults["node"]["directoryHelper"]
+            (legacy / "values.yaml").write_text(yaml.safe_dump(defaults))
+            self.assertEqual(self.render(CHART, {}), self.render(legacy, {}))
+
+    def test_opted_in_helper_changes_update_node_checksum(self):
+        values = yaml.safe_load(EXAMPLE.read_text())["core"]
+        before, _ = self.render(CHART, values)
+        with tempfile.TemporaryDirectory() as directory:
+            changed = Path(directory) / "core"
+            shutil.copytree(CHART, changed)
+            (changed / SCRIPT.relative_to(CHART)).write_text(SCRIPT.read_text() + "\n# helper update\n")
+            after, _ = self.render(changed, values)
+        self.assertEqual(before["spec"], after["spec"])
+        self.assertNotEqual(before["metadata"]["annotations"]["checksum/node-config"],
+                            after["metadata"]["annotations"]["checksum/node-config"])
 
     def test_supported_example_and_packaged_helper_with_each_volume_type(self):
         example = yaml.safe_load(EXAMPLE.read_text())
@@ -178,7 +245,8 @@ class DirectoryChartTest(unittest.TestCase):
                     core = dict(example["core"])
                     core["node"] = dict(core["node"], homeDisk={"useEphemeralPVC": ephemeral})
                     values = {"core": core, "monitor": {"enabled": False}} if umbrella else core
-                    pod, config = self.render(CHART.parents[1] if umbrella else CHART, values)
+                    template, config = self.render(CHART.parents[1] if umbrella else CHART, values)
+                    pod = template["spec"]
                     self.assertEqual(config["prepare-node-directories.py"], SCRIPT.read_text())
                     self.assertEqual([c["name"] for c in pod["initContainers"]],
                                      ["migrate-adx-state", "prepare-node-directories"])
