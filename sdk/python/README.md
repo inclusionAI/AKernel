@@ -738,9 +738,6 @@ are enforced by the deployed backend.
 
 For operator-managed Kubernetes preparation and the retention/C/R contract, see
 [node-local application directories](../../deploy/docs/node-local-directories.md).
-The pinned sandboxd has additional Firecracker virtio-fs directory-bind support;
-qualify the actual deployed image and runtime stack before using it. The
-example above targets runsc.
 
 Restrict HostPath creation to trusted management clients and source paths
 controlled by the operator. These mounts do not provide per-tenant source-path

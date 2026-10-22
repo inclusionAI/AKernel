@@ -400,14 +400,10 @@ operator-controlled source paths; client validation is not authorization to
 access the node's filesystem.
 The SDK does not create host directories, mount node storage, or replicate
 node-local data. See the SDK guide and `sdk/python/examples/hostpath_mounts.py`.
-Operator-owned node directories can be prepared through the existing Helm
-`node.initContainers` extension. Opt in with `node.directoryHelper.enabled`
-to package the strict directory helper in `akernel-node-config`; leaving it
-disabled preserves the node ConfigMap and its rollout checksum. The supported
-overlay, ownership and retention contract, and validation checklist are in
-`deploy/docs/node-local-directories.md`. Keep helper lifecycle tests and core/
-umbrella rendering tests synchronized. Directory provisioning does not grant
-HostPath authorization or make node-local application files checkpoint-owned.
+For operator-owned node directories, use the supported Helm overlay and
+ownership, retention, and validation contract in
+[`deploy/docs/node-local-directories.md`](./deploy/docs/node-local-directories.md).
+Keep helper lifecycle and core/umbrella rendering tests synchronized.
 
 Same-node failover and explicit rollback retain the logical sandbox identity:
 

@@ -111,9 +111,8 @@ node:
   # and deploy/akernel/examples/node-local-directories.yaml. Lists replace on merge.
   initContainers: []
   directoryHelper:
-    # Only package the helper when an operator opts in. It is part of the
-    # node-config checksum, so unused helper changes must not roll node Pods.
-    # Enabling this alone does not invoke it; also supply the init container.
+    # Package the script for the init-container example without invoking it.
+    # Disabled by default to preserve the node rollout checksum.
     enabled: false
   hostDiskPath: "/home/akernel"
   homeDisk:
