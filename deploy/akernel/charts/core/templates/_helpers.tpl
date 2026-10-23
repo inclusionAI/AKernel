@@ -1,6 +1,52 @@
 {{/*
-Expand the name of the chart.
+One pool selector drives all ADX control roles and the worker exclusion.
+Use a single stable pool label (including the provider's node-pool ID label).
 */}}
+{{- define "core.controlPlacement" -}}
+{{- $placement := .Values.adx.controlPlane | default dict -}}
+{{- if gt (len ($placement.nodeSelector | default dict)) 1 -}}
+{{- fail "adx.controlPlane.nodeSelector must contain at most one pool label" -}}
+{{- end -}}
+{{- with $placement.nodeSelector }}
+nodeSelector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $placement.tolerations }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "core.workerPlacement" -}}
+{{- $affinity := deepCopy (.Values.node.affinity | default dict) -}}
+{{- $placement := .Values.adx.controlPlane | default dict -}}
+{{- with $placement.nodeSelector -}}
+  {{- $node := get $affinity "nodeAffinity" | default dict -}}
+  {{- $hasRequired := kindIs "map" (get $node "requiredDuringSchedulingIgnoredDuringExecution") -}}
+  {{- $required := get $node "requiredDuringSchedulingIgnoredDuringExecution" | default dict -}}
+  {{- $terms := list (dict) -}}
+  {{- if $hasRequired -}}
+    {{- $terms = get $required "nodeSelectorTerms" | default list -}}
+  {{- end -}}
+  {{- range $key, $value := . -}}
+    {{- range $term := $terms -}}
+      {{- if or (not $hasRequired) (get $term "matchExpressions") (get $term "matchFields") -}}
+      {{- $expressions := get $term "matchExpressions" | default list -}}
+      {{- $_ := set $term "matchExpressions" (append $expressions (dict "key" $key "operator" "NotIn" "values" (list $value))) -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- $_ := set $required "nodeSelectorTerms" $terms -}}
+  {{- $_ := set $node "requiredDuringSchedulingIgnoredDuringExecution" $required -}}
+  {{- $_ := set $affinity "nodeAffinity" $node -}}
+{{- end -}}
+{{- with $affinity }}
+affinity:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/* Expand the name of the chart. */}}
 {{- define "core.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}

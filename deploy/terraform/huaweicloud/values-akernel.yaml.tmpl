@@ -10,6 +10,7 @@ monitoring:
 %{ endif ~}
 
 adx:
+  controlPlane: ${jsonencode(control_placement)}
   tls:
     existingSecret: akernel-adx-tls
   redis:
@@ -55,6 +56,16 @@ adx:
         memory: "${master_memory}"
 
 node:
+%{ if length(control_placement.nodeSelector) > 0 ~}
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node-role
+                operator: NotIn
+                values: [dragonfly-seed, dragonfly-server]
+%{ endif ~}
   image:
     repository: "${node_image_repository}"
     tag: "${node_image_tag}"

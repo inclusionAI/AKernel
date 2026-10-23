@@ -10,10 +10,16 @@ It installs:
 - Optional Dragonfly to `dragonfly_namespace` (controlled by `install_dragonfly`)
 - Optional prereq `openkruise` to `prereq_namespace` (controlled by `install_prereqs`)
 
+## Control pool
+
+See [control and compute placement](../../README.md#control-and-compute-placement)
+for control-pool defaults, existing-pool reuse and migration requirements.
+
 ## Pod PID budget
 
-`node_pool_pids_limit` defaults to `1620780` for the default pool and all
-user-supplied `extra_node_pools`; generated Dragonfly pools are excluded.
+`node_pool_pids_limit` defaults to `1620780` for the default pool and
+user-supplied `extra_node_pools`. Generated application-control and
+Dragonfly pools are excluded; reusing an existing pool preserves its settings.
 Override it in `terraform.tfvars` with a positive integer or `-1` (node
 allocatable PID capacity). All sandboxes and runtime services share this
 budget; the per-sandbox limit stays 4096. Size it for node capacity and monitor

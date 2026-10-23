@@ -38,6 +38,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- include "core.controlPlacement" . | nindent 6 }}
       containers:
         - name: coordinator
           image: "{{ include "core.image" (dict "root" . "image" .Values.coordinator.image) }}"

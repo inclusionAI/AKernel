@@ -30,6 +30,7 @@ image_repository_override=""
 image_tag_override=""
 install_monitor_override=""
 install_dragonfly_override=""
+control_node_pool_enabled_override=""
 chunk_db_size_override=""
 enable_runc_override=""
 schedule_placement_policy_override=""
@@ -120,6 +121,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --chunk-db-size)
       chunk_db_size_override="$2"
+      shift 2
+      ;;
+    --control-node-pool-enabled)
+      control_node_pool_enabled_override="$2"
       shift 2
       ;;
     --enable-runc)
@@ -213,7 +218,7 @@ case "${vendor}" in
     set_or_prompt cluster_name "ACK cluster name" "${default_cluster_name}" "${cluster_name_override}"
     set_or_prompt zone_ids_csv "Zone IDs, comma separated" "${region}-j,${region}-j,${region}-j" "${zone_ids_override}"
     set_or_prompt vswitch_cidrs_csv "vSwitch CIDRs, comma separated" "192.168.0.0/20,192.168.16.0/20,192.168.32.0/20" "${vswitch_cidrs_override}"
-    set_or_prompt node_pool_size "Node count" "3" "${node_pool_size_override}"
+    set_or_prompt node_pool_size "Compute node count" "3" "${node_pool_size_override}"
     set_or_prompt node_pool_instance_types_csv "Node instance types, comma separated" "ecs.c7.3xlarge" "${node_pool_instance_types_override}"
     set_or_prompt node_pool_key_name "ECS key pair name, empty to skip" "" "${node_pool_key_name_override}"
     set_or_prompt acr_namespace "ACR namespace" "akernel" "${acr_namespace_override}"
@@ -224,7 +229,7 @@ case "${vendor}" in
     set_or_prompt region "Huawei Cloud region" "cn-north-4" "${region_override}"
     set_or_prompt cluster_name "CCE cluster name" "${default_cluster_name}" "${cluster_name_override}"
     set_or_prompt availability_zone "Availability zone" "${region}a" "${availability_zone_override}"
-    set_or_prompt node_pool_size "Node count" "3" "${node_pool_size_override}"
+    set_or_prompt node_pool_size "Compute node count" "3" "${node_pool_size_override}"
     set_or_prompt node_flavor_id "Node flavor ID, empty to auto-select" "" "${node_flavor_id_override}"
     set_or_prompt node_pool_key_pair "ECS key pair name, empty to use a password" "" "${node_pool_key_name_override}"
     set_or_prompt node_pool_login_password "Node login password, empty when using a key pair" "" "${node_pool_login_password_override}"
@@ -284,6 +289,12 @@ if [[ "${force}" -ne 1 && ( -f "${tfvars_file}" || -f "${config_file}" ) ]]; the
   esac
 fi
 
+if [[ -n "${control_node_pool_enabled_override}" ]]; then
+  control_node_pool_enabled_override="$(normalize_bool "${control_node_pool_enabled_override}")"
+fi
+control_node_pool_hcl="$(python3 "${ROOT}/deploy/scripts/control-pool-profile.py" "${dir}" "${control_node_pool_enabled_override}")"
+control_node_pool_b64="$(printf '%s' "${control_node_pool_hcl}" | base64 | tr -d '\n')"
+
 printf '%s\n' "${grafana_admin_password}" > "${grafana_password_file}"
 chmod 600 "${grafana_password_file}"
 
@@ -312,6 +323,7 @@ service_cidr             = "10.20.0.0/20"
 
 node_pool_instance_types       = ${node_pool_instance_types}
 node_pool_size                 = ${node_pool_size}
+control_node_pool              = ${control_node_pool_hcl}
 node_pool_system_disk_category = "cloud_essd"
 node_pool_system_disk_size     = 100
 node_pool_data_disk_enabled    = true
@@ -361,6 +373,7 @@ kubeconfig_output_path    = "${kubeconfig_file}"
 availability_zone         = "${availability_zone}"
 
 node_pool_size             = ${node_pool_size}
+control_node_pool          = ${control_node_pool_hcl}
 node_pool_min_size         = ${node_pool_size}
 node_pool_max_size         = ${node_pool_size}
 node_flavor_id             = "${node_flavor_id}"
@@ -413,6 +426,7 @@ IMAGE_TAG=${image_tag}
 CORE_NAMESPACE=akernel
 MONITOR_NAMESPACE=akernel-monitor
 INSTALL_DRAGONFLY=${install_dragonfly}
+CONTROL_NODE_POOL_B64=${control_node_pool_b64}
 CHUNK_DB_SIZE=${chunk_db_size}
 AKERNEL_ENABLE_RUNC=${enable_runc}
 SCHEDULE_PLACEMENT_POLICY=${schedule_placement_policy}

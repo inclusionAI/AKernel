@@ -9,6 +9,10 @@ provider "alicloud" {
 resource "null_resource" "input_validation" {
   lifecycle {
     precondition {
+      condition     = !var.control_node_pool.enabled || var.create_cluster
+      error_message = "Control-pool creation requires create_cluster=true; use node_selector to reuse a pool in an existing cluster."
+    }
+    precondition {
       condition     = var.create_cluster || length(var.kubeconfig_path) > 0
       error_message = "kubeconfig_path must be set when create_cluster=false."
     }
@@ -135,6 +139,7 @@ locals {
   node_image_repo   = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
+    control_placement           = local.control_placement
     adx_public_service_enabled  = var.adx_public_service_enabled
     adx_service_type            = var.adx_service_type
     adx_control_port            = var.adx_control_port
@@ -226,6 +231,24 @@ locals {
     pod_pids_limit        = var.node_pool_pids_limit
   })]
 
+  control_placement = {
+    nodeSelector = var.control_node_pool.enabled ? { "node-role" = "control" } : var.control_node_pool.node_selector
+    tolerations  = concat(var.control_node_pool.enabled ? [{ key = "node-role", operator = "Equal", value = "control", effect = "NoSchedule" }] : [], var.control_node_pool.tolerations)
+  }
+
+  control_pool = var.control_node_pool.enabled ? [{
+    name                  = var.control_node_pool.name
+    size                  = var.control_node_pool.size
+    instance_types        = var.control_node_pool.instance_types
+    system_disk_size      = var.control_node_pool.system_disk_size
+    data_disk_enabled     = false
+    data_disk_size        = null
+    use_akernel_data_disk = false
+    pod_pids_limit        = null
+    labels                = { "node-role" = "control" }
+    taints                = [{ key = "node-role", value = "control", effect = "NoSchedule" }]
+  }] : []
+
   # Dragonfly server pool (manager + scheduler) — fixed size, goes through extra node pools
   dragonfly_server_pool = var.install_dragonfly && var.dragonfly_server_node_pool.enabled ? [{
     name                  = var.dragonfly_server_node_pool.name
@@ -247,7 +270,7 @@ locals {
   }] : []
 
   # Seed pool is created as a dedicated resource (with autoscaling), not via extra
-  all_extra_node_pools = concat(local.akernel_extra_node_pools, local.dragonfly_server_pool)
+  all_extra_node_pools = concat(local.akernel_extra_node_pools, local.control_pool, local.dragonfly_server_pool)
 
   dragonfly_values = var.install_dragonfly ? templatefile("${path.module}/values-dragonfly.yaml.tmpl", {
     storage_class              = local.effective_storage_class
@@ -794,7 +817,7 @@ resource "helm_release" "akernel_core" {
     value = sha256(join("", [for f in fileset("${path.module}/../../akernel/charts/core", "**") : filesha256("${path.module}/../../akernel/charts/core/${f}")]))
   }
 
-  depends_on = [data.alicloud_cs_cluster_credential.ack, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.create_storage_class]
+  depends_on = [data.alicloud_cs_cluster_credential.ack, alicloud_cs_kubernetes_node_pool.extra, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.create_storage_class]
 }
 
 resource "helm_release" "akernel_monitor" {

@@ -22,6 +22,7 @@ monitoring:
 %{ endif ~}
 
 adx:
+  controlPlane: ${jsonencode(control_placement)}
   tls:
     existingSecret: akernel-adx-tls
   redis:

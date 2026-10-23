@@ -7,8 +7,9 @@ terraform {
 
   required_providers {
     huaweicloud = {
-      source  = "huaweicloud/huaweicloud"
-      version = ">= 1.57.0"
+      source = "huaweicloud/huaweicloud"
+      # cce_flavor_specifications was introduced in 1.83.0.
+      version = ">= 1.83.0"
     }
     helm = {
       source  = "hashicorp/helm"

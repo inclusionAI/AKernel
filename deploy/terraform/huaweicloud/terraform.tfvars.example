@@ -38,6 +38,12 @@ node_flavor_cpu    = 4
 node_flavor_memory = 8
 
 node_pool_size     = 3
+
+# Fresh deployment: create a dedicated application-control pool.
+# Omit this input in old profiles to retain their existing placement.
+control_node_pool = { enabled = true }
+# Existing pool: replace the input above with its actual label and tolerations.
+# control_node_pool = { node_selector = { "node-role" = "master" } }
 node_pool_min_size = 1
 node_pool_max_size = 5
 

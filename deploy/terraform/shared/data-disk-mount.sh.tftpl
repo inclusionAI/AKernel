@@ -17,16 +17,16 @@ FS_TYPE="${fs_type}"
 MIN_SIZE_GB="${min_size_gb}"
 
 # Already mounted? Skip.
-if mountpoint -q "$$MOUNT_PATH" 2>/dev/null; then
-  echo "[data-disk] $$MOUNT_PATH is already mounted, skipping."
+if mountpoint -q "$MOUNT_PATH" 2>/dev/null; then
+  echo "[data-disk] $MOUNT_PATH is already mounted, skipping."
   exit 0
 fi
 
 # Find the root device to exclude it
-ROOT_SOURCE=$$(findmnt -n -o SOURCE /)
+ROOT_SOURCE=$(findmnt -n -o SOURCE /)
 ROOT_DEV=""
-if [ -n "$$ROOT_SOURCE" ]; then
-  ROOT_DEV=$$(lsblk -ndo PKNAME "$$ROOT_SOURCE" 2>/dev/null || true)
+if [ -n "$ROOT_SOURCE" ]; then
+  ROOT_DEV=$(lsblk -ndo PKNAME "$ROOT_SOURCE" 2>/dev/null || true)
 fi
 
 # Find the first unused block device (cloud data disk)
@@ -34,85 +34,85 @@ fi
 # Scan virtio, xen, scsi AND NVMe devices to find the extra unmounted disk.
 TARGET_DEV=""
 for dev in /dev/vd[b-z] /dev/xvd[b-z] /dev/sd[b-z] /dev/nvme[0-9]n1 /dev/nvme[1-9][0-9]n1; do
-  [ -b "$$dev" ] || continue
-  dev_name=$$(basename "$$dev")
+  [ -b "$dev" ] || continue
+  dev_name=$(basename "$dev")
 
   # Skip root device
-  if [ -n "$$ROOT_DEV" ] && [ "$$dev_name" = "$$ROOT_DEV" ]; then
+  if [ -n "$ROOT_DEV" ] && [ "$dev_name" = "$ROOT_DEV" ]; then
     continue
   fi
 
   # Skip if any partition is mounted
-  if lsblk -ln -o MOUNTPOINT "$$dev" 2>/dev/null | grep -q '/'; then
-    echo "[data-disk] Skipping $$dev (has mounted partitions)"
+  if lsblk -ln -o MOUNTPOINT "$dev" 2>/dev/null | grep -q '/'; then
+    echo "[data-disk] Skipping $dev (has mounted partitions)"
     continue
   fi
 
   # Skip if already in LVM
-  if pvs "$$dev" &>/dev/null 2>&1; then
+  if pvs "$dev" &>/dev/null 2>&1; then
     continue
   fi
 
   # Check disk size if MIN_SIZE_GB is set
-  if [ "$$MIN_SIZE_GB" -gt 0 ]; then
-    SIZE_SECTORS=$$(blockdev --getsize64 "$$dev" 2>/dev/null || echo 0)
-    SIZE_GB=$$((SIZE_SECTORS / 1073741824))
-    echo "[data-disk] Checking $$dev: $${SIZE_GB}GB (min required: $${MIN_SIZE_GB}GB)"
-    if [ "$$SIZE_GB" -lt "$$MIN_SIZE_GB" ]; then
-      echo "[data-disk] Skipping $$dev (too small: $${SIZE_GB}GB < $${MIN_SIZE_GB}GB)"
+  if [ "$MIN_SIZE_GB" -gt 0 ]; then
+    SIZE_SECTORS=$(blockdev --getsize64 "$dev" 2>/dev/null || echo 0)
+    SIZE_GB=$((SIZE_SECTORS / 1073741824))
+    echo "[data-disk] Checking $dev: $${SIZE_GB}GB (min required: $${MIN_SIZE_GB}GB)"
+    if [ "$SIZE_GB" -lt "$MIN_SIZE_GB" ]; then
+      echo "[data-disk] Skipping $dev (too small: $${SIZE_GB}GB < $${MIN_SIZE_GB}GB)"
       continue
     fi
   fi
 
   # If it has a filesystem but is not mounted, check if it's our target
-  if blkid "$$dev" &>/dev/null; then
+  if blkid "$dev" &>/dev/null; then
     # Already formatted but not mounted — might be from a previous run that didn't complete fstab
-    EXISTING_FS=$$(blkid -s TYPE -o value "$$dev" 2>/dev/null || true)
-    if [ "$$EXISTING_FS" = "$$FS_TYPE" ]; then
-      TARGET_DEV="$$dev"
-      echo "[data-disk] Found previously formatted $$FS_TYPE device: $$dev"
+    EXISTING_FS=$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)
+    if [ "$EXISTING_FS" = "$FS_TYPE" ]; then
+      TARGET_DEV="$dev"
+      echo "[data-disk] Found previously formatted $FS_TYPE device: $dev"
       break
     fi
-    echo "[data-disk] Skipping $$dev (has filesystem: $$EXISTING_FS)"
+    echo "[data-disk] Skipping $dev (has filesystem: $EXISTING_FS)"
     continue
   fi
 
   # Raw unformatted disk — this is our target
-  TARGET_DEV="$$dev"
+  TARGET_DEV="$dev"
   break
 done
 
-if [ -z "$$TARGET_DEV" ]; then
+if [ -z "$TARGET_DEV" ]; then
   echo "[data-disk] No available data disk found, skipping."
   exit 0
 fi
 
-echo "[data-disk] Using device: $$TARGET_DEV"
-mkdir -p "$$MOUNT_PATH"
+echo "[data-disk] Using device: $TARGET_DEV"
+mkdir -p "$MOUNT_PATH"
 
 # Format if not already formatted
-if ! blkid "$$TARGET_DEV" &>/dev/null; then
-  echo "[data-disk] Formatting $$TARGET_DEV with $$FS_TYPE..."
-  if [ "$$FS_TYPE" = "xfs" ]; then
-    mkfs.xfs -f "$$TARGET_DEV"
+if ! blkid "$TARGET_DEV" &>/dev/null; then
+  echo "[data-disk] Formatting $TARGET_DEV with $FS_TYPE..."
+  if [ "$FS_TYPE" = "xfs" ]; then
+    mkfs.xfs -f "$TARGET_DEV"
   else
-    mkfs.ext4 -F "$$TARGET_DEV"
+    mkfs.ext4 -F "$TARGET_DEV"
   fi
 fi
 
 # Mount
-mount -o defaults,noatime "$$TARGET_DEV" "$$MOUNT_PATH"
+mount -o defaults,noatime "$TARGET_DEV" "$MOUNT_PATH"
 
 # Persist via fstab (use UUID for reliability)
-UUID=$$(blkid -s UUID -o value "$$TARGET_DEV")
-if ! grep -q "$$UUID" /etc/fstab 2>/dev/null; then
-  echo "UUID=$$UUID $$MOUNT_PATH $$FS_TYPE defaults,noatime 0 0" >> /etc/fstab
+UUID=$(blkid -s UUID -o value "$TARGET_DEV")
+if ! grep -q "$UUID" /etc/fstab 2>/dev/null; then
+  echo "UUID=$UUID $MOUNT_PATH $FS_TYPE defaults,noatime 0 0" >> /etc/fstab
 fi
 
-echo "[data-disk] Mounted $$TARGET_DEV at $$MOUNT_PATH ($$FS_TYPE) successfully."
-df -h "$$MOUNT_PATH"
+echo "[data-disk] Mounted $TARGET_DEV at $MOUNT_PATH ($FS_TYPE) successfully."
+df -h "$MOUNT_PATH"
 
 # Create readiness marker file for external verification
 STORAGE_MARKER_PATH="${storage_marker_path}"
-touch "$$STORAGE_MARKER_PATH"
-echo "[data-disk] Created readiness marker: $$STORAGE_MARKER_PATH"
+touch "$STORAGE_MARKER_PATH"
+echo "[data-disk] Created readiness marker: $STORAGE_MARKER_PATH"

@@ -136,6 +136,12 @@ jobs:
           python -m pip install PyYAML
           helm version --short
 
+      - name: Set up Terraform for offline placement tests
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.13.4"
+          terraform_wrapper: false
+
       - name: Verify ADX package, standalone, Helm, and Terraform contracts
         run: |
           python builder/scripts/test_adx_service.py -v
@@ -146,6 +152,28 @@ jobs:
           python deploy/akernel/charts/core/tests/test_adx_chart.py -v
           python deploy/akernel/charts/core/tests/test_node_directories.py -v
           python deploy/terraform/test_adx_contract.py -v
+          python deploy/terraform/test_control_placement.py -v
+
+      - name: Verify CCE control-pool resources with supported provider schemas
+        run: |
+          for version in 1.83.0 1.99.1; do
+            fixture="$(mktemp -d)"
+            cp -R deploy "$fixture/deploy"
+            module="$fixture/deploy/terraform/huaweicloud"
+            cat > "$module/provider_version_override.tf" <<EOF
+          terraform {
+            required_providers {
+              huaweicloud = {
+                source  = "huaweicloud/huaweicloud"
+                version = "= $version"
+              }
+            }
+          }
+          EOF
+            terraform -chdir="$module" init -backend=false -input=false -no-color
+            terraform -chdir="$module" validate -no-color
+            terraform -chdir="$module" test -no-color
+          done
 
       - name: Verify node-directory ownership with restricted Linux capabilities
         run: |

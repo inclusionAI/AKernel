@@ -24,6 +24,7 @@ ACR_NAMESPACE ?=
 MONITOR_STORAGE_CLASS ?=
 INSTALL_MONITOR ?=
 INSTALL_DRAGONFLY ?=
+CONTROL_NODE_POOL_ENABLED ?=
 CHUNK_DB_SIZE ?=
 ENABLE_RUNC ?=
 SCHEDULE_PLACEMENT_POLICY ?=
@@ -42,6 +43,7 @@ help:
 	@echo "  make config FORCE=1                Overwrite an existing config without prompting"
 	@echo "  make config NON_INTERACTIVE=1 ...  Generate config from Make variables"
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
+	@echo "  make config CONTROL_NODE_POOL_ENABLED=true Enable reviewed control-pool creation"
 	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
 	@echo "  make config SCHEDULE_PLACEMENT_POLICY=binpack Use compact scheduling"
 	@echo "  make build IMAGE_TAG=<tag>          Build the all-in-one image"
@@ -91,6 +93,7 @@ config:
 	if [[ -n "$(IMAGE_TAG)" ]]; then args+=(--image-tag "$(IMAGE_TAG)"); fi; \
 	if [[ -n "$(INSTALL_MONITOR)" ]]; then args+=(--install-monitor "$(INSTALL_MONITOR)"); fi; \
 	if [[ -n "$(INSTALL_DRAGONFLY)" ]]; then args+=(--install-dragonfly "$(INSTALL_DRAGONFLY)"); fi; \
+	if [[ -n "$(CONTROL_NODE_POOL_ENABLED)" ]]; then args+=(--control-node-pool-enabled "$(CONTROL_NODE_POOL_ENABLED)"); fi; \
 	if [[ -n "$(CHUNK_DB_SIZE)" ]]; then args+=(--chunk-db-size "$(CHUNK_DB_SIZE)"); fi; \
 	if [[ -n "$(ENABLE_RUNC)" ]]; then args+=(--enable-runc "$(ENABLE_RUNC)"); fi; \
 	if [[ -n "$(SCHEDULE_PLACEMENT_POLICY)" ]]; then args+=(--schedule-placement-policy "$(SCHEDULE_PLACEMENT_POLICY)"); fi; \

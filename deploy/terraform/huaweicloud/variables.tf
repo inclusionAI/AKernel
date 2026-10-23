@@ -344,6 +344,36 @@ variable "node_pool_max_user_namespaces" {
   default     = 65536
 }
 
+variable "control_node_pool" {
+  description = "Create a control pool when enabled; otherwise reuse node_selector, or preserve legacy placement when empty. New guided profiles enable creation; old profiles default to legacy."
+  type = object({
+    enabled          = optional(bool, false)
+    name             = optional(string, "control")
+    size             = optional(number, 1)
+    flavor_id        = optional(string)
+    system_disk_size = optional(number)
+    node_selector    = optional(map(string), {})
+    tolerations = optional(list(object({
+      key      = string
+      operator = optional(string, "Equal")
+      value    = optional(string, "")
+      effect   = optional(string, "NoSchedule")
+    })), [])
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition     = !var.control_node_pool.enabled || (var.control_node_pool.size >= 1 && floor(var.control_node_pool.size) == var.control_node_pool.size)
+    error_message = "An enabled control_node_pool requires a positive integer size."
+  }
+
+  validation {
+    condition     = length(var.control_node_pool.node_selector) <= 1 && (!var.control_node_pool.enabled || length(var.control_node_pool.node_selector) == 0)
+    error_message = "Reuse selects one existing pool label with enabled=false; do not combine node_selector with pool creation."
+  }
+}
+
 variable "extra_node_pools" {
   type = list(object({
     name              = string

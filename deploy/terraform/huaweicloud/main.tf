@@ -9,6 +9,10 @@ provider "huaweicloud" {
 resource "null_resource" "input_validation" {
   lifecycle {
     precondition {
+      condition     = !var.control_node_pool.enabled || var.create_cluster
+      error_message = "Control-pool creation requires create_cluster=true; use node_selector to reuse a pool in an existing cluster."
+    }
+    precondition {
       condition     = var.create_cluster || length(var.kubeconfig_path) > 0
       error_message = "kubeconfig_path must be set when create_cluster=false."
     }
@@ -73,10 +77,13 @@ locals {
   })
   node_pool_bootstrap_script = var.node_pool_extra_data_volume_enabled ? join("\n", [
     local.node_pool_bootstrap_base,
-    templatefile("${path.module}/../shared/data-disk-mount.sh.tftpl", {
-      mount_path = var.node_pool_extra_data_volume_mount_path
-      fs_type    = var.node_pool_extra_data_volume_fs_type
-    })
+    # A successful disk-step exit must not skip the PID setup appended later.
+    format("(\n%s\n)", templatefile("${path.module}/../shared/data-disk-mount.sh.tftpl", {
+      mount_path          = var.node_pool_extra_data_volume_mount_path
+      fs_type             = var.node_pool_extra_data_volume_fs_type
+      min_size_gb         = var.node_pool_extra_data_volume_size
+      storage_marker_path = "${var.node_pool_extra_data_volume_mount_path}/.akernel-storage-ready"
+    }))
   ]) : local.node_pool_bootstrap_base
 
   dragonfly_seed_postinstall = var.dragonfly_seed_node_pool.mount_local_nvme ? join("\n", [
@@ -87,6 +94,7 @@ locals {
   ]) : local.node_pool_bootstrap_script
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
+    control_placement           = local.control_placement
     adx_public_service_enabled  = var.adx_public_service_enabled
     adx_service_type            = var.adx_service_type
     adx_control_port            = var.adx_control_port
@@ -158,6 +166,23 @@ locals {
     tempo_pvc_size       = var.tempo_resources.pvc_size
   })
 
+  control_placement = {
+    nodeSelector = var.control_node_pool.enabled ? { "node-role" = "control" } : var.control_node_pool.node_selector
+    tolerations  = concat(var.control_node_pool.enabled ? [{ key = "node-role", operator = "Equal", value = "control", effect = "NoSchedule" }] : [], var.control_node_pool.tolerations)
+  }
+
+  # CCE needs a base container-runtime disk; this is not the sandbox disk.
+  control_pool = var.control_node_pool.enabled ? [{
+    name              = var.control_node_pool.name
+    size              = var.control_node_pool.size
+    flavor_id         = var.control_node_pool.flavor_id
+    system_disk_size  = var.control_node_pool.system_disk_size
+    data_disk_enabled = true
+    data_disk_size    = null
+    labels            = { "node-role" = "control" }
+    taints            = [{ key = "node-role", value = "control", effect = "NoSchedule" }]
+  }] : []
+
   # Dragonfly server pool (manager + scheduler) — fixed size, goes through extra node pools
   dragonfly_server_pool = var.install_dragonfly && var.dragonfly_server_node_pool.enabled ? [{
     name              = var.dragonfly_server_node_pool.name
@@ -177,7 +202,7 @@ locals {
   }] : []
 
   # Seed pool is created as a dedicated resource (with autoscaling), not via extra
-  all_extra_node_pools = concat(var.extra_node_pools, local.dragonfly_server_pool)
+  all_extra_node_pools = concat(var.extra_node_pools, local.control_pool, local.dragonfly_server_pool)
 
   dragonfly_values = var.install_dragonfly ? templatefile("${path.module}/values-dragonfly.yaml.tmpl", {
     image_registry             = var.dragonfly_image_registry
@@ -757,7 +782,7 @@ resource "helm_release" "akernel_core" {
     value = sha256(join("", [for f in fileset("${path.module}/../../akernel/charts/core", "**") : filesha256("${path.module}/../../akernel/charts/core/${f}")]))
   }
 
-  depends_on = [local_sensitive_file.kubeconfig, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.ensure_kruise_webhooks_healthy, null_resource.cleanup_orphaned_helm_releases]
+  depends_on = [local_sensitive_file.kubeconfig, huaweicloud_cce_node_pool.extra, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.ensure_kruise_webhooks_healthy, null_resource.cleanup_orphaned_helm_releases]
 }
 
 resource "helm_release" "akernel_monitor" {

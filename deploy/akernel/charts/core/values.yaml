@@ -29,6 +29,11 @@ image:
 adx:
   namespace: akernel
   schedulerShards: 1
+  # Empty preserves existing Helm installations. Cloud profiles set this once
+  # for all control roles and the corresponding worker exclusion.
+  controlPlane:
+    nodeSelector: {}
+    tolerations: []
   tls:
     existingSecret: akernel-adx-tls
   redis:
