@@ -31,6 +31,7 @@ from ..types import (
     NetworkPolicy,
     S3Config,
     SandboxInfo,
+    SnapshotInfo,
 )
 
 
@@ -81,6 +82,28 @@ class SandboxSpec:
     storage_limit_mb: int
     network_policy: NetworkPolicy | None
     extra_config: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class SnapshotRestoreSpec:
+    """Restore inputs, deliberately excluding fresh-boot resource defaults."""
+
+    snapshot_id: str
+    idle_timeout: int
+    schedule_timeout: int
+    timeout: int
+    name: str | None
+    command_cwd: str | None
+    port_forwardings: tuple[int, ...]
+    mounts: tuple[Mount, ...]
+    reverse_tunnel: HttpReverseTunnel | None
+    detached: bool
+    failover: bool
+    node_id: str | None
+    network_policy: NetworkPolicy | None
+    xpu: str | None = None
+    storage_mb: int | None = None
+    inherit_entrypoint: bool = False
 
 
 class CommandsDriver(Protocol):
@@ -170,6 +193,16 @@ class BackendSession(Protocol):
 
     def get_info(self) -> SandboxInfo: ...
 
+    def create_snapshot(self, name: str | None, timeout: int) -> SnapshotInfo: ...
+
+    def fork(
+        self,
+        count: int,
+        idle_timeout: int | None,
+        snapshot_timeout: int,
+        restore_timeout: int | None,
+    ) -> ForkOutcome: ...
+
     def reload(self) -> bool: ...
 
     def wait_entrypoint(self) -> int: ...
@@ -184,6 +217,15 @@ class BackendSession(Protocol):
     def close(self) -> None: ...
 
 
+@dataclass
+class ForkOutcome:
+    """Known child results and acknowledgement of temporary snapshot deletion."""
+
+    snapshot_id: str
+    results: list[BackendSession | Exception]
+    cleanup_error: Exception | None = None
+
+
 class Backend(Protocol):
     """Process-level backend factory and shared resource owner."""
 
@@ -192,6 +234,16 @@ class Backend(Protocol):
     capabilities: frozenset[Capability]
 
     def create(self, spec: SandboxSpec) -> BackendSession: ...
+
+    def from_snapshot(self, spec: SnapshotRestoreSpec) -> BackendSession: ...
+
+    def get_snapshot(self, snapshot_id: str) -> SnapshotInfo: ...
+
+    def list_snapshots(
+        self, name: str | None, next_token: str | None, limit: int | None
+    ) -> tuple[list[SnapshotInfo], str | None]: ...
+
+    def delete_snapshot(self, snapshot_id: str) -> None: ...
 
     def pty_for(self, instance_id: str) -> PtyDriver: ...
 

@@ -35,6 +35,7 @@ class BackendOperationError(RuntimeError):
     Missing fields are ``None``. ``retry`` and ``outcome`` retain the service's
     instructions; callers must not infer execution state from the message or
     an HTTP status. The original backend error remains available as the cause.
+    ``cleanup_errors`` retains rollback failures without replacing that cause.
     """
 
     def __init__(
@@ -52,6 +53,7 @@ class BackendOperationError(RuntimeError):
         failure: dict[str, Any] | None = None,
         probe_failure: dict[str, Any] | None = None,
         request_forwarded: bool | None = None,
+        cleanup_errors: tuple[Exception, ...] = (),
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -65,3 +67,21 @@ class BackendOperationError(RuntimeError):
         self.failure = failure
         self.probe_failure = probe_failure
         self.request_forwarded = request_forwarded
+        self.cleanup_errors = cleanup_errors
+
+
+def retain_failure_context(
+    error: BaseException,
+    environment_id: str,
+    cleanup_error: Exception | None = None,
+) -> None:
+    """Preserve authoritative identity and cleanup errors without replacing failure.
+
+    Also works for cancellation exceptions, which must retain their original
+    type. A known-created ID takes precedence over a transport lookup name.
+    """
+    context: Any = error
+    context.environment_id = environment_id
+    if cleanup_error is not None:
+        previous = getattr(error, "cleanup_errors", ()) or ()
+        context.cleanup_errors = (*previous, cleanup_error)

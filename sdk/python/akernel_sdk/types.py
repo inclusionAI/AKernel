@@ -103,6 +103,27 @@ def _normalize_cidr(value: str) -> str:
 
 
 @dataclass(frozen=True)
+class SnapshotInfo:
+    """A reusable memory/filesystem snapshot, independent of its source sandbox.
+
+    Only metadata supplied by the backend is exposed. A snapshot ID is opaque;
+    names are labels and are not interchangeable with the ID.
+    """
+
+    snapshot_id: str
+    names: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.snapshot_id, str) or not self.snapshot_id.strip():
+            raise ValueError("snapshot_id must be a non-empty string")
+        if isinstance(self.names, (str, bytes)) or not all(
+            isinstance(name, str) for name in self.names
+        ):
+            raise TypeError("names must be a sequence of strings")
+        object.__setattr__(self, "names", tuple(self.names))
+
+
+@dataclass(frozen=True)
 class PortRange:
     """Inclusive TCP or UDP port interval.
 

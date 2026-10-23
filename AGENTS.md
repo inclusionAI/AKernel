@@ -458,8 +458,33 @@ The current functional integration deliberately leaves anonymous local
 checkpoint creation inside the workload through EXECD's internal Unix socket.
 The node sets `ADX_EXECD_CONTROL_SOCKET_PATH=/run/akernel`, making the socket
 available at `/run/akernel/execd.sock`. Do not present that socket protocol as a
-stable public SDK interface or add public checkpoint catalog methods to the
-SDK.
+stable public SDK interface. Reusable snapshots are a separate public contract:
+`Sandbox.create_snapshot()`, `get_snapshot()`, `list_snapshots()`,
+`delete_snapshot()` and `Sandbox.from_snapshot()` operate on independent snapshot
+IDs. Keep backend-native types and lifecycle/connection work in `_backends`;
+restore must inherit captured resources and must not rerun fresh-boot setup.
+`sandbox.fork(count=N)` captures once and returns an ordered Sandbox/Exception
+per child, preserving partial successes. The pinned ADX SDK/API has no native
+batch fork; the adapter composes reusable snapshot/create/delete operations.
+Do not describe it as a single server-side request. Fork children are owned
+handles, even for a detached source. Keep temporary snapshot cleanup and
+`ForkCleanupError`'s retained child handles visible and retryable. Idle timeout
+is not an absolute sandbox lifetime; snapshot/restore timeouts bound operations.
+Restore budgets below schedule_timeout + 60 fail before creating an environment
+or taking a fork snapshot. They are logical frontend budgets, not wall-clock
+deadlines for client bootstrap/cleanup. Preserve known IDs and cleanup_errors
+through constructor, route and facade failures, including BaseException during
+tunnel bootstrap. The pinned ADX restore does not inherit network policy:
+from_snapshot callers must supply restrictions explicitly. Fork sends the source
+client's acknowledged policy during creation and refuses to capture after an
+unconfirmed policy update until it has been successfully reapplied.
+Run `sdk/python/tests/integration/test_fork.py` with explicit integration opt-in
+and a complete Python root image to validate memory/FD and private-write
+isolation. This is distinct from a read-only CLI mount image.
+The companion test_fork_network.py verifies per-child tunnels/published ports,
+creation-time and updated policy inheritance, and isolated child policy clear
+against a reachable outbound baseline. Keep host services and all owned children
+cleaned on both failure and success.
 
 Select Kata explicitly only when the cluster has an eligible node:
 
@@ -556,8 +581,10 @@ stores checkpoint state under the persistent `/home/akernel/adx/checkpoints`
 mount. EXECD receives
 `ADX_EXECD_CONTROL_SOCKET_PATH=/run/akernel` so sandbox workloads can trigger
 their local checkpoint handoff through `/run/akernel/execd.sock`. Recovery points
-follow the source sandbox lifecycle. The public SDK exposes only failover and
-reload, not checkpoint identifiers, restore, list, delete, or snapshot TTLs.
+follow the source sandbox lifecycle and remain the basis for failover/reload.
+The public SDK also exposes independent reusable snapshots and restoration to a
+new sandbox identity. Their storage locality and runtime support are controlled
+by the backend; there is no public snapshot TTL or incremental-mode switch.
 Keep local-only snapshot mode and the persistent checkpoint directory
 configured together when changing node startup arguments. The optional Helm
 shared filesystem profile replaces that node checkpoint directory with
