@@ -637,10 +637,11 @@ not emulate them with scheduler labels, idle timers or output replay.
 
 ## Reusable snapshots
 
-This API is available in this source revision; previously published `0.2.0rc3`
-and earlier wheels do not contain it. Install this revision from source until a
-release includes it. The cluster/runtime must support reusable memory/filesystem
-snapshots. Unsupported operations fail with the backend's structured error.
+These APIs require `akernel-sdk>=0.2.0rc4`; `0.2.0rc3` and earlier wheels do
+not contain them. Install a compatible release candidate with `--pre` or install
+this revision from source. The cluster/runtime must support reusable
+memory/filesystem snapshots. Unsupported operations fail with the backend's
+structured error.
 
 ```python
 from akernel_sdk import Sandbox
