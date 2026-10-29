@@ -7,6 +7,7 @@ networkPolicy:
   clientNamespaces: [akernel]
   monitoringNamespaces: [akernel-monitor]
 postgres:
+  enabled: true
   name: juicefs-metadata
   image: ""
   authSecret: juicefs-metadata-app

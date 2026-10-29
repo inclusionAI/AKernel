@@ -1,3 +1,4 @@
+{{- if not .Values.storageClass }}{{ fail "storageClass must be an independent cloud-disk StorageClass" }}{{ end -}}
 {{- range $image := list .Values.redis.image .Values.redis.sentinelImage .Values.redis.exporterImage .Values.haproxy.image }}
 {{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) }}{{ fail "Redis, Sentinel and HAProxy images must be pinned by digest" }}{{ end -}}
 {{- end }}

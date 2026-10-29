@@ -94,7 +94,7 @@ class HALayoutTests(unittest.TestCase):
 
     def test_ha_state_requires_pinned_images_and_independent_pvcs(self):
         image = "example/image@sha256:" + "0" * 64
-        values = {"storageClass": "independent-essd", "postgres": {"image": image},
+        values = {"storageClass": "independent-essd", "postgres": {"image": image.replace("image@", "postgresql:17.11@")},
                   "redis": {"image": image, "sentinelImage": image, "exporterImage": image}, "haproxy": {"image": image}}
         docs = render("state-services", values)
         pg = docs[("Cluster", "juicefs-metadata")]["spec"]
@@ -110,6 +110,16 @@ class HALayoutTests(unittest.TestCase):
         invalid["redis"]["image"] = "redis:latest"
         with self.assertRaises(subprocess.CalledProcessError):
             render("state-services", invalid)
+        redis_first = copy.deepcopy(values)
+        redis_first["postgres"] = {"enabled": False}
+        self.assertNotIn(("Cluster", "juicefs-metadata"), render("state-services", redis_first))
+        redis_first["storageClass"] = ""
+        with self.assertRaises(subprocess.CalledProcessError):
+            render("state-services", redis_first)
+        invalid_pg = copy.deepcopy(values)
+        invalid_pg["postgres"]["image"] = image
+        with self.assertRaises(subprocess.CalledProcessError):
+            render("state-services", invalid_pg)
 
 
 if __name__ == "__main__":

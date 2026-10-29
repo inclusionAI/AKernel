@@ -59,7 +59,17 @@ must not expose partial shared artifacts as successful recovery points.
 ## State and storage services
 
 Install pinned Rook, CloudNativePG and Opstree Redis operators before their
-custom resources. The `charts/state-services` chart creates:
+custom resources. With Rook 1.21.0, disabling `csi.installCsiOperator` and
+`csi.createCsiOperatorResources` avoids deploying CSI drivers, but the Rook
+filesystem controller still watches the `ClientProfile` API. Render the
+`CustomResourceDefinition` objects from the bundled `ceph-csi-operator`
+subchart in the verified Rook archive and apply those definitions separately
+with a dedicated field manager. Retain the source archive checksum and rendered
+definitions with the deployment profile, and update them with Rook. Do not apply
+the subchart's controllers or drivers for an RGW-only deployment. Check operator
+readiness after the informer startup interval before creating the Ceph cluster.
+
+The `charts/state-services` chart creates:
 
 - Three CloudNativePG instances, one per zone, 50 GiB independent cloud PVCs,
   synchronous acknowledgement from one standby, and managed disruption budgets.
@@ -71,7 +81,10 @@ custom resources. The `charts/state-services` chart creates:
   Service is the endpoint for core's existing external Redis Secret interface.
 
 Precreate PostgreSQL's application Secret (`username: juicefs`, `password`) and
-Redis's password Secret. Pin all operand images by digest. Provide an explicit
+Redis's password Secret. Pin all operand images by digest. CloudNativePG also
+requires the PostgreSQL version tag, for example `postgresql:17.11@sha256:...`,
+to detect major upgrades. The state chart supports `postgres.enabled=false`
+when initializing Redis before the database operator is ready. Provide an explicit
 independent cloud-disk StorageClass for state PVCs. Restrict network access to
 the consuming applications, operators and monitoring/backup clients. Redis
 Sentinel uses asynchronous replication: the replica write constraint and role

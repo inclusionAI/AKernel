@@ -1,5 +1,6 @@
+{{- if .Values.postgres.enabled }}
 {{- if not .Values.storageClass }}{{ fail "storageClass must be an independent cloud-disk StorageClass" }}{{ end -}}
-{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" .Values.postgres.image) }}{{ fail "postgres.image must be pinned by digest" }}{{ end -}}
+{{- if not (regexMatch ":[0-9]+([.][0-9]+)*[^/@]*@sha256:[0-9a-f]{64}$" .Values.postgres.image) }}{{ fail "postgres.image requires a PostgreSQL version tag and digest for CloudNativePG upgrade detection" }}{{ end -}}
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -49,3 +50,4 @@ spec:
     topologyKey: topology.kubernetes.io/zone
   monitoring:
     enablePodMonitor: false
+{{- end }}
