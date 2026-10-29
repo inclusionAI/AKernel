@@ -21,6 +21,7 @@ data:
     scrape_configs:
       # Prometheus self-monitoring endpoint
       - job_name: 'prometheus'
+        scrape_interval: 30s
         static_configs:
           - targets: ['localhost:9090']
             labels:
@@ -469,7 +470,5 @@ data:
       - name: adx-creation
         interval: 15s
         rules:
-        - record: adx:environment_create_request_qps:rate1m
-          expr: sum by (cluster, adx_env) (rate(adx_environment_create_requests_total[1m]))
         - record: adx:environment_created_qps:rate1m
           expr: sum by (cluster, adx_env) (rate(adx_environment_created_total[1m]))

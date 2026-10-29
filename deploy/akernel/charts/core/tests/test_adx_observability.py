@@ -265,7 +265,8 @@ class ObservabilityTest(unittest.TestCase):
             self.assertEqual(labels["cluster"], "cluster-west")
         rules = yaml.safe_load(enabled[("ConfigMap", "prometheus-config")]["data"]["adx-rules.yaml"])
         records = {r["record"] for g in rules["groups"] for r in g["rules"]}
-        self.assertIn("adx:environment_create_request_qps:rate1m", records)
+        self.assertIn("adx:environment_created_qps:rate1m", records)
+        self.assertNotIn("adx:environment_create_request_qps:rate1m", records)
 
     def test_dashboard_uids_and_environment_contract(self) -> None:
         dashboard_dir = ROOT / "deploy/akernel/charts/monitor/dashboards"

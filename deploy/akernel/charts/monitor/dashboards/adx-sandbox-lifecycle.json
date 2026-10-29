@@ -5,7 +5,7 @@
   "schemaVersion": 41,
   "version": 1,
   "editable": true,
-  "refresh": "30s",
+  "refresh": "1m",
   "time": {
     "from": "now-30m",
     "to": "now"
@@ -44,7 +44,8 @@
           "refId": "A",
           "expr": "sum by(cluster,adx_env)(increase(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",outcome=\"success\"}[$__rate_interval]))/sum by(cluster,adx_env)(increase(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",outcome=~\"success|failure\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
         }
       ],
       "options": {
@@ -55,7 +56,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 2,
@@ -84,7 +87,8 @@
           "refId": "A",
           "expr": "histogram_quantile(0.95,sum by(cluster,adx_env,le)(rate(adx_environment_create_success_call_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
         }
       ],
       "options": {
@@ -95,7 +99,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 3,
@@ -124,7 +130,8 @@
           "refId": "A",
           "expr": "sum by(cluster,adx_env,outcome)(increase(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{outcome}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{outcome}}",
+          "range": true
         }
       ],
       "options": {
@@ -135,7 +142,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 4,
@@ -216,7 +225,8 @@
             }
           }
         }
-      ]
+      ],
+      "maxDataPoints": 1
     },
     {
       "id": 5,
@@ -245,7 +255,8 @@
           "refId": "A",
           "expr": "adx_environment_creating{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}",
+          "range": true
         }
       ],
       "options": {
@@ -256,7 +267,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 6,
@@ -285,7 +298,8 @@
           "refId": "A",
           "expr": "max by(cluster,adx_env,state)(adx_environment_create_oldest_wait_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}",
+          "range": true
         }
       ],
       "options": {
@@ -296,7 +310,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 7,
@@ -325,7 +341,8 @@
           "refId": "A",
           "expr": "adx_environment_create_wait_age_unknown{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}",
+          "range": true
         }
       ],
       "options": {
@@ -336,7 +353,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 8,
@@ -365,7 +384,8 @@
           "refId": "A",
           "expr": "sum by(cluster,adx_env,reason)(increase(adx_environment_interruptions_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}",
+          "range": true
         }
       ],
       "options": {
@@ -376,7 +396,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 9,
@@ -405,7 +427,8 @@
           "refId": "A",
           "expr": "sum by(cluster,adx_env,result)(increase(adx_environment_recovery_results_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{result}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{result}}",
+          "range": true
         }
       ],
       "options": {
@@ -416,7 +439,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 10,
@@ -445,7 +470,8 @@
           "refId": "A",
           "expr": "adx_environment_unrecovered{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}",
+          "range": true
         }
       ],
       "options": {
@@ -456,7 +482,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 11,
@@ -485,7 +513,8 @@
           "refId": "A",
           "expr": "sum by(cluster,adx_env)(increase(adx_worker_incidents_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
         }
       ],
       "options": {
@@ -496,7 +525,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 12,
@@ -525,7 +556,8 @@
           "refId": "A",
           "expr": "adx_environment_operation_unknown{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
         }
       ],
       "options": {
@@ -536,7 +568,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 13,
@@ -565,7 +599,8 @@
           "refId": "A",
           "expr": "up{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
           "instant": true,
-          "legendFormat": "{{job}} / {{instance}}"
+          "legendFormat": "{{job}} / {{instance}}",
+          "range": false
         }
       ],
       "options": {
@@ -575,8 +610,10 @@
           ],
           "fields": "",
           "values": false
-        }
-      }
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
     },
     {
       "id": 14,
@@ -605,7 +642,8 @@
           "refId": "A",
           "expr": "adx_observability_snapshot_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
           "instant": true,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
         }
       ],
       "options": {
@@ -615,8 +653,10 @@
           ],
           "fields": "",
           "values": false
-        }
-      }
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
     },
     {
       "id": 15,
@@ -645,7 +685,8 @@
           "refId": "A",
           "expr": "sum by(cluster,adx_env,operation,intent,outcome)(increase(adx_environment_lifecycle_operations_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{operation}} {{intent}} {{outcome}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{operation}} {{intent}} {{outcome}}",
+          "range": true
         }
       ],
       "options": {
@@ -656,7 +697,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 16,
@@ -685,7 +728,8 @@
           "refId": "A",
           "expr": "sum by(cluster,adx_env,reason)(increase(adx_environment_create_rejections_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}",
+          "range": true
         }
       ],
       "options": {
@@ -696,7 +740,9 @@
           "fields": "",
           "values": false
         }
-      }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 17,
@@ -725,7 +771,8 @@
           "refId": "A",
           "expr": "adx_observability_history_known{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
           "instant": true,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
         }
       ],
       "options": {
@@ -735,8 +782,10 @@
           ],
           "fields": "",
           "values": false
-        }
-      }
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
     },
     {
       "id": 18,
@@ -765,7 +814,8 @@
           "refId": "A",
           "expr": "adx_observability_started_timestamp_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * 1000",
           "instant": true,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
         }
       ],
       "options": {
@@ -775,8 +825,10 @@
           ],
           "fields": "",
           "values": false
-        }
-      }
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
     },
     {
       "id": 19,

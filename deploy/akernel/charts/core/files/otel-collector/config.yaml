@@ -156,7 +156,13 @@ receivers:
               labels: {component_name: adx-relay}
 
         - job_name: otel-collector
-          scrape_interval: 15s
+          scrape_interval: 30s
+          # Internal batch/HTTP/RPC histograms remain available at the local endpoint.
+          # Fleet health uses queue, refused, failed and process metrics.
+          metric_relabel_configs:
+          - source_labels: [__name__]
+            action: drop
+            regex: '(otelcol_processor_batch_batch_send_size(_bytes)?|http[_.](client|server)[_.]duration(_milliseconds)?|rpc[_.](client|server)[_.](duration(_milliseconds)?|(request|response)[_.]size(_bytes)?|(requests|responses)_per_rpc))(_(bucket|sum|count))?'
           static_configs:
             - targets: [127.0.0.1:18889]
               labels: {component_name: otel-collector}

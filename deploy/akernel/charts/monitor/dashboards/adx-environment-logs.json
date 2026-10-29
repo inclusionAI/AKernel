@@ -47,11 +47,11 @@
     {
       "title": "Explore Requests",
       "type": "link",
-      "url": "/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20%28resource.cluster%20%3D%20%5C%22${cluster:percentencode}%5C%22%20%7C%7C%20%5C%22${cluster:percentencode}%5C%22%20%3D%20%5C%22..%2A%5C%22%29%20%26%26%20resource.adx_env%20%3D~%20%5C%22${adx_env:percentencode}%5C%22%20%26%26%20resource.service.name%20%3D%20%5C%22adx-apiserver%5C%22%20%26%26%20name%20%3D%20%5C%22environment.create%5C%22%20%7D%20%7C%20select%28span.environment.id%2C%20span.environment.create.outcome%2C%20resource.service.name%29%22%2C%22tableType%22%3A%22spans%22%2C%22limit%22%3A50%2C%22spss%22%3A20%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-6h%22%2C%22to%22%3A%22now%22%7D%7D%7D",
+      "url": "/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B+%28resource.cluster+%3D+%5C%22${cluster:percentencode}%5C%22+%7C%7C+%5C%22${cluster:percentencode}%5C%22+%3D+%5C%22..%2A%5C%22%29+%26%26+resource.adx_env+%3D~+%5C%22${adx_env:percentencode}%5C%22+%26%26+resource.service.name+%3D+%5C%22adx-apiserver%5C%22+%26%26+name+%3D+%5C%22environment.create%5C%22+%7D+%7C+select%28span.environment.id%2C+span.environment.create.outcome%2C+resource.service.name%29%22%2C%22tableType%22%3A%22spans%22%2C%22limit%22%3A20%2C%22spss%22%3A20%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D%7D",
       "includeVars": false,
       "keepTime": false,
       "targetBlank": false,
-      "tooltip": "Creation rows show total server create time; rejected requests and other HTTP rows show HTTP handling time. Click a Span ID to inspect stages."
+      "tooltip": "Search up to 20 sampled environment.create business spans in the last 15 minutes. Expand the time range when needed."
     },
     {
       "title": "Environment Logs",
@@ -114,12 +114,12 @@
           },
           "expr": "{cluster=~\"$cluster\",adx_env=~\"$adx_env\",component_name=\"adx-runtime\"} | runtime_id =~ `${runtime_id:raw}` | label_format adx_keyword_match=`{{ contains (urldecode \"${log_search:percentencode}\") (__line__) }}` | adx_keyword_match=\"true\" | drop adx_keyword_match",
           "refId": "A",
-          "maxLines": 500
+          "maxLines": 200
         }
       ],
       "title": "Environment Logs",
       "type": "logs",
-      "description": "Main-process stdout/stderr. Runtime ID contains Environment ID and generation. Runtime filter is a regex; .* matches all, .*environment-id.* selects its generations. Log text is literal and case-sensitive. At most 500 lines per query. SDK command responses are separate."
+      "description": "Main-process stdout/stderr. Runtime ID contains Environment ID and generation. Runtime filter is a regex; .* matches all, .*environment-id.* selects its generations. Log text is literal and case-sensitive. At most 200 lines per query. SDK command responses are separate."
     },
     {
       "id": 23,
@@ -244,7 +244,7 @@
           "queryType": "traceql",
           "tableType": "spans",
           "query": "{ (resource.cluster = \"${cluster:raw}\" || \"${cluster:raw}\" = \"..*\") && resource.adx_env =~ \"$adx_env\" && resource.service.name = \"adx-apiserver\" && name = \"environment.create\" } | select(span.environment.id, span.environment.create.outcome, resource.service.name)",
-          "limit": 50,
+          "limit": 20,
           "spss": 20,
           "filters": []
         }

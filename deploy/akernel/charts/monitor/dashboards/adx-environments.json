@@ -10,7 +10,7 @@
     "from": "now-15m",
     "to": "now"
   },
-  "description": "Current Running and Paused inventory and fresh runtime usage from Prometheus. Enable environmentDetails scrapes to collect these series. Paused resources are absent rather than a pre-pause sample.",
+  "description": "Select an Environment ID or narrow RE2 pattern for current inventory and fresh runtime usage. Detail queries are manual and start with no Environment selected.",
   "templating": {
     "list": [
       {
@@ -39,7 +39,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(adx_environment_info{cluster=~\"$cluster\"}, adx_env)",
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis{cluster=~\"$cluster\"}, adx_env)",
         "refresh": 1,
         "multi": true,
         "includeAll": true,
@@ -63,13 +63,13 @@
       },
       {
         "name": "environment_id",
-        "label": "Environment ID regex",
-        "description": "RE2 regex. Use \\x60 to match a backtick.",
+        "label": "Environment ID regex (required)",
+        "description": "Enter an Environment ID or narrow RE2 pattern. Use \\x60 to match a backtick. Broad patterns explicitly request all matching instances.",
         "type": "textbox",
-        "query": ".*",
+        "query": "__select_environment__",
         "current": {
-          "text": ".*",
-          "value": ".*"
+          "text": "__select_environment__",
+          "value": "__select_environment__"
         }
       }
     ]
@@ -103,7 +103,8 @@
           "refId": "A",
           "expr": "max by (cluster, adx_env, environment_id, node_id, state) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
           "instant": true,
-          "format": "table"
+          "format": "table",
+          "range": false
         }
       ],
       "transformations": [
@@ -131,7 +132,8 @@
           }
         }
       ],
-      "description": "Current Running/Paused logical inventory joined to fresh runtime samples. It is not a historical list of every created Environment. With all test Environments deleted, an empty inventory is expected; check scrape health to distinguish missing collection."
+      "description": "Select an Environment ID or narrow pattern first. Current Running/Paused logical inventory joined to fresh runtime samples. It is not a historical list of every created Environment. With all test Environments deleted, an empty inventory is expected; check scrape health to distinguish missing collection.",
+      "maxDataPoints": 1
     },
     {
       "id": 2,
@@ -159,13 +161,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(adx_environment_cpu_usage_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`}[2m]) and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\"})",
+          "expr": "rate(adx_environment_cpu_usage_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`}[$__rate_interval]) and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
           "instant": false,
           "format": "time_series",
-          "legendFormat": "{{environment_id}} / {{runtime_id}}"
+          "legendFormat": "{{environment_id}} / {{runtime_id}}",
+          "range": true
         }
       ],
-      "description": "Measured per-Environment CPU usage from fresh Running inventory and runtime observations. Requires at least two counter scrapes for a rate. No active Environment, no samples or stale observations produce no series."
+      "description": "Select an Environment ID or narrow pattern first. Measured per-Environment CPU usage from fresh Running inventory and runtime observations. Requires at least two counter scrapes for a rate. No active Environment, no samples or stale observations produce no series.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 3,
@@ -193,13 +198,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "adx_environment_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\"})",
+          "expr": "adx_environment_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
           "instant": false,
           "format": "time_series",
-          "legendFormat": "{{environment_id}} / {{runtime_id}}"
+          "legendFormat": "{{environment_id}} / {{runtime_id}}",
+          "range": true
         }
       ],
-      "description": "Measured memory for fresh Running Environments. Paused or deleted Environments do not display an old runtime sample as current memory. No active/fresh sample produces no series."
+      "description": "Select an Environment ID or narrow pattern first. Measured memory for fresh Running Environments. Paused or deleted Environments do not display an old runtime sample as current memory. No active/fresh sample produces no series.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     }
   ],
   "links": [

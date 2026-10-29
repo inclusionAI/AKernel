@@ -152,6 +152,7 @@ jobs:
           python deploy/standalone/test_start.py -v
           python deploy/scripts/test_ensure_adx_secret.py -v
           python deploy/scripts/test_get_adx_admin_key.py -v
+          python deploy/tests/kubernetes/test_node_lifecycle.py -v
           python deploy/akernel/charts/core/tests/test_adx_chart.py -v
           python deploy/akernel/charts/core/tests/test_node_directories.py -v
           python deploy/akernel/charts/core/tests/test_shared_checkpoint_storage.py -v
@@ -160,6 +161,7 @@ jobs:
 
       - name: Evaluate ADX multi-cluster dashboard queries
         run: |
+          python deploy/tests/observability/metrics_collection_contract.py --output "$RUNNER_TEMP/adx-metrics-collection"
           python deploy/tests/observability/dashboard_presentation_contract.py --output "$RUNNER_TEMP/adx-dashboard-presentation"
           python deploy/tests/observability/dashboard_query_contract.py --docker --output "$RUNNER_TEMP/adx-dashboard-queries"
           python deploy/tests/observability/dashboard_signal_contract.py --browser --output "$RUNNER_TEMP/adx-dashboard-signals"
@@ -242,7 +244,7 @@ jobs:
             "akernel-ci/all-in-one:${GITHUB_SHA}" -euc '
               test -x /usr/local/bin/runsc
               test -x /usr/local/bin/containerd-shim-runsc-v1
-              for helper in checkpointgofer gvisor-sentry-prewarmer gvisor_sentry runsc-metric-server; do
+              for helper in checkpointgofer gvisor-sentry-prewarmer gvisor_sentry runsc-fd-parking runsc-metric-server; do
                 test -x "/usr/local/bin/gvisor-bin/${helper}"
               done
               test ! -e /usr/local/bin/containerd-shim-kata-v2

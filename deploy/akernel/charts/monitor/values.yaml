@@ -15,7 +15,8 @@ grafanaServer:
   prometheus:
     name: Prometheus
     url: http://prometheus:9090
-    timeInterval: "10s"
+    # Match business scrapes so $__rate_interval overlaps adjacent evaluations.
+    timeInterval: "15s"
     httpMethod: "POST"
     isDefault: true
     uid: prometheus
@@ -194,7 +195,7 @@ prometheusServer:
   config:
     clusterName: 'akernel'
     environment: 'kubernetes'
-    retentionTime: '30d'
+    retentionTime: '7d'
     controlPlanePods:
       enabled: true
       namespaces:

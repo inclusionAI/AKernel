@@ -34,6 +34,7 @@ spec:
         checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
         checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
     spec:
+      terminationGracePeriodSeconds: 120
       {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
       {{- with .Values.adx.checkpointStorage.nodeSelector }}
       nodeSelector:
@@ -50,6 +51,12 @@ spec:
           imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
           command: [/opt/adx/current/bin/adxctl]
           args: [--config, /etc/akernel/adx-coordinator.yaml, run]
+          # The all-in-one image uses systemd's stop signal. This container runs
+          # adxctl as PID 1, so explicitly stop its supervisor and gRPC listener.
+          lifecycle:
+            preStop:
+              exec:
+                command: [/opt/adx/current/bin/adxctl, --config, /etc/akernel/adx-coordinator.yaml, stop]
           env:
             {{- if eq .Values.adx.redis.mode "managed" }}
             - name: ADX_REDIS_PASSWORD
@@ -107,6 +114,11 @@ spec:
           imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
           command: [/usr/local/bin/otelcol-contrib]
           args: [--config=/etc/otel/control.yaml]
+          # This PID 1 is the Collector, not systemd; SIGTERM flushes exporters.
+          lifecycle:
+            preStop:
+              exec:
+                command: [/bin/sh, -c, 'kill -TERM 1']
           env:
             - {name: ADX_METRICS_TARGET, value: "127.0.0.1:19090"}
             - {name: ADX_METRICS_COMPONENT, value: adx-coordinator}

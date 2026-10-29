@@ -38,8 +38,8 @@ ARG OTELCOL_CONTRIB_SHA256=
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 ARG ADX_VERSION=v0.1.0rc2
-ARG ADX_RELEASE_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261027132105-555c7478b38b/linux/amd64/adx-release.tar.gz
-ARG ADX_RELEASE_SHA256=a0d93b3758797e3894f566c31fec73daccd678676ab4c82d8b78cce36987eca9
+ARG ADX_RELEASE_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261028142955-18acb0fe1215/linux/amd64/adx-release.tar.gz
+ARG ADX_RELEASE_SHA256=d5db7193e80ab0088d8a1ff304fc38bba02ba76761b29f5fbd89881059e1de2d
 
 FROM ${AKERNEL_NODE_BASE_IMAGE} AS adx-release
 ARG ADX_RELEASE_URL
@@ -93,7 +93,8 @@ RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-g
       "${GVISOR_SHA512}" /gvisor; \
     for binary in runsc containerd-shim-runsc-v1 \
       gvisor-bin/checkpointgofer gvisor-bin/gvisor-sentry-prewarmer \
-      gvisor-bin/gvisor_sentry gvisor-bin/runsc-metric-server; do \
+      gvisor-bin/gvisor_sentry gvisor-bin/runsc-fd-parking \
+      gvisor-bin/runsc-metric-server; do \
       sh /usr/local/libexec/verify-elf-arch.sh "/gvisor/${binary}" "${TARGETARCH}"; \
     done; \
     /gvisor/runsc --version

@@ -38,6 +38,8 @@ spec:
         checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
         checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
     spec:
+      # Two services may each consume the configured 90s stop budget.
+      terminationGracePeriodSeconds: 210
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -48,6 +50,10 @@ spec:
           imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
           command: [/opt/adx/current/bin/adxctl]
           args: [--config, /etc/akernel/adx-ingress-api.yaml, run]
+          lifecycle:
+            preStop:
+              exec:
+                command: [/opt/adx/current/bin/adxctl, --config, /etc/akernel/adx-ingress-api.yaml, stop]
           env:
             {{- if eq .Values.adx.redis.mode "managed" }}
             - name: ADX_REDIS_PASSWORD
@@ -106,6 +112,10 @@ spec:
           imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
           command: [/usr/local/bin/otelcol-contrib]
           args: [--config=/etc/otel/ingress-api.yaml]
+          lifecycle:
+            preStop:
+              exec:
+                command: [/bin/sh, -c, 'kill -TERM 1']
           env:
             - {name: ADX_METRICS_TARGET, value: "127.0.0.1:18080"}
             - {name: ADX_METRICS_COMPONENT, value: adx-ingress}

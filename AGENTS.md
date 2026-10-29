@@ -183,7 +183,7 @@ PVM integration targets `inclusionAI/AKernel:develop` after the sandboxd runtime
 
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all
-four adjacent `gvisor-bin/` helpers in the final image. The manifest SHA-512
+five adjacent `gvisor-bin/` helpers in the final image. The manifest SHA-512
 covers the archive, not a bare runsc binary. Keep CI's final-image payload
 checks synchronized; do not mix helper versions or fetch them at runtime.
 
@@ -254,6 +254,11 @@ Deployments with independent `adxctl` supervisors and health probes. Their
 generated state is container-local, while Redis persists authoritative state.
 Adxlet uses its own state subtree under `/home/akernel/adx/run/node`;
 never start Coordinator, Ingress/API Server, or Redis in a node Pod.
+
+Preserve explicit ADX/Collector preStop hooks and keep Pod termination grace
+longer than service stop budgets. Qualify shutdown changes with the
+[node lifecycle regression](deploy/tests/kubernetes/node_lifecycle.py) on an
+idle dedicated cluster; see [deployment behavior](deploy/README.md#systemd-container-identity).
 
 Helm `adx.checkpointStorage.kind=distributed_fs` consumes an operator-mounted
 JuiceFS/AFS filesystem or an existing RWX claim. The node and Coordinator must
@@ -778,6 +783,10 @@ For standalone lifecycle or launch changes, also run the helper tests without st
 make deploy-standalone-test
 ```
 
+Keep opt-in native Restore fault tests under `deploy/tests/native_restore/`
+aligned with the pinned ADX source and Sandboxd/runtime bundle; run only against
+a dedicated empty backend with checkpoint paths shared by the test process.
+
 Run the basic e2e example against a deployed cluster with:
 
 ```bash
@@ -849,6 +858,11 @@ owns tracing and AFS options; test actual mount validation and checkpoint reload
 Environment details are opt-in scrape jobs on the existing Prometheus instance,
 with the same datasource and retention policy as summary metrics. Keep default
 and detail-enabled provisioning compatible with private images and node placement.
+
+Keep Grafana's datasource interval aligned with business scrapes (15s), with
+a 30s override for Collector queries. Use `$__rate_interval` for counter and
+histogram histories; validate bursts between coarse query steps with the
+dashboard query contract.
 
 Scope ADX dashboards, logs and TraceQL by `cluster` and `adx_env`; preserve both
 labels in identity joins and per-deployment recording rules. Grafana date fields

@@ -47,11 +47,11 @@
     {
       "title": "Explore Requests",
       "type": "link",
-      "url": "/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20%28resource.cluster%20%3D%20%5C%22${cluster:percentencode}%5C%22%20%7C%7C%20%5C%22${cluster:percentencode}%5C%22%20%3D%20%5C%22..%2A%5C%22%29%20%26%26%20resource.adx_env%20%3D~%20%5C%22${adx_env:percentencode}%5C%22%20%26%26%20resource.service.name%20%3D%20%5C%22adx-apiserver%5C%22%20%26%26%20name%20%3D%20%5C%22environment.create%5C%22%20%7D%20%7C%20select%28span.environment.id%2C%20span.environment.create.outcome%2C%20resource.service.name%29%22%2C%22tableType%22%3A%22spans%22%2C%22limit%22%3A50%2C%22spss%22%3A20%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-6h%22%2C%22to%22%3A%22now%22%7D%7D%7D",
+      "url": "/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B+%28resource.cluster+%3D+%5C%22${cluster:percentencode}%5C%22+%7C%7C+%5C%22${cluster:percentencode}%5C%22+%3D+%5C%22..%2A%5C%22%29+%26%26+resource.adx_env+%3D~+%5C%22${adx_env:percentencode}%5C%22+%26%26+resource.service.name+%3D+%5C%22adx-apiserver%5C%22+%26%26+name+%3D+%5C%22environment.create%5C%22+%7D+%7C+select%28span.environment.id%2C+span.environment.create.outcome%2C+resource.service.name%29%22%2C%22tableType%22%3A%22spans%22%2C%22limit%22%3A20%2C%22spss%22%3A20%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D%7D",
       "includeVars": false,
       "keepTime": false,
       "targetBlank": false,
-      "tooltip": "Creation rows show total server create time; rejected requests and other HTTP rows show HTTP handling time. Click a Span ID to inspect stages."
+      "tooltip": "Search up to 20 sampled environment.create business spans in the last 15 minutes. Expand the time range when needed."
     },
     {
       "title": "Environment Logs",
@@ -116,7 +116,7 @@
       "id": 1,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -142,12 +142,14 @@
           "expr": "sum(adx_coordinator_environments{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=\"Running\"})",
           "legendFormat": "Running",
           "refId": "A",
-          "instant": false
+          "instant": true,
+          "range": false
         }
       ],
       "title": "Running Environments",
       "type": "stat",
-      "description": "Committed Running state."
+      "description": "Committed Running state.",
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -182,7 +184,7 @@
       "id": 2,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -207,12 +209,15 @@
           },
           "expr": "sum(max by(cluster,adx_env,node_id)(adx_coordinator_node_reachable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}))",
           "refId": "A",
-          "legendFormat": "Reachable nodes"
+          "legendFormat": "Reachable nodes",
+          "instant": true,
+          "range": false
         }
       ],
       "title": "Reachable Nodes",
       "type": "stat",
-      "description": "Number of registered nodes whose Coordinator heartbeat is currently reachable. Adds the 0/1 reachability values; registered but unreachable nodes contribute zero."
+      "description": "Number of registered nodes whose Coordinator heartbeat is currently reachable. Adds the 0/1 reachability values; registered but unreachable nodes contribute zero.",
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -232,7 +237,9 @@
         "h": 4
       },
       "id": 3,
-      "options": {},
+      "options": {
+        "graphMode": "none"
+      },
       "targets": [
         {
           "datasource": {
@@ -241,13 +248,15 @@
           },
           "expr": "sum(adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "Nodes",
-          "range": true,
-          "refId": "A"
+          "range": false,
+          "refId": "A",
+          "instant": true
         }
       ],
       "title": "Schedulable Nodes",
       "type": "stat",
-      "description": "Sum of current scheduler-admission flags. A reachable node can be administratively blocked or lack an eligible runtime; reachability and admission are different."
+      "description": "Sum of current scheduler-admission flags. A reachable node can be administratively blocked or lack an eligible runtime; reachability and admission are different.",
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -267,7 +276,9 @@
         "h": 4
       },
       "id": 4,
-      "options": {},
+      "options": {
+        "graphMode": "none"
+      },
       "targets": [
         {
           "datasource": {
@@ -276,13 +287,15 @@
           },
           "expr": "sum(adx_coordinator_queued_requests{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "Requests",
-          "range": true,
-          "refId": "A"
+          "range": false,
+          "refId": "A",
+          "instant": true
         }
       ],
       "title": "Queued Requests",
       "type": "stat",
-      "description": "Current requests waiting in the Coordinator scheduling queue; excludes requests already assigned to a node."
+      "description": "Current requests waiting in the Coordinator scheduling queue; excludes requests already assigned to a node.",
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -348,12 +361,15 @@
           },
           "refId": "A",
           "expr": "sum(adx_coordinator_node_reserved_cpu_millis{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}) / clamp_min(sum(adx_coordinator_node_capacity_cpu_millis{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}), 1)",
-          "legendFormat": "Allocation Ratio"
+          "legendFormat": "Allocation Ratio",
+          "instant": true,
+          "range": false
         }
       ],
       "title": "CPU Allocation Ratio",
       "type": "gauge",
-      "id": 5
+      "id": 5,
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -456,7 +472,9 @@
           },
           "refId": "A",
           "expr": "sum(adx_coordinator_node_capacity_cpu_millis{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}) / 1000",
-          "legendFormat": "Scheduling Capacity"
+          "legendFormat": "Scheduling Capacity",
+          "instant": false,
+          "range": true
         },
         {
           "datasource": {
@@ -465,12 +483,16 @@
           },
           "refId": "B",
           "expr": "sum(adx_coordinator_node_reserved_cpu_millis{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} and on (cluster, adx_env, node_id) (adx_coordinator_node_reachable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} == 1)) / 1000",
-          "legendFormat": "Allocated"
+          "legendFormat": "Allocated",
+          "instant": false,
+          "range": true
         }
       ],
       "title": "CPU Scheduling Capacity and Allocated",
       "type": "timeseries",
-      "description": "Scheduling capacity is zero when admission is disabled. Allocated resources come from reachable-node ledgers and include starting and running environments. Disabling admission does not release allocations. This is not actual utilization."
+      "description": "Scheduling capacity is zero when admission is disabled. Allocated resources come from reachable-node ledgers and include starting and running environments. Disabling admission does not release allocations. This is not actual utilization.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -536,12 +558,15 @@
           },
           "refId": "A",
           "expr": "sum(adx_coordinator_node_reserved_memory_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}) / clamp_min(sum(adx_coordinator_node_capacity_memory_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}), 1)",
-          "legendFormat": "Allocation Ratio"
+          "legendFormat": "Allocation Ratio",
+          "instant": true,
+          "range": false
         }
       ],
       "title": "Memory Allocation Ratio",
       "type": "gauge",
-      "id": 7
+      "id": 7,
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -644,7 +669,9 @@
           },
           "refId": "A",
           "expr": "sum(adx_coordinator_node_capacity_memory_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}) / 1",
-          "legendFormat": "Scheduling Capacity"
+          "legendFormat": "Scheduling Capacity",
+          "instant": false,
+          "range": true
         },
         {
           "datasource": {
@@ -653,12 +680,16 @@
           },
           "refId": "B",
           "expr": "sum(adx_coordinator_node_reserved_memory_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} and on (cluster, adx_env, node_id) (adx_coordinator_node_reachable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} == 1)) / 1",
-          "legendFormat": "Allocated"
+          "legendFormat": "Allocated",
+          "instant": false,
+          "range": true
         }
       ],
       "title": "Memory Scheduling Capacity and Allocated",
       "type": "timeseries",
-      "description": "Scheduling capacity is zero when admission is disabled. Allocated resources come from reachable-node ledgers and include starting and running environments. Disabling admission does not release allocations. This is not actual utilization."
+      "description": "Scheduling capacity is zero when admission is disabled. Allocated resources come from reachable-node ledgers and include starting and running environments. Disabling admission does not release allocations. This is not actual utilization.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -724,12 +755,15 @@
           },
           "refId": "A",
           "expr": "sum(adx_coordinator_node_reserved_disk_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}) / clamp_min(sum(adx_coordinator_node_capacity_disk_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}), 1)",
-          "legendFormat": "Allocation Ratio"
+          "legendFormat": "Allocation Ratio",
+          "instant": true,
+          "range": false
         }
       ],
       "title": "Disk Allocation Ratio",
       "type": "gauge",
-      "id": 9
+      "id": 9,
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -832,7 +866,9 @@
           },
           "refId": "A",
           "expr": "sum(adx_coordinator_node_capacity_disk_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * on (cluster, adx_env, node_id) adx_coordinator_node_schedulable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}) / 1",
-          "legendFormat": "Scheduling Capacity"
+          "legendFormat": "Scheduling Capacity",
+          "instant": false,
+          "range": true
         },
         {
           "datasource": {
@@ -841,12 +877,16 @@
           },
           "refId": "B",
           "expr": "sum(adx_coordinator_node_reserved_disk_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} and on (cluster, adx_env, node_id) (adx_coordinator_node_reachable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} == 1)) / 1",
-          "legendFormat": "Allocated"
+          "legendFormat": "Allocated",
+          "instant": false,
+          "range": true
         }
       ],
       "title": "Disk Scheduling Capacity and Allocated",
       "type": "timeseries",
-      "description": "Scheduling capacity is zero when admission is disabled. Allocated resources come from reachable-node ledgers and include starting and running environments. Disabling admission does not release allocations. This is not actual utilization."
+      "description": "Scheduling capacity is zero when admission is disabled. Allocated resources come from reachable-node ledgers and include starting and running environments. Disabling admission does not release allocations. This is not actual utilization.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -935,12 +975,16 @@
         {
           "refId": "A",
           "expr": "sum by (state) (adx_coordinator_environments{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"Running|Paused\"})",
-          "legendFormat": "{{state}}"
+          "legendFormat": "{{state}}",
+          "instant": false,
+          "range": true
         }
       ],
       "title": "Running and Paused Environments over Time",
       "type": "timeseries",
-      "description": "Coordinator inventory counts evaluated at each historical time step. This is concurrent inventory over time, not the number created during the range."
+      "description": "Coordinator inventory counts evaluated at each historical time step. This is concurrent inventory over time, not the number created during the range.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -1042,7 +1086,8 @@
           }
         }
       ],
-      "description": "Current Coordinator inventory, one row per registered node and one column per state. Values count logical Environments, not CPU or processes. Zero means none in that state. Historical unreachable registrations can have zero counts. This is an instant snapshot; the dashboard time range does not turn it into a historical total."
+      "description": "Current Coordinator inventory, one row per registered node and one column per state. Values count logical Environments, not CPU or processes. Zero means none in that state. Historical unreachable registrations can have zero counts. This is an instant snapshot; the dashboard time range does not turn it into a historical total.",
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -1085,7 +1130,7 @@
       "id": 13,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -1109,12 +1154,15 @@
             "uid": "prometheus"
           },
           "expr": "sum(adx_coordinator_environments{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=\"Running\"} and on(cluster,adx_env,node_id)(adx_coordinator_node_reachable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} == 1)) / sum(adx_coordinator_node_reachable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ],
       "title": "Average Running Environments per Node",
       "type": "stat",
-      "description": "Current running inventory divided by currently reachable nodes, including reachable nodes with zero running Environments. No reachable nodes means no meaningful average."
+      "description": "Current running inventory divided by currently reachable nodes, including reachable nodes with zero running Environments. No reachable nodes means no meaningful average.",
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -1157,7 +1205,7 @@
       "id": 14,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -1181,12 +1229,15 @@
             "uid": "prometheus"
           },
           "expr": "max(sum by (cluster, adx_env, node_id) (adx_coordinator_environments{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=\"Running\"} and on (cluster, adx_env, node_id) (adx_coordinator_node_reachable{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} == 1)))",
-          "refId": "A"
+          "refId": "A",
+          "instant": true,
+          "range": false
         }
       ],
       "title": "Maximum Running Environments on a Node",
       "type": "stat",
-      "description": "Largest running inventory on any currently reachable node. It measures placement concentration, not resource utilization."
+      "description": "Largest running inventory on any currently reachable node. It measures placement concentration, not resource utilization.",
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -1758,7 +1809,7 @@
       ],
       "title": "Node Status, Scheduling Capacity and Allocation",
       "type": "table",
-      "description": "One row per environment and node: heartbeat reachability, scheduler admission, resource sampling, and CPU, memory and disk scheduling capacity. Unknown means missing observations. Sampling uses node_id, with k8s_node_name as a Kubernetes fallback. Samples older than 45 seconds are unknown (15-second scrape interval). Capacity is zero when admission is disabled. Disk capacity is a scheduling value, not physical filesystem size. CPU, memory and disk allocation bars show reserved / underlying capacity on reachable nodes, including starting and running environments. The underlying capacity is retained when admission is disabled, so existing allocations remain visible even when the scheduling capacity columns are zero. These are allocation ratios, not measured utilization. Zero or missing capacity produces Unknown. Bars use a fixed 0\u2013100% scale; values above 100% remain visible as percentages. Colors: green below 70%, yellow at 70\u201390%, red at or above 90%. Rows are durable registrations, not the current Kubernetes Node list: a removed host can remain Unreachable until its registration is retired. Missing sampling is Unknown, not a reason by itself to declare the host unavailable.",
+      "description": "One row per environment and node: heartbeat reachability, scheduler admission, resource sampling, and CPU, memory and disk scheduling capacity. Unknown means missing observations. Sampling uses node_id, with k8s_node_name as a Kubernetes fallback. Samples older than 45 seconds are unknown (15-second scrape interval). Capacity is zero when admission is disabled. Disk capacity is a scheduling value, not physical filesystem size. CPU, memory and disk allocation bars show reserved / underlying capacity on reachable nodes, including starting and running environments. The underlying capacity is retained when admission is disabled, so existing allocations remain visible even when the scheduling capacity columns are zero. These are allocation ratios, not measured utilization. Zero or missing capacity produces Unknown. Bars use a fixed 0–100% scale; values above 100% remain visible as percentages. Colors: green below 70%, yellow at 70–90%, red at or above 90%. Rows are durable registrations, not the current Kubernetes Node list: a removed host can remain Unreachable until its registration is retired. Missing sampling is Unknown, not a reason by itself to declare the host unavailable.",
       "transformations": [
         {
           "id": "filterFieldsByName",
@@ -1815,7 +1866,8 @@
             }
           }
         }
-      ]
+      ],
+      "maxDataPoints": 1
     },
     {
       "datasource": {
@@ -1849,7 +1901,9 @@
           },
           "expr": "sum(adx_trace_exported_spans_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "Exported",
-          "refId": "A"
+          "refId": "A",
+          "instant": false,
+          "range": true
         },
         {
           "datasource": {
@@ -1858,12 +1912,16 @@
           },
           "expr": "sum(adx_trace_export_failed_spans_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "Export Failed",
-          "refId": "B"
+          "refId": "B",
+          "instant": false,
+          "range": true
         }
       ],
       "title": "Exported and Failed Spans",
       "type": "timeseries",
-      "description": "Native Coordinator and adxlet span export counters. Query Ingress traces directly in Tempo."
+      "description": "Native Coordinator and adxlet span export counters. Query Ingress traces directly in Tempo.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 23,
@@ -1903,7 +1961,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -1923,11 +1981,13 @@
         {
           "refId": "A",
           "expr": "sum(adx_coordinator_environments{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=\"Paused\"})",
-          "instant": false,
-          "legendFormat": "Paused"
+          "instant": true,
+          "legendFormat": "Paused",
+          "range": false
         }
       ],
-      "pluginVersion": "12.3.1"
+      "pluginVersion": "12.3.1",
+      "maxDataPoints": 1
     },
     {
       "id": 27,
@@ -1958,16 +2018,19 @@
           ],
           "fields": "",
           "values": false
-        }
+        },
+        "graphMode": "none"
       },
       "targets": [
         {
           "refId": "A",
           "expr": "sum(adx:environment_created_qps:rate1m{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "instant": true,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
         }
-      ]
+      ],
+      "maxDataPoints": 1
     },
     {
       "id": 28,
@@ -1998,22 +2061,25 @@
           ],
           "fields": "",
           "values": false
-        }
+        },
+        "graphMode": "none"
       },
       "targets": [
         {
           "refId": "A",
           "expr": "max_over_time((sum(adx:environment_created_qps:rate1m{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}))[$__range:15s])",
           "instant": true,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
         }
-      ]
+      ],
+      "maxDataPoints": 1
     },
     {
       "id": 29,
-      "title": "Created Throughput (1m window)",
+      "title": "Created Throughput",
       "type": "timeseries",
-      "description": "New Environments first committed Running per second, averaged over one minute. Reuse, replay and restart are excluded.",
+      "description": "Successful new creations per second over a window covering the query step. Wide time ranges average bursts instead of leaving gaps between one-minute samples.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -2043,10 +2109,14 @@
       "targets": [
         {
           "refId": "B",
-          "expr": "sum by (cluster, adx_env) (adx:environment_created_qps:rate1m{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
-          "legendFormat": "{{cluster}} / {{adx_env}} created"
+          "expr": "sum by (cluster, adx_env) (rate(adx_environment_created_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
+          "legendFormat": "{{cluster}} / {{adx_env}} created",
+          "instant": false,
+          "range": true
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 30,
@@ -2082,11 +2152,14 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (outcome) (rate(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[1m]))",
+          "expr": "sum by (outcome) (rate(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{outcome}}"
+          "legendFormat": "{{outcome}}",
+          "range": true
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 31,
@@ -2117,16 +2190,19 @@
           ],
           "fields": "",
           "values": false
-        }
+        },
+        "graphMode": "none"
       },
       "targets": [
         {
           "refId": "A",
           "expr": "sum(adx_environment_create_in_flight{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
-          "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "instant": true,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
         }
-      ]
+      ],
+      "maxDataPoints": 1
     },
     {
       "id": 32,
@@ -2162,16 +2238,21 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95,sum by (le) (rate(adx_environment_create_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m])))",
+          "expr": "histogram_quantile(0.95,sum by (le) (rate(adx_environment_create_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
           "instant": false,
-          "legendFormat": "P95"
+          "legendFormat": "P95",
+          "range": true
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.99,sum by (le) (rate(adx_environment_create_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m])))",
-          "legendFormat": "P99"
+          "expr": "histogram_quantile(0.99,sum by (le) (rate(adx_environment_create_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
+          "legendFormat": "P99",
+          "instant": false,
+          "range": true
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 33,
@@ -2207,11 +2288,14 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (cluster, adx_env, runtime_class) (rate(adx_node_environment_cpu_usage_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m]))",
+          "expr": "sum by (cluster, adx_env, runtime_class) (rate(adx_node_environment_cpu_usage_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} / {{runtime_class}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} / {{runtime_class}}",
+          "range": true
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 34,
@@ -2249,9 +2333,12 @@
           "refId": "A",
           "expr": "sum by (cluster, adx_env, runtime_class) (adx_node_environment_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} / {{runtime_class}}"
+          "legendFormat": "{{cluster}} / {{adx_env}} / {{runtime_class}}",
+          "range": true
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 35,
@@ -2289,14 +2376,19 @@
           "refId": "A",
           "expr": "sum by (cluster, adx_env) (adx_node_environment_samples{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}} fresh"
+          "legendFormat": "{{cluster}} / {{adx_env}} fresh",
+          "range": true
         },
         {
           "refId": "B",
           "expr": "sum by (cluster, adx_env) (adx_node_environment_stale_samples{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
-          "legendFormat": "{{cluster}} / {{adx_env}} stale"
+          "legendFormat": "{{cluster}} / {{adx_env}} stale",
+          "instant": false,
+          "range": true
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 36,
@@ -2425,9 +2517,12 @@
           "refId": "A",
           "expr": "max by (cluster, adx_env, exporter) (otelcol_exporter_queue_size{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} / otelcol_exporter_queue_capacity{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "instant": false,
-          "legendFormat": "{{cluster}} / {{adx_env}}"
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 39,
@@ -2463,41 +2558,55 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by(cluster,adx_env)(rate(otelcol_receiver_refused_log_records_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m]))",
+          "expr": "sum by(cluster,adx_env)(rate(otelcol_receiver_refused_log_records_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "log_records refused / s"
+          "legendFormat": "log_records refused / s",
+          "range": true,
+          "interval": "30s"
         },
         {
           "refId": "B",
-          "expr": "sum by(cluster,adx_env)(rate(otelcol_receiver_refused_metric_points_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m]))",
+          "expr": "sum by(cluster,adx_env)(rate(otelcol_receiver_refused_metric_points_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "metric_points refused / s"
+          "legendFormat": "metric_points refused / s",
+          "range": true,
+          "interval": "30s"
         },
         {
           "refId": "C",
-          "expr": "sum by(cluster,adx_env)(rate(otelcol_receiver_refused_spans_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m]))",
+          "expr": "sum by(cluster,adx_env)(rate(otelcol_receiver_refused_spans_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "spans refused / s"
+          "legendFormat": "spans refused / s",
+          "range": true,
+          "interval": "30s"
         },
         {
           "refId": "D",
-          "expr": "sum by(cluster,adx_env)(rate(otelcol_exporter_enqueue_failed_log_records_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m]))",
+          "expr": "sum by(cluster,adx_env)(rate(otelcol_exporter_enqueue_failed_log_records_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "log_records enqueue failed / s"
+          "legendFormat": "log_records enqueue failed / s",
+          "range": true,
+          "interval": "30s"
         },
         {
           "refId": "E",
-          "expr": "sum by(cluster,adx_env)(rate(otelcol_exporter_enqueue_failed_metric_points_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m]))",
+          "expr": "sum by(cluster,adx_env)(rate(otelcol_exporter_enqueue_failed_metric_points_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "metric_points enqueue failed / s"
+          "legendFormat": "metric_points enqueue failed / s",
+          "range": true,
+          "interval": "30s"
         },
         {
           "refId": "F",
-          "expr": "sum by(cluster,adx_env)(rate(otelcol_exporter_enqueue_failed_spans_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m]))",
+          "expr": "sum by(cluster,adx_env)(rate(otelcol_exporter_enqueue_failed_spans_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "spans enqueue failed / s"
+          "legendFormat": "spans enqueue failed / s",
+          "range": true,
+          "interval": "30s"
         }
-      ]
+      ],
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 41,
@@ -2575,7 +2684,7 @@
     }
   ],
   "preload": false,
-  "refresh": "30s",
+  "refresh": "1m",
   "schemaVersion": 42,
   "tags": [
     "adx",

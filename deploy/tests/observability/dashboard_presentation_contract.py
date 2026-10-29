@@ -29,7 +29,13 @@ def main() -> None:
         series.append({"series": name + "{" + labels + "}", "values": values})
 
     def scope(query: str, cluster: str = "a") -> str:
-        return query.replace("$cluster", cluster).replace("$adx_env", "shared").replace("$__range", "2m")
+        # promtool does not expand Grafana macros. Keep the presentation fixture
+        # at its original 5m rate window; coarse-window coverage lives in the
+        # query contract, which also validates the configured scrape interval.
+        scoped = (query.replace("$cluster", cluster).replace("$adx_env", "shared")
+                  .replace("$__range", "2m").replace("$__rate_interval", "5m"))
+        assert "$__" not in scoped, "unexpanded Grafana macro in presentation fixture"
+        return scoped
 
     def check(query: str, expected: list[dict], when: str = "2m") -> None:
         checks.append({"expr": query, "eval_time": when, "exp_samples": expected})

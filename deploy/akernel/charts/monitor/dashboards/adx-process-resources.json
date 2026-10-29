@@ -11,7 +11,7 @@
   "version": 2,
   "editable": true,
   "timezone": "browser",
-  "refresh": "30s",
+  "refresh": "1m",
   "time": {
     "from": "now-30m",
     "to": "now"
@@ -297,11 +297,14 @@
           "editorMode": "code",
           "expr": "sum((sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (rate(process_cpu_time_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\",state=~\"user|system\"}[$__rate_interval])) and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "usage",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "CPU — cluster total (cores)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -361,11 +364,14 @@
           "editorMode": "code",
           "expr": "sum((process_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "RSS",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "Memory — cluster total (bytes)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -425,11 +431,14 @@
           "editorMode": "code",
           "expr": "sum((process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "open FDs",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "Open file descriptors — cluster total",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -489,11 +498,14 @@
           "editorMode": "code",
           "expr": "sum((process_threads{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "threads",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "Threads — cluster total",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -824,7 +836,8 @@
           }
         }
       ],
-      "type": "table"
+      "type": "table",
+      "maxDataPoints": 1
     }
   ]
 }

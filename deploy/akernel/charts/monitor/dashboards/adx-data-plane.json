@@ -55,7 +55,8 @@
           "range": false
         }
       ],
-      "description": "HTTP requests observed by the shared Ingress during the selected range, including API and workload traffic. increase() estimates sampled counter deltas; fractional counts are possible."
+      "description": "HTTP requests observed by the shared Ingress during the selected range, including API and workload traffic. increase() estimates sampled counter deltas; fractional counts are possible.",
+      "maxDataPoints": 1
     },
     {
       "id": 2,
@@ -118,7 +119,8 @@
             }
           }
         }
-      ]
+      ],
+      "maxDataPoints": 1
     },
     {
       "id": 3,
@@ -179,7 +181,8 @@
           "range": false
         }
       ],
-      "description": "Selected-range 4xx or 5xx response count divided by all observed HTTP responses. No responses means no defined ratio. 101 is successful upgrade; SSE final business failures require lifecycle metrics."
+      "description": "Selected-range 4xx or 5xx response count divided by all observed HTTP responses. No responses means no defined ratio. 101 is successful upgrade; SSE final business failures require lifecycle metrics.",
+      "maxDataPoints": 1
     },
     {
       "id": 4,
@@ -219,30 +222,38 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
           "legendFormat": "P50",
-          "refId": "A"
+          "refId": "A",
+          "instant": false,
+          "range": true
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
           "legendFormat": "P95",
-          "refId": "B"
+          "refId": "B",
+          "instant": false,
+          "range": true
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
           "legendFormat": "P99",
-          "refId": "C"
+          "refId": "C",
+          "instant": false,
+          "range": true
         }
       ],
-      "description": "Time until Ingress obtains response headers. For SSE this can be much shorter than business completion or stream lifetime. Idle windows with no observations have no meaningful percentile."
+      "description": "Time until Ingress obtains response headers. For SSE this can be much shorter than business completion or stream lifetime. Idle windows with no observations have no meaningful percentile.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 5,
@@ -284,10 +295,14 @@
           },
           "expr": "sum(data_plane_ingress_http_requests_in_flight{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "requests",
-          "refId": "A"
+          "refId": "A",
+          "instant": false,
+          "range": true
         }
       ],
-      "description": "Ingress HTTP requests currently being handled according to its request lifecycle; use session/relay panels for streaming connections."
+      "description": "Ingress HTTP requests currently being handled according to its request lifecycle; use session/relay panels for streaming connections.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 6,
@@ -329,10 +344,14 @@
           },
           "expr": "sum(data_plane_ingress_backend_http_idle_connections{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "idle",
-          "refId": "A"
+          "refId": "A",
+          "instant": false,
+          "range": true
         }
       ],
-      "description": "Currently reusable idle upstream connections. Zero can mean no warm pooled connections; it does not by itself mean backend failure."
+      "description": "Currently reusable idle upstream connections. Zero can mean no warm pooled connections; it does not by itself mean backend failure.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 7,
@@ -415,12 +434,13 @@
           "range": false
         }
       ],
-      "description": "Connection-pool actions such as connection creation, reuse and removal, distinct from user-request outcomes. Counts cover the selected dashboard range; sampled counter deltas can be fractional."
+      "description": "Connection-pool actions such as connection creation, reuse and removal, distinct from user-request outcomes. Counts cover the selected dashboard range; sampled counter deltas can be fractional.",
+      "maxDataPoints": 1
     },
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Relay Active Streams by Node",
+      "title": "Relay Active Streams (cluster total)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -455,12 +475,16 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (cluster, adx_env, k8s_node_name) (data_plane_relay_active_streams{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
-          "legendFormat": "{{cluster}} / {{adx_env}} / {{k8s_node_name}}",
-          "refId": "A"
+          "expr": "sum by (cluster, adx_env) (data_plane_relay_active_streams{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "refId": "A",
+          "instant": false,
+          "range": true
         }
       ],
-      "description": "Currently open relay streams grouped by target node. Streams/connections differ from logical Environment count."
+      "description": "Cluster-wide active Relay streams, aggregated into one history per cluster and deployment. Use a node-filtered Explore query for node-level stream diagnostics.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 9,
@@ -521,7 +545,8 @@
           "range": false
         }
       ],
-      "description": "Relay connection activity and connection failures. Values describe transport, not final create results. Counts cover the selected dashboard range; sampled counter deltas can be fractional."
+      "description": "Relay connection activity and connection failures. Values describe transport, not final create results. Counts cover the selected dashboard range; sampled counter deltas can be fractional.",
+      "maxDataPoints": 1
     },
     {
       "id": 10,
@@ -593,7 +618,8 @@
           "range": false
         }
       ],
-      "description": "Relay rejects and routing lookup failures, such as missing or unusable targets. Inspect the reason labels before interpreting them as runtime failures. Counts cover the selected dashboard range; sampled counter deltas can be fractional."
+      "description": "Relay rejects and routing lookup failures, such as missing or unusable targets. Inspect the reason labels before interpreting them as runtime failures. Counts cover the selected dashboard range; sampled counter deltas can be fractional.",
+      "maxDataPoints": 1
     },
     {
       "id": 11,
@@ -635,7 +661,9 @@
           },
           "expr": "sum(data_plane_ingress_active_sessions{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "sessions",
-          "refId": "A"
+          "refId": "A",
+          "instant": false,
+          "range": true
         },
         {
           "datasource": {
@@ -644,10 +672,14 @@
           },
           "expr": "sum(data_plane_ingress_h2_physical_connections{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
           "legendFormat": "physical connections",
-          "refId": "B"
+          "refId": "B",
+          "instant": false,
+          "range": true
         }
       ],
-      "description": "Logical Ingress sessions compared with physical HTTP/2 connections. Multiplexing allows multiple sessions to share one physical connection."
+      "description": "Logical Ingress sessions compared with physical HTTP/2 connections. Multiplexing allows multiple sessions to share one physical connection.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "id": 12,
@@ -697,7 +729,8 @@
           "range": false
         }
       ],
-      "description": "Fraction of Ingress response-header observations above the 100 ms histogram boundary. This is not the fraction of Environment creates taking over 100 ms."
+      "description": "Fraction of Ingress response-header observations above the 100 ms histogram boundary. This is not the fraction of Environment creates taking over 100 ms.",
+      "maxDataPoints": 1
     },
     {
       "id": 13,
@@ -758,7 +791,8 @@
           "legendFormat": "sent"
         }
       ],
-      "description": "Bytes received/sent on public Ingress connections after TLS, including HTTP headers/framing and upgraded streams. Selected-range sampled counter increase, displayed as B/KiB/MiB/GiB. Ingress and Relay measure different hops; do not add them together. TLS records and IP/link overhead are excluded. Counter resets are handled per producer before summation."
+      "description": "Bytes received/sent on public Ingress connections after TLS, including HTTP headers/framing and upgraded streams. Selected-range sampled counter increase, displayed as B/KiB/MiB/GiB. Ingress and Relay measure different hops; do not add them together. TLS records and IP/link overhead are excluded. Counter resets are handled per producer before summation.",
+      "maxDataPoints": 1
     },
     {
       "id": 14,
@@ -819,10 +853,11 @@
           "legendFormat": "from_runtime"
         }
       ],
-      "description": "Relay payload bytes to/from runtime, including active streams and protocol framing. Selected-range sampled counter increase, displayed as B/KiB/MiB/GiB. Ingress and Relay measure different hops; do not add them together. TLS records and IP/link overhead are excluded. Counter resets are handled per producer before summation."
+      "description": "Relay payload bytes to/from runtime, including active streams and protocol framing. Selected-range sampled counter increase, displayed as B/KiB/MiB/GiB. Ingress and Relay measure different hops; do not add them together. TLS records and IP/link overhead are excluded. Counter resets are handled per producer before summation.",
+      "maxDataPoints": 1
     }
   ],
-  "refresh": "30s",
+  "refresh": "1m",
   "schemaVersion": 42,
   "tags": [
     "adx",

@@ -46,6 +46,8 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      # Allow the 120s systemd service stop, then 30s for container shutdown.
+      terminationGracePeriodSeconds: 150
       serviceAccountName: {{ include "core.serviceAccountName" . }}
       {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
       {{- with .Values.adx.checkpointStorage.nodeSelector }}
@@ -104,6 +106,9 @@ spec:
         command:
         - /usr/local/bin/akernel-entrypoint
         lifecycle:
+          preStop:
+            exec:
+              command: [systemctl, stop, adx.service]
           postStart:
             exec:
               command:

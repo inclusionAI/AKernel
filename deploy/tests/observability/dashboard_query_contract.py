@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -42,7 +43,8 @@ def main() -> None:
 
     def scope(expr: str, cluster: str = ".+", state: str = "Running|Paused") -> str:
         return (expr.replace("$cluster", cluster).replace("$adx_env", "shared")
-                .replace("$state", state).replace("${environment_id:raw}", "same-env"))
+                .replace("$state", state).replace("${environment_id:raw}", "same-env")
+                .replace("$__rate_interval", "2m"))
 
     series = []
     for cluster, memory, step, state, admitted in (
@@ -66,6 +68,21 @@ def main() -> None:
         ):
             series.append({"series": metric + "{" + suffix + "}", "values": values})
 
+    # A detail selection must stay scoped even when hundreds of other live
+    # environments occupy the same cluster, node and resource endpoint.
+    for index in range(500):
+        labels = f'cluster="a",adx_env="shared",environment_id="unselected-{index}",instance="node:19091",runtime_id="runtime-{index}"'
+        for metric, values in (("adx_environment_memory_usage_bytes", "64+0x8"),
+                               ("adx_environment_cpu_usage_seconds_total", "0+15x8"),
+                               ("adx_environment_stats_age_seconds", "0+0x8")):
+            series.append({"series": metric + "{" + labels + "}", "values": values})
+        series.append({"series": f'adx_environment_info{{cluster="a",adx_env="shared",node_id="same-node",environment_id="unselected-{index}",state="Running"}}', "values": "1+0x8"})
+
+    # Overview histories stay aggregated when a deployment grows to 1,000 nodes.
+    for index in range(1000):
+        series.append({"series": f'data_plane_relay_active_streams{{cluster="a",adx_env="shared",k8s_node_name="node-{index}"}}', "values": "3+0x8"})
+    series.append({"series": 'data_plane_relay_active_streams{cluster="b",adx_env="shared",k8s_node_name="node-0"}', "values": "7+0x8"})
+
     checks = []
 
     def check(expr: str, samples: list[dict]) -> None:
@@ -83,7 +100,48 @@ def main() -> None:
             check(scope(expr, "a", "Running"), [{"labels": labels, "value": 128 if metric else 0.9999999999999999}])
             check(scope(expr, "b", "Running"), [])
 
-    for record in ("adx:environment_create_request_qps:rate1m", "adx:environment_created_qps:rate1m"):
+    # Exercise the provisioned closed default, not only the selected-ID path.
+    for uid in ("adx-environments", "sandbox-lifecycle-dashboard"):
+        dashboard = json.loads(data[uid + ".json"])
+        variable = next(v for v in dashboard["templating"]["list"] if v["name"] == "environment_id")
+        default = variable["current"]["value"]
+        assert default == variable["query"] == "__select_environment__"
+        for p in dashboard["panels"]:
+            expression = p["targets"][0]["expr"]
+            check(scope(expression).replace("same-env", default), [])
+            # Every side of a resource freshness/inventory join must apply the
+            # selection, otherwise a single-ID graph still scans fleet state.
+            for metric in ("adx_environment_stats_age_seconds", "adx_environment_info"):
+                selected = expression.replace("${environment_id:raw}", "__selected_environment__")
+                start = selected.find(metric + "{")
+                if start >= 0:
+                    selector = selected[start:].split("}", 1)[0]
+                    assert 'environment_id=~`__selected_environment__`' in selector
+    check(scope(panel("adx-data-plane", "Relay Active Streams (cluster total)")), [
+        {"labels": '{cluster="a",adx_env="shared"}', "value": 3000},
+        {"labels": '{cluster="b",adx_env="shared"}', "value": 7},
+    ])
+
+    for uid, model in data.items():
+        dashboard = json.loads(model)
+        if not (dashboard.get("uid", "").startswith("adx-") or dashboard.get("uid") == "sandbox-metrics"):
+            continue
+        assert dashboard.get("refresh", "") in ("", "1m")
+        for p in dashboard.get("panels", []):
+            if p["type"] == "timeseries":
+                assert p["maxDataPoints"] <= 200 and p["interval"] == "1m"
+            for t in p.get("targets", []):
+                datasource = t.get("datasource", p.get("datasource", {})).get("uid")
+                if datasource == "prometheus" and p["type"] in ("stat", "gauge", "table"):
+                    assert t["instant"] and not t["range"]
+                if datasource == "loki" and "maxLines" in t:
+                    assert t["maxLines"] <= 200
+                if datasource == "tempo" and "limit" in t:
+                    assert t["limit"] <= 20
+                if p["type"] == "timeseries" and "rate(" in t.get("expr", ""):
+                    assert not re.search(r"\[\d+[smh]\]", t["expr"]), "fixed rate window leaves gaps at wide query steps"
+
+    for record in ("adx:environment_created_qps:rate1m",):
         check(record + '{adx_env="shared"}', [
             {"labels": record + '{cluster="a",adx_env="shared"}', "value": 0.9999999999999999},
             {"labels": record + '{cluster="b",adx_env="shared"}', "value": 1.9999999999999998},
@@ -134,14 +192,53 @@ def main() -> None:
                 {"labels": '{cluster="b",adx_env="shared",' + suffix + "}", "value": 3 * multiplier},
             ])})
 
+    # A 200-point dashboard uses wider steps on 6h/24h/7d views. Put an entire
+    # burst between two evaluation points: fixed short rate windows miss it.
+    sampled_tests = []
+    for step in (120, 600, 3600):
+        inputs, assertions = [], []
+        for uid, title, metric, labels, expected in (
+            ("adx-schedule", "Created Throughput", "adx_environment_created_total",
+             '', '{cluster="a",adx_env="shared"}'),
+            ("adx-schedule", "Create Call Outcomes", "adx_environment_create_responses_total",
+             'outcome="failure"', '{outcome="failure"}'),
+            ("adx-schedule", "Collector Refused / Enqueue Failed", "otelcol_receiver_refused_log_records_total",
+             '', '{cluster="a",adx_env="shared"}'),
+            ("adx-data-plane", "Ingress Response Header Latency P50 / P95 / P99",
+             "data_plane_ingress_http_request_duration_seconds_bucket", 'le="1"', '{}'),
+        ):
+            expression = panel(uid, title).replace("$cluster", "a").replace("$adx_env", "shared")
+            expression = expression.replace("$__rate_interval", f"{step + 30}s")
+            identity = 'cluster="a",adx_env="shared"' + (',' + labels if labels else '')
+            values = f"0+0x{step // 15 + step // 30} 60+0x{step // 15}"
+            inputs.append({"series": metric + '{' + identity + '}', "values": values})
+            if metric.endswith("_bucket"):
+                inputs.append({"series": metric + '{' + identity.replace('le="1"', 'le="+Inf"') + '}', "values": values})
+            assertions.append({"expr": '(' + expression + ') > bool 0', "eval_time": f"{step * 2}s",
+                               "exp_samples": [{"labels": expected, "value": 1}]})
+        sampled_tests.append({"interval": "15s", "input_series": inputs, "promql_expr_test": assertions})
+
+    # Offset 15s scrapes from the evaluation grid. A datasource configured as
+    # 10s misses the increment straddling the preceding query boundary.
+    datasource = yaml.safe_load(resources["ConfigMap", "grafana-datasources"]["data"]["prometheus.yaml"])
+    prometheus = next(d for d in datasource["datasources"] if d["type"] == "prometheus")
+    scrape = int(prometheus["jsonData"]["timeInterval"].removesuffix("s"))
+    expression = panel("adx-schedule", "Created Throughput").replace("$cluster", "a").replace("$adx_env", "shared")
+    expression = expression.replace("$__rate_interval", f"{max(120 + scrape, 4 * scrape)}s")
+    values = " ".join("_" if t % 15 != 5 else "0" if t < 120 else "60" for t in range(0, 246, 5))
+    sampled_tests.append({"interval": "5s", "input_series": [{
+        "series": 'adx_environment_created_total{cluster="a",adx_env="shared"}', "values": values}],
+        "promql_expr_test": [{"expr": '(' + expression + ') > bool 0', "eval_time": "240s",
+                             "exp_samples": [{"labels": '{cluster="a",adx_env="shared"}', "value": 1}]}]})
+
     fixture = {"rule_files": ["adx-rules.yaml"], "evaluation_interval": "15s",
-               "tests": [{"interval": "15s", "input_series": series, "promql_expr_test": checks}]}
+               "tests": [{"interval": "15s", "input_series": series, "promql_expr_test": checks}, *sampled_tests]}
     (output / "queries.yaml").write_text(yaml.safe_dump(fixture, sort_keys=False))
     command = (["docker", "run", "--rm", "--network", "none", "--entrypoint", "/bin/promtool",
                 "-v", str(output) + ":/tests:ro", "-w", "/tests", "prom/prometheus:v3.2.1"]
                if args.docker else ["promtool"])
     subprocess.run(command + ["test", "rules", "queries.yaml"], cwd=output, check=True)
-    print(f"PASS: {len(checks)} query cases from provisioned dashboards/rules")
+    print(f"PASS: {len(checks) + sum(len(t['promql_expr_test']) for t in sampled_tests)} query cases from provisioned dashboards/rules")
 
 
 if __name__ == "__main__":

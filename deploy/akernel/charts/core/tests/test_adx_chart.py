@@ -56,6 +56,20 @@ class AdxChartTest(unittest.TestCase):
                 self.assertNotIn("restart_limit", deployment)
                 self.assertEqual(deployment["restart_delay_ms"], 1000)
 
+    def test_pod_shutdown_drains_before_container_stop(self) -> None:
+        node = self.resource("DaemonSet", "akernel-node")["spec"]["template"]["spec"]
+        self.assertGreaterEqual(node["terminationGracePeriodSeconds"], 150)
+        container = next(c for c in node["containers"] if c["name"] == "akernel-node")
+        self.assertEqual(container["lifecycle"]["preStop"]["exec"]["command"],
+                         ["systemctl", "stop", "adx.service"])
+        for name, config, budget in (("coordinator", "coordinator", 120),
+                                      ("ingress-api", "ingress-api", 210)):
+            pod = self.resource("Deployment", "akernel-adx-" + name)["spec"]["template"]["spec"]
+            self.assertGreaterEqual(pod["terminationGracePeriodSeconds"], budget)
+            container = next(c for c in pod["containers"] if c["name"] == name)
+            self.assertEqual(container["lifecycle"]["preStop"]["exec"]["command"],
+                             ["/opt/adx/current/bin/adxctl", "--config", f"/etc/akernel/adx-{config}.yaml", "stop"])
+
     def test_uses_current_adx_role_names(self) -> None:
         config = self.resource("ConfigMap", "akernel-adx-config")["data"]
         self.assertIn("coordinator.yaml", config)
@@ -66,12 +80,29 @@ class AdxChartTest(unittest.TestCase):
         self.assertIn("role: adxlet", config["node.yaml"])
         self.assertIn("ADX_EXECD_CONTROL_SOCKET_PATH", config["node.yaml"])
         self.assertIn("ADX_DATA_PLANE_RELAY_BIND", config["node.yaml"])
+
         self.assertIn("ADX_DATA_PLANE_ALLOWED_INGRESS_CIDRS", config["node.yaml"])
         self.assertIn("/__adx/usr/local/bin/adx-execd", config["node.yaml"])
         self.assertNotIn("role: master", self.rendered)
         self.assertNotIn("role: node-manager", self.rendered)
         self.assertNotIn("role: api-server", self.rendered)
         self.assertNotIn("role: edge", self.rendered)
+
+    def test_collectors_receive_term_instead_of_the_image_systemd_signal(self) -> None:
+        rendered = subprocess.check_output([
+            "helm", "template", "akernel", str(CHART),
+            "--set", "adx.tls.existingSecret=adx-test-tls",
+            "--set", "monitoring.prometheusEndpoint=http://prometheus:9090/api/v1/write",
+        ], text=True)
+        pods = [r["spec"]["template"]["spec"] for r in yaml.safe_load_all(rendered)
+                if r and r["kind"] == "Deployment"
+                and r["metadata"]["name"] in ("akernel-adx-coordinator", "akernel-adx-ingress-api")]
+        self.assertEqual(len(pods), 2)
+        for pod in pods:
+            collector = next(c for c in pod["containers"] if c["name"] == "otel-collector")
+            self.assertEqual(collector["command"], ["/usr/local/bin/otelcol-contrib"])
+            self.assertEqual(collector["lifecycle"]["preStop"]["exec"]["command"],
+                             ["/bin/sh", "-c", "kill -TERM 1"])
 
     def test_port_host_domain_is_only_sent_to_ingress_when_configured(self) -> None:
         default_config = self.resource("ConfigMap", "akernel-adx-config")["data"]

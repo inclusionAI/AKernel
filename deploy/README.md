@@ -92,7 +92,27 @@ The node must support TC eBPF and bpffs. bpfnat does not manage host firewall
 policy, so custom host-network deployments must allow forwarding to and from
 the sandbox bridge when their `FORWARD` policy is `DROP`.
 
+Grafana uses a 15-second Prometheus datasource interval to match business
+sampling; Collector rate queries override it to 30 seconds. The 200-point target
+is approximate because Grafana rounds query steps to standard durations. Rate
+windows cover the actual step so wide views preserve bursts between samples.
+
 ### systemd container identity
+
+Helm stops node ADX services with `systemctl stop adx.service` and control
+services with `adxctl stop`; control Collectors receive SIGTERM. Pod termination
+grace is 150s for nodes, 120s for Coordinator and 210s for Ingress/API.
+
+For Coordinator restart, worker outage and Node Pod deletion regression, run
+`deploy/tests/kubernetes/node_lifecycle.py --help` with the ADX SDK installed.
+Run this opt-in fault test only on an **idle dedicated cluster**. For shared
+checkpoint storage, pass `--shared-storage-path` with the configured container
+mount path; omit it for local checkpoint storage.
+
+For native unknown-Restore qualification, use Python 3.12+ to run
+`deploy/tests/native_restore/run.py --help`. Supply an empty dedicated Sandboxd
+with the pinned runtime bundle and identical checkpoint paths on the test host.
+The fixture exercises production ADX Controllers with an in-process authority.
 
 The all-in-one image, Helm node template, and standalone launcher set
 `container=oci` so PID 1 systemd recognizes the container and does not remount
@@ -539,7 +559,3 @@ Resizing an existing cache is unsupported. Same-Pod service restarts retain it; 
 Internal network mode requires an ADX package containing the optional internal
 transport implementation. Validate control and sandbox traffic with the selected
 package before deploying these templates.
-
-## Observability dashboards
-
-For dashboard definitions, latency boundaries and empty-data interpretation, see [ADX observability dashboards](observability.md).
