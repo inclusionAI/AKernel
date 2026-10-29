@@ -1,0 +1,8 @@
+# Overlay for the umbrella chart, after the cluster's existing values.
+# Requires matching runsc/sandboxd support and live filestore/checkpoint paths
+# on the same reflink-capable filesystem. This does not format/migrate disks.
+core:
+  node:
+    config:
+      sandboxd:
+        runscCheckpointMode: reflink

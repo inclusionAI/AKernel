@@ -14,6 +14,17 @@ data:
 
   sandboxd_config.toml: |
 {{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
+{{- $runscCheckpointMode := .Values.node.config.sandboxd.runscCheckpointMode | default "" }}
+{{- if $runscCheckpointMode }}
+{{- if not (has $runscCheckpointMode (list "full" "reflink")) }}
+{{- fail "node.config.sandboxd.runscCheckpointMode must be full or reflink" }}
+{{- end }}
+{{- $runscCheckpointMarker := "# AKERNEL_RUNSC_CHECKPOINT_MODE" }}
+{{- if not (contains $runscCheckpointMarker $sandboxdConfig) }}
+{{- fail "node.config.sandboxd.runscCheckpointMode requires the # AKERNEL_RUNSC_CHECKPOINT_MODE marker in node.config.sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = replace $runscCheckpointMarker (printf "checkpoint_mode=%s" ($runscCheckpointMode | quote)) $sandboxdConfig }}
+{{- end }}
 {{- $firecrackerBackend := .Values.node.config.sandboxd.firecrackerBackend | default "kvm" }}
 {{- if not (has $firecrackerBackend (list "kvm" "pvm")) }}
 {{- fail "node.config.sandboxd.firecrackerBackend must be kvm or pvm" }}

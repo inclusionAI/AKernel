@@ -447,6 +447,9 @@ node:
       firecrackerBackend: kvm
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
+      # Empty preserves the runtime default. Reflink requires matching runsc
+      # helpers and a shared reflink-capable filesystem for live/saved files.
+      runscCheckpointMode: ""
       config: |-
         rootDir="/home/akernel/sandboxd/root"
         storeDir="/home/akernel/sandboxd/store"
@@ -487,6 +490,7 @@ node:
 
         [plugin.runtime.runsc]
         background_restore=true
+        # AKERNEL_RUNSC_CHECKPOINT_MODE
 
         [plugin.runtime.basic_spec]
         runsc="/home/akernel/images/config.json"

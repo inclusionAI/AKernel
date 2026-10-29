@@ -230,6 +230,8 @@ distill-fs release's packaged manifest.
 
 ## Deploy
 
+Helm runsc filestore checkpoint policy is `node.config.sandboxd.runscCheckpointMode` (`core.` prefix in the umbrella chart). Keep the `# AKERNEL_RUNSC_CHECKPOINT_MODE` injection marker under `[plugin.runtime.runsc]` in custom configurations. Empty preserves the runtime default; explicit `full` and `reflink` are supported. Reflink requires matching runtime helpers and a verified shared filesystem for live/saved filestores; the default loop-backed layout does not by itself satisfy this. Drain and recreate workers before creating new reflink-mode sandboxes. This policy does not enable dirty-page incremental application-memory checkpoints. See `deploy/README.md` and the maintained `deploy/akernel/profiles/runsc-reflink.yaml` overlay.
+
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
 The [standalone guide](./deploy/standalone/README.md) owns source startup, supported platforms, runtime selection, and SDK setup. Preserve the source launcher's native-daemon architecture selection, clean sandboxd gitlink check, occupied-name preflight, profile locking, unique source image, and node/gateway health checks. Status and stop must verify recorded container identities, images, and data mounts; stop also requires an empty sandbox inventory. Source management is independent of cloud profiles and must preserve unrelated containers.
