@@ -5,6 +5,10 @@ output "helm_values" {
   description = "ADX checkpointStorage configuration for both execution nodes and Coordinator."
   value       = local.checkpoint_values
   precondition {
+    condition     = !local.selected_storage.local_cache.enabled || local.selected_storage.kind == "distributed_fs"
+    error_message = "local_cache requires distributed_fs checkpoint storage."
+  }
+  precondition {
     condition = local.selected_storage.kind == "local" || (
       local.selected_storage.alias != "local" &&
       can(regex("^[A-Za-z0-9-]+$", local.selected_storage.alias))

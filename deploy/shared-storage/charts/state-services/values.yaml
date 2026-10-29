@@ -1,0 +1,36 @@
+# Install the pinned CloudNativePG and Opstree operators first. Supply images
+# qualified for those operators by immutable digest; credentials are precreated.
+imagePullSecrets: []
+storageClass: ""
+networkPolicy:
+  enabled: true
+  clientNamespaces: [akernel]
+  monitoringNamespaces: [akernel-monitor]
+postgres:
+  name: juicefs-metadata
+  image: ""
+  authSecret: juicefs-metadata-app
+  size: 50Gi
+  nodeSelector: {node-role: akernel-storage}
+  tolerations: [{key: dedicated, operator: Equal, value: akernel-storage, effect: NoSchedule}]
+  resources:
+    requests: {cpu: "1", memory: 4Gi}
+    limits: {cpu: "4", memory: 8Gi}
+redis:
+  name: akernel-redis
+  image: ""
+  sentinelImage: ""
+  exporterImage: ""
+  authSecret: akernel-redis-auth
+  headlessService: akernel-redis-headless
+  size: 20Gi
+  maxMemory: 2gb
+  nodeSelector: {node-role: akernel-control-plane}
+  tolerations: [{key: dedicated, operator: Equal, value: akernel-control-plane, effect: NoSchedule}]
+  resources:
+    requests: {cpu: "1", memory: 3Gi}
+    limits: {cpu: "2", memory: 6Gi}
+haproxy:
+  image: ""
+  nodeSelector: {node-role: akernel-control-plane}
+  tolerations: [{key: dedicated, operator: Equal, value: akernel-control-plane, effect: NoSchedule}]

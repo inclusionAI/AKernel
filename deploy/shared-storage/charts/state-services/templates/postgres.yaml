@@ -1,0 +1,51 @@
+{{- if not .Values.storageClass }}{{ fail "storageClass must be an independent cloud-disk StorageClass" }}{{ end -}}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" .Values.postgres.image) }}{{ fail "postgres.image must be pinned by digest" }}{{ end -}}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.postgres.name }}
+  annotations: {helm.sh/resource-policy: keep}
+spec:
+  inheritedMetadata:
+    labels: {akernel.io/state-service: "true"}
+  instances: 3
+  imageName: {{ .Values.postgres.image | quote }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets: {{ toYaml . | nindent 4 }}
+  {{- end }}
+  enableSuperuserAccess: false
+  enablePDB: true
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  startDelay: 300
+  stopDelay: 60
+  switchoverDelay: 60
+  failoverDelay: 10
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+    parameters:
+      fsync: "on"
+      synchronous_commit: "on"
+      full_page_writes: "on"
+      max_connections: "300"
+  bootstrap:
+    initdb:
+      database: juicefs
+      owner: juicefs
+      secret: {name: {{ .Values.postgres.authSecret | quote }}}
+      dataChecksums: true
+  storage:
+    storageClass: {{ .Values.storageClass | quote }}
+    size: {{ .Values.postgres.size | quote }}
+  resources: {{ toYaml .Values.postgres.resources | nindent 4 }}
+  affinity:
+    nodeSelector: {{ toYaml .Values.postgres.nodeSelector | nindent 6 }}
+    tolerations: {{ toYaml .Values.postgres.tolerations | nindent 6 }}
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: topology.kubernetes.io/zone
+  monitoring:
+    enablePodMonitor: false

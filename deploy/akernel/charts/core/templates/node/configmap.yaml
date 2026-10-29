@@ -14,6 +14,26 @@ data:
 
   sandboxd_config.toml: |
 {{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
+{{- $saveMode := .Values.node.config.sandboxd.runscCheckpointMode | default "full" }}
+{{- $nativeFilestore := eq (toString (.Values.node.config.sandboxd.nativeFilestore | default false)) "true" }}
+{{- if not (has $saveMode (list "full" "reflink")) }}
+{{- fail "node.config.sandboxd.runscCheckpointMode must be full or reflink" }}
+{{- end }}
+{{- if eq $saveMode "reflink" }}
+{{- if not (and $nativeFilestore (eq .Values.adx.checkpointStorage.kind "distributed_fs") (eq (toString .Values.adx.checkpointStorage.localCache.enabled) "true")) }}
+{{- fail "runsc reflink requires nativeFilestore and distributed_fs.localCache" }}
+{{- end }}
+{{- if not (contains "# AKERNEL_RUNSC_CHECKPOINT_MODE" $sandboxdConfig) }}
+{{- fail "runsc reflink requires the # AKERNEL_RUNSC_CHECKPOINT_MODE marker in sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = replace "# AKERNEL_RUNSC_CHECKPOINT_MODE" "checkpoint_mode=\"reflink\"" $sandboxdConfig }}
+{{- end }}
+{{- if $nativeFilestore }}
+{{- if not (regexMatch "(?m)^[\\t ]*filestore_dir_size=.*# AKERNEL_NATIVE_FILESTORE$" $sandboxdConfig) }}
+{{- fail "nativeFilestore requires the filestore_dir_size # AKERNEL_NATIVE_FILESTORE marker in sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)filestore_dir_size=.*# AKERNEL_NATIVE_FILESTORE$" $sandboxdConfig "${1}filestore_dir_size=\"\" # Native node filesystem" }}
+{{- end }}
 {{- $firecrackerBackend := .Values.node.config.sandboxd.firecrackerBackend | default "kvm" }}
 {{- if not (has $firecrackerBackend (list "kvm" "pvm")) }}
 {{- fail "node.config.sandboxd.firecrackerBackend must be kvm or pvm" }}

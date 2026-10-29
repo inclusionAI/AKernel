@@ -761,6 +761,16 @@ templates, and Python deployment helpers with:
 make deploy-script-check
 ```
 
+Shared filesystem staging and native runsc reflink use
+`adx.checkpointStorage.localCache` plus `node.config.sandboxd.nativeFilestore`
+and `runscCheckpointMode`. Qualify the ADX package in the selected image before
+enabling these opt-in settings. The preflight probes FICLONE on the actual
+filestore and cache mounts. Validate HA storage manifests with
+`python deploy/shared-storage/tests/test_ha_layout.py -v`; this does not replace
+native cross-node restore or failover tests. Existing ACK clusters can add
+dedicated storage pools through `deploy/terraform/aliyun-node-pools` without
+importing or modifying the cluster and its existing node pools.
+
 For Kubernetes SDK ingress changes, validate the rendered ADX public Service
 and cloud-provider templates:
 

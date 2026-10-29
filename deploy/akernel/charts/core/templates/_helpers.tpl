@@ -11,6 +11,15 @@ Expand the name of the chart.
 {{- dict "kind" "distributed_fs" "alias" $storage.alias "mount_root" $storage.mountPath "prefix" $storage.prefix | toYaml -}}
 {{- end -}}
 
+{{- define "core.nodeCheckpointStorage" -}}
+{{- $storage := .Values.adx.checkpointStorage -}}
+{{- $config := dict "kind" "distributed_fs" "alias" $storage.alias "mount_root" $storage.mountPath "prefix" $storage.prefix -}}
+{{- if eq (toString $storage.localCache.enabled) "true" -}}
+{{- $_ := set $config "local_cache" (dict "root" $storage.localCache.root "budget_bytes" (int64 $storage.localCache.budgetBytes) "max_entries" (int $storage.localCache.maxEntries)) -}}
+{{- end -}}
+{{- $config | toYaml -}}
+{{- end -}}
+
 {{- define "core.checkpointVolume" -}}
 name: checkpoint-storage
 {{- if .Values.adx.checkpointStorage.existingClaim }}
@@ -111,5 +120,13 @@ all-in-one image, while each component can still override repository/tag/policy.
 {{- end }}
 
 {{- define "core.image" -}}
+{{- $digest := .image.digest | default .root.Values.image.digest -}}
+{{- if $digest -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) -}}
+{{- fail "image.digest must be a sha256 digest" -}}
+{{- end -}}
+{{- printf "%s@%s" (include "core.image.repository" .) $digest -}}
+{{- else -}}
 {{- printf "%s:%s" (include "core.image.repository" .) (include "core.image.tag" .) -}}
+{{- end }}
 {{- end }}

@@ -29,6 +29,18 @@ writable_cache_type="Writeback"
 
 
 class PrepareCheckpointStorageTests(unittest.TestCase):
+    def test_local_cache_cannot_overlap_private_runtime_state(self):
+        for directory in ["/local", "/local/root", "/local/store/cache", "/local/filestore"]:
+            with self.subTest(directory=directory), self.assertRaises(ValueError):
+                PREPARE.validate_reflink_storage(CONFIG, Path("/shared"), Path(directory))
+
+    def test_reflink_requires_local_materialization_and_native_filestore(self):
+        source = CONFIG + '\n[plugin.runtime.runsc]\ncheckpoint_mode="reflink"\n'
+        with self.assertRaises(ValueError):
+            PREPARE.validate_reflink_storage(source, Path("/shared"), None)
+        with self.assertRaises(ValueError):
+            PREPARE.validate_reflink_storage(source, Path("/shared"), Path("/local/cache"))
+
     def test_preparation_preserves_local_runtime_and_does_not_create_shared_runtime(
         self,
     ):

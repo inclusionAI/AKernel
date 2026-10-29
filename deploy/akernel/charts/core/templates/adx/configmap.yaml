@@ -22,6 +22,25 @@
 {{- end }}
 {{- end }}
 {{- $storage := .Values.adx.checkpointStorage }}
+{{- $cache := $storage.localCache }}
+{{- if eq (toString $cache.enabled) "true" }}
+{{- if ne $storage.kind "distributed_fs" }}
+{{- fail "checkpointStorage.localCache requires distributed_fs" }}
+{{- end }}
+{{- if not (regexMatch "^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $cache.root) }}
+{{- fail "checkpointStorage.localCache.root must be a dedicated directory under /home/akernel/adx" }}
+{{- end }}
+{{- range $reserved := list "/home/akernel/adx/run" "/home/akernel/adx/logs" }}
+{{- if or (eq $cache.root $reserved) (hasPrefix (printf "%s/" $reserved) $cache.root) }}
+{{- fail "checkpointStorage.localCache.root overlaps ADX runtime state" }}
+{{- end }}
+{{- end }}
+{{- range $limit := list $cache.budgetBytes $cache.maxEntries }}
+{{- if or (le (int64 $limit) 0) (ne (float64 $limit) (float64 (int64 $limit))) }}
+{{- fail "checkpointStorage.localCache limits must be positive integers" }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if not (has $storage.kind (list "local" "distributed_fs")) }}
 {{- fail "adx.checkpointStorage.kind must be local or distributed_fs" }}
 {{- end }}
@@ -223,7 +242,7 @@ data:
             {{- end }}
           {{- if eq $storage.kind "distributed_fs" }}
           checkpoint_storage:
-            {{- include "core.checkpointStorage" . | nindent 12 }}
+            {{- include "core.nodeCheckpointStorage" . | nindent 12 }}
           {{- else }}
           checkpoint_dir: /home/akernel/adx/checkpoints
           {{- end }}

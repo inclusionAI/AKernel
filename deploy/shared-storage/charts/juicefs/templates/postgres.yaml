@@ -1,4 +1,5 @@
 {{- $name := include "juicefs.name" . -}}
+{{- if eq .Values.postgres.mode "managed" }}
 {{- if not .Values.postgres.existingSecret }}
 {{- $old := lookup "v1" "Secret" .Release.Namespace (include "juicefs.auth" .) -}}
 apiVersion: v1
@@ -67,3 +68,4 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: {{ $name }}-postgres}
+{{- end }}

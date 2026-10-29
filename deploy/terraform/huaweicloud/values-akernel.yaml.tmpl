@@ -114,6 +114,8 @@ node:
       cpuQuota: "100%"
     sandboxd:
       enableRunc: ${enable_runc}
+      runscCheckpointMode: ${jsonencode(runsc_checkpoint_mode)}
+      nativeFilestore: ${native_filestore}
       chunkDbSize: ${jsonencode(chunk_db_size)}
       config: |-
         rootDir="/home/akernel/sandboxd/root"
@@ -142,10 +144,17 @@ node:
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
         filestore_dir="/home/akernel/filestore"
-        filestore_dir_size="200G"
+        filestore_dir_size="200G" # AKERNEL_NATIVE_FILESTORE
         filestore_xfs_enabled=false
         loop_device_dir="/dev"
         overlay_tmpfs_size="10G"
+
+        [plugin.runtime.checkpoint_sync]
+        sync_output=true
+
+        [plugin.runtime.runsc]
+        # AKERNEL_RUNSC_CHECKPOINT_MODE
+        background_restore=true
 
         [plugin.runtime.basic_spec]
         runsc="/home/akernel/images/config.json"

@@ -21,6 +21,9 @@ spec:
               value: {{ .Values.juicefs.volumeName | quote }}
           envFrom:
             - configMapRef: {name: {{ $name }}-bucket}
+          {{- if include "juicefs.pgMounts" . }}
+          volumeMounts: {{ include "juicefs.pgMounts" . | nindent 12 }}
+          {{- end }}
           command: [/bin/sh, -ec]
           args:
             - |
@@ -36,3 +39,6 @@ spec:
                 fi
                 sleep 5
               done
+      {{- if include "juicefs.pgVolumes" . }}
+      volumes: {{ include "juicefs.pgVolumes" . | nindent 8 }}
+      {{- end }}

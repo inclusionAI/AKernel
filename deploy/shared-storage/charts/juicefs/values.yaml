@@ -24,11 +24,36 @@ ceph:
   osdSize: 100Gi
   monCount: 3
   monSize: 10Gi
+  mgrCount: 1
   replicas: 3
+  failureDomain: host
+  # One device set per zone; empty retains the original host-based layout.
+  zones: []
   gatewayInstances: 2
   gatewayTcpNoDelay: true
   nodeSelector: {kubernetes.io/arch: amd64}
+  tolerations: []
+  resources:
+    mon:
+      requests: {cpu: 500m, memory: 1Gi}
+      limits: {memory: 2Gi}
+    mgr:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {memory: 1Gi}
+    osd:
+      requests: {cpu: 1, memory: 4Gi}
+      limits: {memory: 6Gi}
 postgres:
+  mode: managed
+  # External means a database managed separately from this chart, including
+  # an in-cluster CloudNativePG Cluster. Credentials stay in existingSecret.
+  external:
+    host: ""
+    port: 5432
+    database: juicefs
+    user: juicefs
+    sslMode: verify-full
+    caSecret: ""
   image: docker.io/library/postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
   storageClass: ""
   size: 10Gi

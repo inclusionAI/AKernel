@@ -74,10 +74,14 @@ spec:
             - /config/sandboxd_config.toml
             - --mount-root
             - {{ .Values.adx.checkpointStorage.mountPath | quote }}
+            {{- if eq (toString .Values.adx.checkpointStorage.localCache.enabled) "true" }}
+            - --local-cache-root
+            - {{ .Values.adx.checkpointStorage.localCache.root | quote }}
+            {{- end }}
           volumeMounts:
             - {{ include "core.checkpointMount" . | nindent 14 | trim }}
             - {name: akernel-node-config, mountPath: /config, readOnly: true}
-            - {name: home-disk, mountPath: /home/akernel, readOnly: true}
+            - {name: home-disk, mountPath: /home/akernel, readOnly: {{ ne (toString .Values.adx.checkpointStorage.localCache.enabled) "true" }}}
         {{- end }}
         - name: migrate-adx-state
           image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"

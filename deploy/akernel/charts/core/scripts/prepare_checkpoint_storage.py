@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import re
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -80,9 +82,48 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--mount-root", type=Path, required=True)
+    parser.add_argument("--local-cache-root", type=Path)
     args = parser.parse_args()
     shared_mount(args.mount_root, Path("/proc/self/mountinfo").read_text())
-    validate_runtime_storage(args.config.read_text(), args.mount_root)
+    source = args.config.read_text()
+    validate_runtime_storage(source, args.mount_root)
+    validate_reflink_storage(source, args.mount_root, args.local_cache_root)
+
+
+def validate_reflink_storage(source: str, mount_root: Path, cache_root: Path | None) -> None:
+    """Probe native FICLONE on the actual filestore/cache mounts before launch."""
+    config = tomllib.loads(source)
+    runtime = config.get("plugin", {}).get("runtime", {})
+    mode = runtime.get("runsc", {}).get("checkpoint_mode", "full")
+    if cache_root is not None:
+        if not cache_root.is_absolute() or cache_root.resolve() != cache_root:
+            raise ValueError("local checkpoint cache must be absolute without symlinks")
+        if cache_root == mount_root or mount_root in cache_root.parents or cache_root in mount_root.parents:
+            raise ValueError("local checkpoint cache overlaps shared storage")
+        paths = [config.get("rootDir"), config.get("storeDir"), runtime.get("filestore_dir"),
+                 runtime.get("firecracker", {}).get("storage_dir")]
+        for value in paths:
+            if value:
+                directory = Path(value).resolve()
+                if cache_root == directory or cache_root in directory.parents or directory in cache_root.parents:
+                    raise ValueError("local checkpoint cache overlaps private runtime storage")
+    if mode != "reflink":
+        return
+    if cache_root is None:
+        raise ValueError("runsc reflink requires local checkpoint materialization")
+    if runtime.get("filestore_dir_size") not in (None, ""):
+        raise ValueError("runsc reflink requires a native filestore without a loop filesystem")
+    filestore = Path(runtime["filestore_dir"])
+    if filestore.resolve() != filestore:
+        raise ValueError("runsc filestore must not contain symlinks")
+    for directory in (cache_root, filestore):
+        directory.mkdir(parents=True, exist_ok=True)
+    if cache_root.stat().st_dev != filestore.stat().st_dev:
+        raise ValueError("checkpoint cache and filestore must be on the same filesystem")
+    with tempfile.TemporaryFile(dir=filestore) as live, tempfile.TemporaryFile(dir=cache_root) as capture:
+        live.write(b"AKernel native reflink preflight\n")
+        live.flush()
+        fcntl.ioctl(capture.fileno(), 0x40049409, live.fileno())  # Linux FICLONE
 
 
 if __name__ == "__main__":

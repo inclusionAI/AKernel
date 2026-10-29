@@ -35,11 +35,25 @@ spec:
         checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
     spec:
       terminationGracePeriodSeconds: 120
+      {{- $selector := dict }}
       {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
-      {{- with .Values.adx.checkpointStorage.nodeSelector }}
+      {{- $selector = deepCopy .Values.adx.checkpointStorage.nodeSelector }}
+      {{- end }}
+      {{- range $key, $value := .Values.adx.coordinator.nodeSelector }}
+      {{- if and (hasKey $selector $key) (ne (index $selector $key) $value) }}
+      {{- fail "Coordinator nodeSelector conflicts with checkpoint client placement" }}
+      {{- end }}
+      {{- $_ := set $selector $key $value }}
+      {{- end }}
+      {{- with $selector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.adx.coordinator.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.adx.coordinator.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

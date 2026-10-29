@@ -106,6 +106,32 @@
         },
         "gatewayTcpNoDelay": {
           "type": "boolean"
+        },
+        "mgrCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "failureDomain": {
+          "type": "string",
+          "enum": [
+            "host",
+            "zone"
+          ]
+        },
+        "zones": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tolerations": {
+          "type": "array"
+        },
+        "resources": {
+          "type": "object"
         }
       }
     },
@@ -124,6 +150,46 @@
         },
         "existingSecret": {
           "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "managed",
+            "external"
+          ]
+        },
+        "external": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "pattern": "^$|^[a-zA-Z0-9.-]+$"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "database": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_]+$"
+            },
+            "user": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_]+$"
+            },
+            "sslMode": {
+              "type": "string",
+              "enum": [
+                "disable",
+                "verify-ca",
+                "verify-full"
+              ]
+            },
+            "caSecret": {
+              "type": "string"
+            }
+          }
         }
       }
     },

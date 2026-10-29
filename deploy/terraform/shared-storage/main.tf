@@ -31,7 +31,13 @@ locals {
     hostPath      = local.selected_storage.host_path
     existingClaim = local.selected_storage.existing_claim
     prefix        = local.selected_storage.prefix
-    nodeSelector  = var.juicefs.enabled ? local.client_node_selector : {}
+    localCache = {
+      enabled     = local.selected_storage.local_cache.enabled
+      root        = local.selected_storage.local_cache.root
+      budgetBytes = local.selected_storage.local_cache.budget_bytes
+      maxEntries  = local.selected_storage.local_cache.max_entries
+    }
+    nodeSelector = var.juicefs.enabled ? local.client_node_selector : {}
   }
 }
 

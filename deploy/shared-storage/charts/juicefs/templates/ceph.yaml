@@ -6,8 +6,16 @@
 {{- fail "JuiceFS host mount must not overlap runtime, system, or Ceph state directories" }}
 {{- end }}
 {{- end }}
-{{- if or (empty .Values.ceph.storageClass) (empty .Values.postgres.storageClass) }}
+{{- if or (empty .Values.ceph.storageClass) (and (eq .Values.postgres.mode "managed") (empty .Values.postgres.storageClass)) }}
 {{- fail "ceph.storageClass and postgres.storageClass are required; Ceph OSDs require raw Block PVC support" }}
+{{- end }}
+{{- if eq .Values.postgres.mode "external" }}
+{{- if or (empty .Values.postgres.external.host) (empty .Values.postgres.existingSecret) (and (ne .Values.postgres.external.sslMode "disable") (empty .Values.postgres.external.caSecret)) }}
+{{- fail "external PostgreSQL requires host, existingSecret and a CA Secret when TLS is enabled" }}
+{{- end }}
+{{- end }}
+{{- if and (eq .Values.ceph.failureDomain "zone") (or (lt (len .Values.ceph.zones) (int .Values.ceph.replicas)) (ne (len .Values.ceph.zones) (int .Values.ceph.osdCount))) }}
+{{- fail "zone replication requires one explicitly placed OSD per zone and at least replicas zones" }}
 {{- end }}
 {{- if or (lt (int .Values.ceph.replicas) 1) (lt (int .Values.ceph.osdCount) (int .Values.ceph.replicas)) (not (has (int .Values.ceph.monCount) (list 1 3 5))) }}
 {{- fail "Ceph requires positive replicas, osdCount >= replicas, and monCount of 1, 3, or 5" }}
@@ -30,22 +38,54 @@ spec:
         accessModes: [ReadWriteOnce]
         storageClassName: {{ .Values.ceph.storageClass | quote }}
         resources: {requests: {storage: {{ .Values.ceph.monSize | quote }}}}
-  mgr: {count: 1}
+  mgr: {count: {{ .Values.ceph.mgrCount }}, allowMultiplePerNode: false}
   dashboard: {enabled: false}
   placement:
-    all: {{ include "juicefs.placement" .Values.ceph.nodeSelector | nindent 6 }}
+    all: {{ include "juicefs.cephPlacement" . | nindent 6 }}
+    mon:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector: {matchLabels: {app: rook-ceph-mon}}
+            topologyKey: {{ ternary "topology.kubernetes.io/zone" "kubernetes.io/hostname" (eq .Values.ceph.failureDomain "zone") }}
+    mgr:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector: {matchLabels: {app: rook-ceph-mgr}}
+            topologyKey: topology.kubernetes.io/zone
+  resources:
+    mon: {{ toYaml .Values.ceph.resources.mon | nindent 6 }}
+    mgr: {{ toYaml .Values.ceph.resources.mgr | nindent 6 }}
   storage:
     useAllNodes: false
     useAllDevices: false
     storageClassDeviceSets:
+      {{- if .Values.ceph.zones }}
+      {{- range $index, $zone := .Values.ceph.zones }}
+      - name: checkpoint-osd-{{ $index }}
+        count: 1
+        portable: true
+        placement:
+          {{- include "juicefs.placement" (merge (dict "topology.kubernetes.io/zone" $zone) (deepCopy $.Values.ceph.nodeSelector)) | nindent 10 }}
+          tolerations: {{ toYaml $.Values.ceph.tolerations | nindent 12 }}
+        preparePlacement:
+          {{- include "juicefs.placement" (merge (dict "topology.kubernetes.io/zone" $zone) (deepCopy $.Values.ceph.nodeSelector)) | nindent 10 }}
+          tolerations: {{ toYaml $.Values.ceph.tolerations | nindent 12 }}
+        resources: {{ toYaml $.Values.ceph.resources.osd | nindent 10 }}
+        volumeClaimTemplates:
+          - metadata: {name: data}
+            spec:
+              accessModes: [ReadWriteOnce]
+              volumeMode: Block
+              storageClassName: {{ $.Values.ceph.storageClass | quote }}
+              resources: {requests: {storage: {{ $.Values.ceph.osdSize | quote }}}}
+      {{- end }}
+      {{- else }}
       - name: checkpoint-osd
         count: {{ .Values.ceph.osdCount }}
         portable: true
-        placement: {{ include "juicefs.placement" .Values.ceph.nodeSelector | nindent 10 }}
-        preparePlacement: {{ include "juicefs.placement" .Values.ceph.nodeSelector | nindent 10 }}
-        resources:
-          requests: {cpu: 500m, memory: 2Gi}
-          limits: {memory: 4Gi}
+        placement: {{ include "juicefs.cephPlacement" . | nindent 10 }}
+        preparePlacement: {{ include "juicefs.cephPlacement" . | nindent 10 }}
+        resources: {{ toYaml .Values.ceph.resources.osd | nindent 10 }}
         volumeClaimTemplates:
           - metadata: {name: data}
             spec:
@@ -53,6 +93,7 @@ spec:
               volumeMode: Block
               storageClassName: {{ .Values.ceph.storageClass | quote }}
               resources: {requests: {storage: {{ .Values.ceph.osdSize | quote }}}}
+      {{- end }}
   disruptionManagement: {managePodBudgets: true}
   crashCollector: {disable: true}
 ---
@@ -63,12 +104,12 @@ metadata:
   annotations: {helm.sh/resource-policy: keep}
 spec:
   metadataPool:
-    failureDomain: host
+    failureDomain: {{ .Values.ceph.failureDomain }}
     replicated:
       size: {{ .Values.ceph.replicas }}
       requireSafeReplicaSize: {{ gt (int .Values.ceph.replicas) 1 }}
   dataPool:
-    failureDomain: host
+    failureDomain: {{ .Values.ceph.failureDomain }}
     replicated:
       size: {{ .Values.ceph.replicas }}
       requireSafeReplicaSize: {{ gt (int .Values.ceph.replicas) 1 }}
@@ -78,7 +119,12 @@ spec:
     instances: {{ .Values.ceph.gatewayInstances }}
     rgwCommandFlags:
       rgw_frontends: {{ printf "beast port=8080 tcp_nodelay=%d" (ternary 1 0 .Values.ceph.gatewayTcpNoDelay) | quote }}
-    placement: {{ include "juicefs.placement" .Values.ceph.nodeSelector | nindent 6 }}
+    placement:
+      {{- include "juicefs.cephPlacement" . | nindent 6 }}
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector: {matchLabels: {app: rook-ceph-rgw}}
+            topologyKey: topology.kubernetes.io/zone
     resources:
       requests: {cpu: 250m, memory: 512Mi}
       limits: {memory: 1Gi}

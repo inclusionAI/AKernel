@@ -46,6 +46,9 @@ spec:
           image: {{ .Values.juicefs.image | quote }}
           env:
             {{- include "juicefs.env" . | nindent 12 }}
+          {{- if include "juicefs.pgMounts" . }}
+          volumeMounts: {{ include "juicefs.pgMounts" . | nindent 12 }}
+          {{- end }}
           command: [/bin/sh, -ec]
           args:
             - |
@@ -95,12 +98,14 @@ spec:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 2Gi}
           volumeMounts:
+            {{- include "juicefs.pgMounts" . | nindent 12 }}
             {{- if gt (int .Values.juicefs.cacheMiB) 0 }}
             - {name: cache, mountPath: /cache}
             {{- end }}
             - {name: shared, mountPath: /shared, mountPropagation: Bidirectional}
             - {name: fuse, mountPath: /dev/fuse}
       volumes:
+        {{- include "juicefs.pgVolumes" . | nindent 8 }}
         {{- if gt (int .Values.juicefs.cacheMiB) 0 }}
         - name: cache
           hostPath: {path: {{ $cache | quote }}, type: DirectoryOrCreate}

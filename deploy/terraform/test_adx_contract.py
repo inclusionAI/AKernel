@@ -19,6 +19,20 @@ ROOT = Path(__file__).resolve().parent
     shutil.which("terraform"), "Terraform is required for evaluated storage validation"
 )
 class CheckpointStorageValidationTest(unittest.TestCase):
+    def test_cached_storage_is_forwarded_and_requires_shared_storage(self):
+        for provider in ("aliyun", "huaweicloud"):
+            result, value = self.run_plan(provider, {
+                "kind": "distributed_fs", "host_path": "/srv/shared",
+                "local_cache": {"enabled": True, "root": "/home/akernel/adx/cache-v1",
+                                "budget_bytes": 53687091200, "max_entries": 500},
+            })
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(value["localCache"], {"enabled": True, "root": "/home/akernel/adx/cache-v1",
+                                                 "budgetBytes": 53687091200, "maxEntries": 500})
+            result, _ = self.run_plan(provider, {"local_cache": {"enabled": True}})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("local_cache requires distributed_fs", result.stderr)
+
     def run_plan(self, provider, storage, juicefs=None):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)

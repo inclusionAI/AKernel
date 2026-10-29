@@ -27,6 +27,88 @@ def render(*settings: str) -> dict[tuple[str, str], dict]:
 
 
 class SharedCheckpointStorageTests(unittest.TestCase):
+    def test_control_service_budgets_protect_voluntary_disruption(self):
+        for replicas in (1, 3):
+            resources = render(f"adx.ingressApi.replicas={replicas}")
+            self.assertEqual(resources[("PodDisruptionBudget", "akernel-adx-coordinator")]["spec"]["minAvailable"], 1)
+            if replicas == 1:
+                self.assertNotIn(("PodDisruptionBudget", "akernel-adx-ingress-api"), resources)
+            else:
+                self.assertEqual(resources[("PodDisruptionBudget", "akernel-adx-ingress-api")]["spec"]["minAvailable"], 2)
+
+    def test_core_images_accept_a_shared_immutable_digest(self):
+        digest = "sha256:" + "a" * 64
+        resources = render("image.repository=example/akernel", f"image.digest={digest}")
+        for key in [("Deployment", "akernel-adx-coordinator"),
+                    ("Deployment", "akernel-adx-ingress-api"), ("DaemonSet", "akernel-node")]:
+            pod = resources[key]["spec"]["template"]["spec"]
+            self.assertEqual(pod["containers"][0]["image"], f"example/akernel@{digest}")
+        with self.assertRaises(subprocess.CalledProcessError):
+            render("image.digest=latest")
+
+    def test_control_services_use_control_pool_without_losing_mount_placement(self):
+        resources = self.shared_resources(
+            "adx.checkpointStorage.nodeSelector.storage=juicefs",
+            "adx.coordinator.nodeSelector.node-role=akernel-control-plane",
+            "adx.coordinator.tolerations[0].key=dedicated",
+            "adx.coordinator.tolerations[0].value=akernel-control-plane",
+            "adx.coordinator.tolerations[0].effect=NoSchedule",
+            "adx.ingressApi.nodeSelector.node-role=akernel-control-plane",
+        )
+        coord = resources[("Deployment", "akernel-adx-coordinator")]["spec"]["template"]["spec"]
+        self.assertEqual(coord["nodeSelector"], {"storage": "juicefs", "node-role": "akernel-control-plane"})
+        self.assertEqual(coord["tolerations"][0]["value"], "akernel-control-plane")
+        ingress = resources[("Deployment", "akernel-adx-ingress-api")]["spec"]["template"]["spec"]
+        self.assertEqual(ingress["nodeSelector"], {"node-role": "akernel-control-plane"})
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.shared_resources("adx.checkpointStorage.nodeSelector.pool=workers", "adx.coordinator.nodeSelector.pool=control")
+
+    def test_local_cache_is_node_owned_and_reclaimer_stays_shared_only(self) -> None:
+        resources = self.shared_resources(
+            "adx.checkpointStorage.localCache.enabled=true",
+        )
+        configs = resources[("ConfigMap", "akernel-adx-config")]["data"]
+        node = yaml.safe_load(configs["node.yaml"])["services"][0]["config"]
+        coordinator = yaml.safe_load(configs["coordinator.yaml"])["services"][0]["config"]
+        self.assertEqual(node["checkpoint_storage"]["local_cache"], {
+            "root": "/home/akernel/adx/checkpoints", "budget_bytes": 53687091200,
+            "max_entries": 500,
+        })
+        self.assertNotIn("local_cache", coordinator["checkpoint_reclaimers"][0])
+        pod = resources[("DaemonSet", "akernel-node")]["spec"]["template"]["spec"]
+        preflight = next(item for item in pod["initContainers"] if item["name"] == "prepare-checkpoint-storage")
+        self.assertIn("--local-cache-root", preflight["args"])
+        home = next(item for item in preflight["volumeMounts"] if item["name"] == "home-disk")
+        self.assertFalse(home.get("readOnly", False))
+
+    def test_reflink_profile_uses_native_filestore_and_keeps_background_restore(self) -> None:
+        resources = self.shared_resources(
+            "adx.checkpointStorage.localCache.enabled=true",
+            "node.config.sandboxd.nativeFilestore=true",
+            "node.config.sandboxd.runscCheckpointMode=reflink",
+        )
+        config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+        runtime = config["plugin"]["runtime"]
+        self.assertEqual(runtime["filestore_dir_size"], "")
+        self.assertEqual(runtime["runsc"]["checkpoint_mode"], "reflink")
+        self.assertTrue(runtime["runsc"]["background_restore"])
+        self.assertTrue(runtime["checkpoint_sync"]["sync_output"])
+
+    def test_cached_filesystem_rejects_unsafe_roots_and_invalid_limits(self) -> None:
+        for setting in (
+            "adx.checkpointStorage.localCache.root=/home/akernel/filestore/cache",
+            "adx.checkpointStorage.localCache.root=/tmp/checkpoints",
+            "adx.checkpointStorage.localCache.budgetBytes=0",
+            "adx.checkpointStorage.localCache.maxEntries=0",
+            "adx.checkpointStorage.localCache.maxEntries=2.5",
+        ):
+            with self.subTest(setting=setting), self.assertRaises(subprocess.CalledProcessError):
+                self.shared_resources("adx.checkpointStorage.localCache.enabled=true", setting)
+        with self.assertRaises(subprocess.CalledProcessError):
+            render("adx.checkpointStorage.localCache.enabled=true")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.shared_resources("node.config.sandboxd.runscCheckpointMode=reflink")
+
     def test_shared_consumers_use_mount_client_placement_and_keep_affinity(
         self,
     ) -> None:

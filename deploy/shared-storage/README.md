@@ -22,8 +22,14 @@ Coordinator -> shared storage -> artifact reclamation
 JuiceFS client -> PostgreSQL metadata + Ceph RGW data blocks
 ```
 
-Adxlet allocates each artifact directory and passes it to sandboxd through
-`CheckpointRequest.checkpoint_dir`. Sandboxd's `filestore_dir` configures
+In the default direct filesystem mode, adxlet allocates each shared artifact
+directory and passes it to sandboxd through `CheckpointRequest.checkpoint_dir`.
+The optional local staging mode captures on the native local filesystem,
+publishes complete artifacts to the shared volume, and materializes verified
+restore inputs in a protected node-local cache. It requires a qualifying ADX
+image with `distributed_fs.local_cache` support; the baseline release archive
+does not include that extension. See [the HA deployment guide](production.md).
+Sandboxd's `filestore_dir` configures
 private runtime writes. Keep the same container-local filestore path on every
 node; each path is backed by that node's local disk. Runtime state, private
 writable layers and checkpoints have separate paths. Restore reconstructs the

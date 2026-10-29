@@ -904,6 +904,12 @@ variable "checkpoint_storage" {
     host_path      = optional(string, "")
     existing_claim = optional(string, "")
     prefix         = optional(string, "akernel/checkpoints")
+    local_cache = optional(object({
+      enabled      = optional(bool, false)
+      root         = optional(string, "/home/akernel/adx/checkpoints")
+      budget_bytes = optional(number, 53687091200)
+      max_entries  = optional(number, 500)
+    }), {})
   })
   default     = {}
   nullable    = false
@@ -911,6 +917,13 @@ variable "checkpoint_storage" {
   validation {
     condition = (
       contains(["local", "distributed_fs"], var.checkpoint_storage.kind) &&
+      (!var.checkpoint_storage.local_cache.enabled || (
+        can(regex("^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$", var.checkpoint_storage.local_cache.root)) &&
+        var.checkpoint_storage.local_cache.budget_bytes > 0 &&
+        floor(var.checkpoint_storage.local_cache.budget_bytes) == var.checkpoint_storage.local_cache.budget_bytes &&
+        var.checkpoint_storage.local_cache.max_entries > 0 &&
+        floor(var.checkpoint_storage.local_cache.max_entries) == var.checkpoint_storage.local_cache.max_entries
+      )) &&
       (var.checkpoint_storage.kind == "local" || (
         var.checkpoint_storage.alias != "local" &&
         can(regex("^[A-Za-z0-9-]+$", var.checkpoint_storage.alias))
@@ -975,4 +988,20 @@ variable "juicefs" {
     )
     error_message = "JuiceFS requires a safe namespace and host mount path, non-negative integer cache_mib, integer osd_count >= replicas >= 1, and mon_count of 1, 3, or 5."
   }
+}
+
+variable "runsc_checkpoint_mode" {
+  description = "Native gVisor checkpoint mode; reflink requires shared local_cache and native_filestore."
+  type        = string
+  default     = "full"
+  validation {
+    condition     = contains(["full", "reflink"], var.runsc_checkpoint_mode)
+    error_message = "runsc_checkpoint_mode must be full or reflink."
+  }
+}
+
+variable "native_filestore" {
+  description = "Keep runtime filestore on the node filesystem instead of a loop device."
+  type        = bool
+  default     = false
 }

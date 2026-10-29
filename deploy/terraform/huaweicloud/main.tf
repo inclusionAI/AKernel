@@ -104,6 +104,8 @@ locals {
     sandboxd_nat_backend        = var.sandboxd_nat_backend
     chunk_db_size               = var.chunk_db_size
     enable_runc                 = var.enable_runc
+    runsc_checkpoint_mode       = var.runsc_checkpoint_mode
+    native_filestore            = var.native_filestore
     node_secret_create          = var.node_secret_create
     node_home_use_csi_ephemeral = var.node_home_use_csi_ephemeral
     node_home_csi_storage_class = var.node_home_csi_storage_class
