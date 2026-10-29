@@ -78,6 +78,12 @@ and passed separately checked NAT HTTP requests and traffic-progress checks.
 The full published SDK 0.2.0rc4 standalone suite and a two-sandbox writable-state
 isolation check also passed on each platform.
 
+Those exact candidate archives were promoted without rebuilding to
+[release-20261012.0-akernel.2](https://github.com/akernel-dev/gvisor/releases/tag/release-20261012.0-akernel.2).
+The sandboxd manifest pins the public archives and their verified SHA-512
+digests. Drain active sandboxes before upgrading; this qualification does not
+establish checkpoint compatibility across runtime builds.
+
 Use the deterministic gVisor timer regression for the original lock cycle;
 passing this natural workload does not establish that the old deadlock was
 naturally reproduced. These results do not qualify ARM64 networking or the
