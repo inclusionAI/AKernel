@@ -1,4 +1,4 @@
-# TCP/conntrack checkpoint diagnostic
+# Network checkpoint and restore diagnostic
 
 This opt-in probe creates one runsc sandbox on an **empty, dedicated local
 standalone**. It reads credentials from the explicit standalone data directory,
@@ -6,6 +6,14 @@ verifies the container's `/home/akernel` mount, discovers its published
 8443/8080 ports, and enables TLS verification with that profile's public CA.
 Use a virtual environment with the published `akernel-sdk` version being
 qualified; this script does not install or import the repository SDK by path.
+
+Prepare the node using the [standalone guide](../../standalone/README.md), with
+the runsc platform selected in its configuration. The host needs Docker access,
+and the node must allow one sandbox with two CPUs, 2048 MiB of memory and
+2048 MiB of storage. Network modes download Alpine packages during setup and
+require working outbound connectivity. Record the installed SDK version and
+the complete runtime bundle selected by
+`src/sandboxd/third_party/runtime-versions.env` with the results.
 
 From the repository root, after starting the dedicated standalone:
 
@@ -56,36 +64,28 @@ The probe deletes the sandbox in `finally`; inspect `summary.json` and the
 actual runsc inventory before reusing or stopping the standalone. Local logs
 and credentials must remain untracked.
 
-On the `release-20261012.0-akernel.1` bundle with SDK 0.2.0rc4, ordinary
-checkpoint/file rollback passes. The controlled gVisor timer-output regression
-from [AKernel #129](https://github.com/inclusionAI/AKernel/issues/129) still fails.
-The netns workload completed eight live checkpoints, but a separately checked
-post-reload HTTP request timed out with the moved child veth missing
-([AKernel #134](https://github.com/inclusionAI/AKernel/issues/134)). Default
-DinD NAT also fails earlier on the legacy addrtype matcher
-([AKernel #133](https://github.com/inclusionAI/AKernel/issues/133)). These are
-diagnostic failures to retain, not passing full network-restore acceptance.
+Each invocation creates a timestamped subdirectory under `--output`.
+`summary.json` records the SDK version, node/image identity, sandbox identity,
+checkpoint command IDs and outcomes, restore assertions, and cleanup result.
+Setup logs, bounded runtime stacks and restore diagnostics are collected when
+applicable. Preflight failures can occur before that subdirectory exists, so
+retain the process output as well. Require process exit 0 and summary status
+`passed` for a successful workload result. Check `sdk_cleanup_error` separately
+and confirm the actual inventory is empty before reusing the node.
 
+A successful `baseline` run covers checkpoint completion and file rollback.
+Network acceptance additionally requires successful fixture setup, advancing
+traffic, and successful HTTP requests after every reload; `netns` also checks
+the restored peer address and default route. Run both veth paths separately and
+qualify each runtime platform and architecture being deployed. A setup failure
+or unresolved checkpoint outcome leaves the corresponding coverage incomplete.
+Passing `netns` does not qualify the Docker daemon path. The `dind` fixture
+requires legacy iptables addrtype support and currently imports an x86_64
+loader, so run that mode only on Linux/amd64.
 
-The candidate for `release-20261012.0-akernel.2` from merged gVisor commit
-`16f123ed6da34fb2303368acb21754ccaab60cfe`
-([candidate run 40827753118](https://github.com/akernel-dev/gvisor/actions/runs/40827753118))
-passed this probe on Linux amd64 with both systrap and KVM. Each platform ran
-both veth creation paths with 32 keepalive connections and advancing HTTP
-traffic, eight live checkpoints, and two reloads of the same last checkpoint.
-Both reloads retained the peer address/default route, restored the file marker,
-and passed separately checked NAT HTTP requests and traffic-progress checks.
-The full published SDK 0.2.0rc4 standalone suite and a two-sandbox writable-state
-isolation check also passed on each platform.
-
-Those exact candidate archives were promoted without rebuilding to
-[release-20261012.0-akernel.2](https://github.com/akernel-dev/gvisor/releases/tag/release-20261012.0-akernel.2).
-The sandboxd manifest pins the public archives and their verified SHA-512
-digests. Drain active sandboxes before upgrading; this qualification does not
-establish checkpoint compatibility across runtime builds.
-
-Use the deterministic gVisor timer regression for the original lock cycle;
-passing this natural workload does not establish that the old deadlock was
-naturally reproduced. These results do not qualify ARM64 networking or the
-full Docker daemon chain. The independent legacy addrtype issue above remains
-outside this fix.
+This traffic workload exercises checkpoint and restore under active TCP
+connections. It does not deterministically trigger every timer/conntrack lock
+interleaving; use the gVisor transport regression tests for controlled
+lock-order coverage. It also does not replace the full standalone SDK suite or
+multi-sandbox isolation checks. Drain active sandboxes before upgrading; a
+passing run does not establish checkpoint compatibility across runtime builds.
