@@ -20,8 +20,9 @@ data:
 {{- fail "node.config.sandboxd.runscCheckpointMode must be full or reflink" }}
 {{- end }}
 {{- if eq $saveMode "reflink" }}
-{{- if not (and $nativeFilestore (eq .Values.adx.checkpointStorage.kind "distributed_fs") (eq (toString .Values.adx.checkpointStorage.localCache.enabled) "true")) }}
-{{- fail "runsc reflink requires nativeFilestore and distributed_fs.localCache" }}
+{{- $localInputs := has .Values.adx.checkpointStorage.kind (list "local" "s3") }}
+{{- if not (and $nativeFilestore $localInputs) }}
+{{- fail "runsc reflink requires nativeFilestore and node-local checkpoint inputs (local or s3)" }}
 {{- end }}
 {{- if not (contains "# AKERNEL_RUNSC_CHECKPOINT_MODE" $sandboxdConfig) }}
 {{- fail "runsc reflink requires the # AKERNEL_RUNSC_CHECKPOINT_MODE marker in sandboxd.config" }}

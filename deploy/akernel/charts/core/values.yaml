@@ -36,8 +36,8 @@ adx:
   runtimeControl:
     enabled: true
     port: 19003
-  # The operator mounts JuiceFS or AFS on every eligible node and Coordinator
-  # host, or provides an existing RWX CSI claim. Credentials stay in that layer.
+  # Select local storage, S3 with node-local inputs, or direct distributed_fs.
+  # Filesystem mode requires an operator-mounted JuiceFS/AFS volume or RWX claim.
   checkpointStorage:
     kind: local
     alias: akernel-checkpoints
@@ -45,12 +45,16 @@ adx:
     hostPath: ""
     existingClaim: ""
     prefix: akernel/checkpoints
-    # Requires an ADX release supporting distributed_fs.local_cache.
-    localCache:
-      enabled: false
-      root: /home/akernel/adx/checkpoints
-      budgetBytes: 53687091200
-      maxEntries: 500
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""
+      allowHttp: false
+      # Keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY; optional AWS_SESSION_TOKEN.
+      credentialsSecret: ""
+      cacheRoot: /home/akernel/adx/checkpoint-s3-cache
+      cacheBudgetBytes: 53687091200
+      cacheMaxEntries: 500
     # Optional placement shared by execution nodes and Coordinator. Managed
     # JuiceFS sets this to its client selector so both roles have a host mount.
     nodeSelector: {}
@@ -96,6 +100,8 @@ adx:
     portHostDomain: ""
     publicService:
       enabled: false
+      # Keep the existing load balancer while withholding public traffic.
+      maintenance: false
       type: LoadBalancer
       controlPort: 443
       dataPort: 80
@@ -456,7 +462,7 @@ node:
       cpuQuota: "800%"
 
     sandboxd:
-      # Reflink requires the matching gVisor bundle, a native filestore and localCache.
+      # Reflink requires the matching gVisor bundle, a native filestore and node-local checkpoint inputs.
       runscCheckpointMode: full
       nativeFilestore: false
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.

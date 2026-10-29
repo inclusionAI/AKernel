@@ -6,10 +6,10 @@
 {{- fail "JuiceFS host mount must not overlap runtime, system, or Ceph state directories" }}
 {{- end }}
 {{- end }}
-{{- if or (empty .Values.ceph.storageClass) (and (eq .Values.postgres.mode "managed") (empty .Values.postgres.storageClass)) }}
+{{- if or (empty .Values.ceph.storageClass) (and .Values.juicefs.enabled (eq .Values.postgres.mode "managed") (empty .Values.postgres.storageClass)) }}
 {{- fail "ceph.storageClass and postgres.storageClass are required; Ceph OSDs require raw Block PVC support" }}
 {{- end }}
-{{- if eq .Values.postgres.mode "external" }}
+{{- if and .Values.juicefs.enabled (eq .Values.postgres.mode "external") }}
 {{- if or (empty .Values.postgres.external.host) (empty .Values.postgres.existingSecret) (and (ne .Values.postgres.external.sslMode "disable") (empty .Values.postgres.external.caSecret)) }}
 {{- fail "external PostgreSQL requires host, existingSecret and a CA Secret when TLS is enabled" }}
 {{- end }}

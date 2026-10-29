@@ -1,39 +1,38 @@
-# Shared checkpoints with native gVisor reflink
+# S3 checkpoints with native gVisor reflink
 
-The production layout separates control, business and storage pools. Keep at
-least two business hosts for cross-node restore and three storage hosts in
-separate availability zones. Coordinator remains single-active; its Pod can
-restart on another control host, with a control-service interruption.
+For checkpoint-only deployments, use ADX's existing S3 backend with node-local
+capture and restore inputs. An S3-compatible Ceph RGW endpoint can serve this
+role without JuiceFS or PostgreSQL. The existing distributed_fs mode remains
+available when a shared filesystem is independently required. Its direct
+shared paths do not satisfy native gVisor FICLONE against a local XFS filestore.
 
-## Image and filesystem contract
+## Data path and configuration
 
-The local-cache extension must be present in the selected ADX image before
-enabling this profile. The default AKernel archive pins continue to identify
-their original release. `builder/scripts/prepare-adx-overlay.py` prepares an
-explicit integration build from a qualified immutable AKernel base image and
-a verified clean ADX package. It preserves the base runtime dependencies and
-Ubuntu/tini EROFS layout, replaces Execd, and records separate overlay
-provenance. Build and push that context through your normal image pipeline;
-deploy its resulting digest. This is not an upstream ADX release publication.
+The node captures on its local filesystem, publishes the complete artifact to
+S3, and acknowledges the durable recovery point after publication. Another
+node downloads and verifies the complete artifact before passing local inputs
+to sandboxd. gVisor background restore begins after that materialization. This
+is not remote demand paging or filesystem-internal cloning. Local reflink also
+does not provide dirty-page incremental capture.
 
-Capture and restore materialization must share the native local filesystem
-with gVisor's filestore. A loop filesystem inside the filestore directory
-cannot satisfy that condition. Mount a local XFS volume with `reflink=1` at
-`/home/akernel`, and use these core chart values:
+Place the filestore and checkpoint cache on the same native XFS volume with
+reflink enabled. A loop filesystem under the filestore directory does not meet
+that condition. The chart probes real FICLONE support before starting the node:
 
 ```yaml
 adx:
   checkpointStorage:
-    kind: distributed_fs
-    alias: akernel-checkpoints
-    hostPath: /srv/akernel-shared
+    kind: s3
+    alias: akernel-checkpoints-s3
     prefix: akernel/checkpoints-v1
-    nodeSelector: {akernel.io/checkpoint-client: "true"}
-    localCache:
-      enabled: true
-      root: /home/akernel/adx/checkpoint-cache-v1
-      budgetBytes: 53687091200
-      maxEntries: 500
+    s3:
+      bucket: YOUR_CHECKPOINT_BUCKET
+      region: us-east-1
+      endpoint: https://YOUR_RGW_ENDPOINT
+      credentialsSecret: akernel-checkpoint-s3
+      cacheRoot: /home/akernel/adx/checkpoint-s3-cache
+      cacheBudgetBytes: 53687091200
+      cacheMaxEntries: 500
 node:
   config:
     sandboxd:
@@ -41,161 +40,112 @@ node:
       runscCheckpointMode: reflink
 ```
 
-Use a fresh shared prefix for this storage format, retaining the old prefix
-and state service for rollback. Coordinator receives the same alias/prefix
-but no node-local cache. Running executions pin restore inputs independently
-of the 50 GiB/500-unused-entry cache limits. The init container verifies actual
-FICLONE support before starting a worker. Custom sandboxd TOML must retain the
-`AKERNEL_NATIVE_FILESTORE` and `AKERNEL_RUNSC_CHECKPOINT_MODE` markers; provider
-templates include them. Terraform forwards `checkpoint_storage.local_cache`,
-`native_filestore` and `runsc_checkpoint_mode`.
+The existing Secret contains AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, with
+an optional AWS_SESSION_TOKEN. Only node and Coordinator containers receive
+these values. The node launcher imports them into the ADX system service.
+Instance metadata fallback is disabled. Rotate credentials through the bucket's
+identity manager, update the Secret, then drain and restart the consumers.
+Credentials never belong in Helm values, artifact records or Terraform state.
+HTTP endpoints require explicit s3.allowHttp=true; restrict such endpoints to
+an accepted private network boundary. A public or untrusted network requires
+TLS. An empty endpoint selects the SDK's regional S3 endpoint.
 
-Native reflink accelerates local writable-filestore capture and private
-restore clones. Cross-node cold restore still transfers the artifact. The
-adapter checks size and SHA256, preserves sparse files, synchronizes files and
-directories, and commits the manifest last. Mount loss or publication failure
-must not expose partial shared artifacts as successful recovery points.
+Node and Coordinator share alias, bucket, region, endpoint and prefix. Only
+nodes receive the cache configuration; Coordinator reclaims remote objects.
+Terraform forwards these settings through checkpoint_storage.s3. The local
+backend can also use native reflink, but its recovery points remain local.
 
-## State and storage services
+Running executions pin restore inputs independently of the unused-entry cache
+limits. The current stock S3 transport uploads logical file contents, including
+zero-filled holes, and its downloads can allocate the full logical size. Budget
+network traffic, remote capacity and local disk headroom accordingly. Sparse
+encoding is a separate potential optimization, not a reason to introduce a
+filesystem layer without measuring the whole deployment tradeoff.
 
-Install pinned Rook, CloudNativePG and Opstree Redis operators before their
-custom resources. With Rook 1.21.0, disabling `csi.installCsiOperator` and
-`csi.createCsiOperatorResources` avoids deploying CSI drivers, but the Rook
-filesystem controller still watches the `ClientProfile` API. Render the
-`CustomResourceDefinition` objects from the bundled `ceph-csi-operator`
-subchart in the verified Rook archive and apply those definitions separately
-with a dedicated field manager. Retain the source archive checksum and rendered
-definitions with the deployment profile, and update them with Rook. Do not apply
-the subchart's controllers or drivers for an RGW-only deployment. Check operator
-readiness after the informer startup interval before creating the Ceph cluster.
+## Control, business and storage pools
 
-The `charts/state-services` chart creates:
+Keep Coordinator single-active, with Kubernetes reconstruction and an accepted
+control-service interruption. Spread at least two Ingress/API replicas across
+zones. Business workers keep their private writable filestores and restore
+inputs local. Their count can be reduced independently of storage replication.
 
-- Three CloudNativePG instances, one per zone, 50 GiB independent cloud PVCs,
-  synchronous acknowledgement from one standby, and managed disruption budgets.
-- Three Redis instances with 20 GiB independent cloud PVCs and three Sentinels
-  across control zones; AOF always, no eviction and a minimum of one replica
-  within five seconds for writes.
-- Two HAProxy replicas in separate zones, checking authentication and the
-  Redis master role; demotion closes existing backend sessions. The write
-  Service is the endpoint for core's existing external Redis Secret interface.
+For a self-managed RGW backend, use three storage nodes in separate zones,
+three MONs, two MGRs, two RGWs and one independent raw Block OSD PVC per zone.
+Three 1 TiB OSDs with three replicas provide about 1 TiB logical capacity.
+Alert at 80 percent and retain recovery headroom. Dedicated labels and taints
+exclude sandbox workers from the storage pool.
 
-Precreate PostgreSQL's application Secret (`username: juicefs`, `password`) and
-Redis's password Secret. Pin all operand images by digest. CloudNativePG also
-requires the PostgreSQL version tag, for example `postgresql:17.11@sha256:...`,
-to detect major upgrades. The state chart supports `postgres.enabled=false`
-when initializing Redis before the database operator is ready. Provide an explicit
-independent cloud-disk StorageClass for state PVCs. Restrict network access to
-the consuming applications, operators and monitoring/backup clients. Redis
-Sentinel uses asynchronous replication: the replica write constraint and role
-check do not establish zero RPO or a distributed fencing guarantee. Validate
-ADX reconnection and state reconciliation through a real primary failover.
+The existing charts/juicefs chart can provide Ceph RGW only by setting
+juicefs.enabled=false. This omits filesystem clients, formatting, readiness and
+managed PostgreSQL. It preserves the Ceph cluster, object store and existing
+bucket resources. An [ObjectBucketClaim example](examples/ceph-s3-bucket.yaml)
+uses the provisioner's bucket-specific credentials. Keep claims and Secrets
+managed in the storage namespace, and deliver the credential Secret to the
+application namespace through the deployment's secrets workflow.
 
-Configure `charts/juicefs` with `postgres.mode: external`, the CloudNativePG
-read-write service hostname, the application Secret, and its CA Secret:
+Install pinned Rook before its resources. With Rook 1.21.0, disabling the CSI
+operator and CSI resources still leaves a ClientProfile API dependency in the
+filesystem controller. Install the six API CRDs from the verified bundled CSI
+subchart, without deploying its controllers or drivers for RGW-only use.
+For a new Ceph 20.2.4 cluster, verify all ceph auth dump-keys entries use aes256k
+before setting ceph.allowedCiphers=[aes256k]. Do not restrict existing kernel
+clients without qualifying their key requirements.
 
-```yaml
-postgres:
-  mode: external
-  existingSecret: juicefs-metadata-app
-  external:
-    host: juicefs-metadata-rw
-    caSecret: juicefs-metadata-ca
-    sslMode: verify-full
-ceph:
-  storageClass: YOUR_INDEPENDENT_BLOCK_STORAGE_CLASS
-  nodeSelector: {node-role: akernel-storage}
-  tolerations:
-    - {key: dedicated, operator: Equal, value: akernel-storage, effect: NoSchedule}
-  zones: [YOUR_ZONE_B, YOUR_ZONE_C, YOUR_ZONE_D]
-  failureDomain: zone
-  osdCount: 3
-  osdSize: 1Ti
-  monSize: 20Gi
-  mgrCount: 2
-  replicas: 3
-  gatewayInstances: 2
-juicefs:
-  nodeSelector: {akernel.io/checkpoint-client: "true"}
-  cacheMiB: 4096
-  writeback: false
-```
+charts/state-services supplies three Redis instances, three Sentinels and two
+role-checked HAProxy replicas across control zones. Use independent 20 GiB cloud
+PVCs, AOF always, no eviction and at least one healthy replica for writes.
+Select postgres.enabled=false when checkpoint storage uses S3. CloudNativePG
+is only needed for a separately selected filesystem deployment. Redis is
+asynchronous: neither the replica constraint nor the proxy establishes zero
+RPO or network-partition fencing. Qualify reconnection and state reconciliation.
 
-The database is external to the JuiceFS chart but can remain in the same
-Kubernetes namespace. Format, wait-for-format and mount containers all use
-the CA and verify the service certificate. Managed single-instance PostgreSQL
-remains available for evaluation. Ceph's zone layout creates one independent
-raw Block OSD PVC in each selected zone. Check the cloud provider's minimum
-ESSD sizes; no existing host disk or image-cache PVC is selected or formatted.
-Three 1 TiB OSDs with three replicas provide approximately 1 TiB logical
-capacity; alert at 80% usage and retain headroom for recovery.
+On ACK, exclusive ENI workers do not support NetworkPolicy, including as sources
+of policies protecting shared-ENI state Pods. This mixed topology must use an
+accepted VPC/security-group boundary plus service authentication and disable the
+state chart's ineffective NetworkPolicy. It does not provide namespace-level
+isolation. Shared-ENI pools are required if that isolation is a deployment goal.
 
-For a new RGW-only Ceph 20.2.4 cluster, verify every entry in
-`ceph auth dump-keys --format=json` uses `aes256k` before setting
-`ceph.allowedCiphers: [aes256k]`. This resolves the insecure-key compatibility
-warnings without muting them. Existing kernel RBD/CephFS clients may require
-older keys; follow [Rook's CephX guidance](https://rook.io/docs/rook/v1.21/Storage-Configuration/Advanced/cephx-key-rotation/)
-before restricting an existing cluster.
+Enable prometheusServer.config.sharedStorage.enabled for Ceph and Redis/Sentinel
+metrics and alert rules. Set sharedStorage.postgresEnabled=false without active
+PostgreSQL consumers. Verify actual targets and samples; notification routing
+remains the monitoring deployment's responsibility.
 
-Label only consuming control/business hosts for JuiceFS clients. Storage-pool
-taints exclude sandbox workers. Keep the existing `OnDelete` client update
-strategy: drain consumers before explicitly replacing clients and then
-restart consumers to pin the new mount identity.
+## Migration and acceptance
 
-Use `node.nodeSelector` for worker generation/canary placement separately from
-the shared client selector, which also applies to Coordinator. Conflicting
-worker/client selectors fail rendering. On ACK, check each pool's Terway mode:
-exclusive ENI does not support NetworkPolicy, including matching those clients
-as sources of a policy protecting shared-ENI state Pods. This mixed layout must
-set `networkPolicy.enabled=false` for the state chart and use an appropriate
-VPC/security-group boundary plus service authentication. This does not provide
-namespace-level network isolation. Use supported shared ENI pools when that
-isolation is required; do not claim an untested NetworkPolicy is effective.
+For existing ACK clusters, deploy/terraform/aliyun-node-pools manages only the
+new storage pools. Review the saved plan and keep state and private profiles
+outside Git. Pin the qualified runtime and service images by digest.
 
-## Change and acceptance gates
+Before changing checkpoint identity, quiesce ingress and drain executions.
+Set adx.ingressApi.publicService.maintenance=true to withhold public traffic
+without deleting the Service or its load balancer. This does not drain existing
+executions; inventory and explicit consumer cleanup remain required. Keep this
+setting through upgrades, then clear it after internal acceptance succeeds.
+Preserve the prior configuration. Select a fresh Redis namespace, remote prefix
+and node data directory on the same native disk so that local journals cannot
+replay state from the previous backend. Keep the container paths consistent
+across nodes. Qualify one worker before expanding to the remaining workers.
 
-For an existing ACK cluster, `deploy/terraform/aliyun-node-pools` owns only
-new storage pools. Supply the verified cluster ID, existing zone/vSwitch map,
-security groups and OS image. Review the saved plan before applying it. Keep
-state, kubeconfigs, credentials and private deployment profiles outside Git.
+When retiring filesystem clients, first verify that no Coordinator or worker
+Pod mounts the shared path. Then disable the clients and format/readiness Jobs.
+Only after all clients stop may the metadata database be hibernated. Preserve
+its PVCs and old object data for rollback rather than deleting data during the
+backend switch. Restoring the previous core requires restoring its clients and
+metadata service before restarting consumers. For later client upgrades, retain
+OnDelete and drain consumers before explicitly replacing clients.
 
-Save old core values, manifests, image digest and Redis data. Quiesce ingress,
-drain the old execution state, then select a fresh Redis namespace and shared
-checkpoint prefix. Start one worker, qualify it, and expand to the remaining
-business workers. Retain old state PVCs/configuration for at least seven days.
-Rollback stops new consumers before restoring the prior core and state entry.
+The maintained native probes are deploy/tests/native_restore/shared_checkpoint_probe.py
+and shared_checkpoint_soak.py. The capture phase intentionally retains its
+source for an operator-owned outage test. Other phases explicitly delete their
+detached instances with kill(delete_remote=True). Keep a recorded Snapshot until
+its observation process ends; a detached handle's ordinary kill only closes
+local transports.
 
-Render and validate the storage and core charts, then validate native behavior:
-
-- Capture on A; restore on uncached B and C while A is unavailable. Check
-  process memory, files and application results, not only the RPC response.
-- Validate leave-running capture, repeated restore, private writes and actual
-  shared extents; protect background restore inputs during cache eviction.
-- Exercise SDK create/exec/pause/resume/Snapshot/auto-checkpoint/close/delete
-  and reference reclamation, then component and storage failure scenarios.
-- Measure control recovery against five minutes, freeze time, durable publish
-  time, cold/hot restore, cache hit rate, free space and Ceph health.
-- Publish daily recoverable metadata/state/artifact backup sets to independent
-  private object storage with seven-day retention; perform isolated recovery
-  and at least 24 hours of observation before signing off the deployment.
-
-Manifest rendering is a configuration gate, not evidence that these operational
-acceptance scenarios have passed.
-
-Enable `prometheusServer.config.sharedStorage.enabled` in the monitor chart to
-discover all CloudNativePG and Redis/Sentinel exporters in the configured
-namespace and scrape the active Ceph manager. It loads Ceph health/capacity,
-PostgreSQL replication and exporter-availability alert rules. Include the state
-namespace in PVC metrics discovery as well. Verify actual targets and samples
-after applying the configuration; notification routing remains the monitoring
-deployment's responsibility. The optional [backup chart](backup/README.md)
-requires its own authentication and recovery qualification before scheduling.
-
-`deploy/tests/native_restore/shared_checkpoint_probe.py` provides capture,
-cross-node restore and concurrent isolation phases. The operator owns source
-outages and mount/extent inspection. The capture phase intentionally retains
-the source for an outage test; record its ID and explicitly delete it afterward.
-Other phases explicitly delete their detached sandboxes with
-`kill(delete_remote=True)`. A detached handle's ordinary `kill()` only closes
-local transports and must not be used as proof of remote deletion or reference
-reclamation.
+Acceptance includes source-host loss with uncached targets, memory and business
+state verification, repeated and concurrent restore isolation, SDK lifecycle and
+reference reclamation. Measure freeze time separately from durable publication
+and restore RPC latency. Add component/storage/network/disk/mount failures,
+background-input protection under cache eviction, a recoverable backup set of
+control state and referenced objects, isolated recovery and a full 24-hour
+observation. Report pending scenarios explicitly. Successful samples or render
+tests alone do not establish full production acceptance.

@@ -1,3 +1,4 @@
+{{- if .Values.juicefs.enabled }}
 {{- $name := include "juicefs.name" . -}}
 {{- $rbac := printf "%s-readiness-%s" $name (printf "%s/%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 apiVersion: v1
@@ -104,3 +105,5 @@ spec:
       volumes:
         - name: script
           configMap: {name: {{ $name }}-readiness}
+
+{{- end }}

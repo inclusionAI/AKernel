@@ -1,6 +1,8 @@
-# JuiceFS and AFS checkpoint storage
+# Checkpoint storage deployment
 
-AKernel uses ADX's `distributed_fs` interface for shared checkpoint storage.
+For checkpoint-only deployments, use ADX's existing S3 backend with local XFS inputs; see the [S3 and HA deployment guide](production.md). Ceph RGW can serve it directly with `juicefs.enabled=false`, without filesystem clients or PostgreSQL.
+
+AKernel also supports ADX's `distributed_fs` interface when a shared filesystem is independently required.
 This directory includes the JuiceFS deployment stack: Rook, Ceph RGW and its
 bucket, PostgreSQL, a format Job, and
 per-host FUSE clients. AFS and an existing JuiceFS deployment can use the same
@@ -24,11 +26,8 @@ JuiceFS client -> PostgreSQL metadata + Ceph RGW data blocks
 
 In the default direct filesystem mode, adxlet allocates each shared artifact
 directory and passes it to sandboxd through `CheckpointRequest.checkpoint_dir`.
-The optional local staging mode captures on the native local filesystem,
-publishes complete artifacts to the shared volume, and materializes verified
-restore inputs in a protected node-local cache. It requires a qualifying ADX
-image with `distributed_fs.local_cache` support; the baseline release archive
-does not include that extension. See [the HA deployment guide](production.md).
+This direct filesystem mode does not provide local-XFS FICLONE compatibility.
+Use the stock S3 backend for native local capture and restore materialization.
 Sandboxd's `filestore_dir` configures
 private runtime writes. Keep the same container-local filestore path on every
 node; each path is backed by that node's local disk. Runtime state, private

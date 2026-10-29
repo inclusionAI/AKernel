@@ -870,11 +870,15 @@ variable "checkpoint_storage" {
     host_path      = optional(string, "")
     existing_claim = optional(string, "")
     prefix         = optional(string, "akernel/checkpoints")
-    local_cache = optional(object({
-      enabled      = optional(bool, false)
-      root         = optional(string, "/home/akernel/adx/checkpoints")
-      budget_bytes = optional(number, 53687091200)
-      max_entries  = optional(number, 500)
+    s3 = optional(object({
+      bucket             = optional(string, "")
+      region             = optional(string, "")
+      endpoint           = optional(string, "")
+      allow_http         = optional(bool, false)
+      credentials_secret = optional(string, "")
+      cache_root         = optional(string, "/home/akernel/adx/checkpoint-s3-cache")
+      cache_budget_bytes = optional(number, 53687091200)
+      cache_max_entries  = optional(number, 500)
     }), {})
   })
   default     = {}
@@ -882,14 +886,7 @@ variable "checkpoint_storage" {
   description = "ADX checkpoint storage; shared storage is reclaimed by Coordinator."
   validation {
     condition = (
-      contains(["local", "distributed_fs"], var.checkpoint_storage.kind) &&
-      (!var.checkpoint_storage.local_cache.enabled || (
-        can(regex("^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$", var.checkpoint_storage.local_cache.root)) &&
-        var.checkpoint_storage.local_cache.budget_bytes > 0 &&
-        floor(var.checkpoint_storage.local_cache.budget_bytes) == var.checkpoint_storage.local_cache.budget_bytes &&
-        var.checkpoint_storage.local_cache.max_entries > 0 &&
-        floor(var.checkpoint_storage.local_cache.max_entries) == var.checkpoint_storage.local_cache.max_entries
-      )) &&
+      contains(["local", "distributed_fs", "s3"], var.checkpoint_storage.kind) &&
       (var.checkpoint_storage.kind == "local" || (
         var.checkpoint_storage.alias != "local" &&
         can(regex("^[A-Za-z0-9-]+$", var.checkpoint_storage.alias))
@@ -905,7 +902,21 @@ variable "checkpoint_storage" {
         (startswith(var.checkpoint_storage.host_path, "/") && var.checkpoint_storage.host_path != "/" &&
       !contains(split("/", var.checkpoint_storage.host_path), "..")))
     )
-    error_message = "Use local or distributed_fs with a safe alias, relative prefix, dedicated absolute mount_path and absolute host_path."
+    error_message = "Use local, distributed_fs or s3 with a safe alias, relative prefix, dedicated absolute mount_path and absolute host_path."
+  }
+  validation {
+    condition = var.checkpoint_storage.kind != "s3" || (
+      var.checkpoint_storage.s3.bucket != "" && var.checkpoint_storage.s3.region != "" &&
+      var.checkpoint_storage.s3.credentials_secret != "" &&
+      (var.checkpoint_storage.s3.endpoint == "" || can(regex("^https?://[^/?#@]+/?$", var.checkpoint_storage.s3.endpoint))) &&
+      (!startswith(var.checkpoint_storage.s3.endpoint, "http://") || var.checkpoint_storage.s3.allow_http) &&
+      can(regex("^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$", var.checkpoint_storage.s3.cache_root)) &&
+      alltrue([for path in ["/home/akernel/adx/run", "/home/akernel/adx/logs", "/home/akernel/adx/degraded"] :
+      var.checkpoint_storage.s3.cache_root != path && !startswith(var.checkpoint_storage.s3.cache_root, "${path}/")]) &&
+      var.checkpoint_storage.s3.cache_budget_bytes > 0 && floor(var.checkpoint_storage.s3.cache_budget_bytes) == var.checkpoint_storage.s3.cache_budget_bytes &&
+      var.checkpoint_storage.s3.cache_max_entries > 0 && floor(var.checkpoint_storage.s3.cache_max_entries) == var.checkpoint_storage.s3.cache_max_entries
+    )
+    error_message = "S3 checkpoints require bucket, region, credentials_secret, a safe local cache and explicit allow_http for HTTP endpoints."
   }
 }
 
@@ -957,7 +968,7 @@ variable "juicefs" {
 }
 
 variable "runsc_checkpoint_mode" {
-  description = "Native gVisor checkpoint mode; reflink requires shared local_cache and native_filestore."
+  description = "Native gVisor checkpoint mode; reflink requires node-local checkpoint inputs and native_filestore."
   type        = string
   default     = "full"
   validation {

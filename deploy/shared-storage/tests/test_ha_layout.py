@@ -27,6 +27,13 @@ def render(chart, values):
 
 
 class HALayoutTests(unittest.TestCase):
+    def test_ceph_object_storage_does_not_require_juicefs_or_postgres(self):
+        docs = render("juicefs", {"juicefs": {"enabled": False},
+                                 "ceph": {"storageClass": "independent-essd"}})
+        self.assertIn(("CephCluster", "rook-ceph"), docs)
+        self.assertIn(("CephObjectStore", "checkpoints"), docs)
+        self.assertFalse(any(kind in {"DaemonSet", "StatefulSet", "Job"} for kind, _ in docs))
+
     def shared(self):
         return {
             "ceph": {"storageClass": "independent-essd", "failureDomain": "zone",

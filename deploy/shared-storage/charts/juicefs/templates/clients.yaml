@@ -1,3 +1,4 @@
+{{- if .Values.juicefs.enabled }}
 {{- $name := include "juicefs.name" . -}}
 {{- $cache := default (printf "/var/cache/%s/%s/juicefs" .Release.Namespace $name) .Values.juicefs.cacheHostPath -}}
 {{- $cephRoot := default (printf "/var/lib/%s/rook" .Release.Namespace) .Values.ceph.dataDirHostPath -}}
@@ -114,3 +115,5 @@ spec:
           hostPath: {path: {{ .Values.juicefs.hostMountPath | quote }}, type: DirectoryOrCreate}
         - name: fuse
           hostPath: {path: /dev/fuse, type: CharDevice}
+
+{{- end }}

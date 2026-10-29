@@ -8,10 +8,11 @@ AKernel ships in three deployment modes. Pick the one that matches your target.
 | **Kubernetes (Helm)** | Existing K8s cluster | [`akernel/`](./akernel/) |
 | **Multi-Cloud (Terraform)** | Alibaba Cloud ACK / Huawei Cloud CCE | [`terraform/`](./terraform/) |
 
-For shared checkpoint capture and cross-node restore, see the
-[JuiceFS / AFS deployment guide](shared-storage/README.md). The Helm profile
-uses ADX's `distributed_fs` interface and mounts the same storage in Coordinator
-and nodes. The filesystem clients, PostgreSQL and Ceph remain deployment-owned.
+For cross-node checkpoint/restore with native gVisor reflink, see the
+[S3 and HA deployment guide](shared-storage/production.md). ADX's S3 backend
+uses local XFS capture and restore inputs with an S3-compatible object store.
+The separate [JuiceFS / AFS profile](shared-storage/README.md) remains available
+when a shared filesystem is independently required.
 
 ## Guided deployment
 

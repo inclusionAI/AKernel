@@ -5,10 +5,6 @@ output "helm_values" {
   description = "ADX checkpointStorage configuration for both execution nodes and Coordinator."
   value       = local.checkpoint_values
   precondition {
-    condition     = !local.selected_storage.local_cache.enabled || local.selected_storage.kind == "distributed_fs"
-    error_message = "local_cache requires distributed_fs checkpoint storage."
-  }
-  precondition {
     condition = local.selected_storage.kind == "local" || (
       local.selected_storage.alias != "local" &&
       can(regex("^[A-Za-z0-9-]+$", local.selected_storage.alias))
@@ -21,10 +17,14 @@ output "helm_values" {
   }
   precondition {
     condition = (
-      local.selected_storage.kind == "local" ||
+      local.selected_storage.kind != "distributed_fs" ||
       ((local.selected_storage.host_path != "") != (local.selected_storage.existing_claim != ""))
     )
     error_message = "distributed_fs requires exactly one host_path or existing_claim."
+  }
+  precondition {
+    condition     = !var.juicefs.enabled || var.checkpoint_storage.kind != "s3"
+    error_message = "Managed JuiceFS cannot be enabled for S3 checkpoint storage."
   }
   precondition {
     condition = !var.juicefs.enabled || (

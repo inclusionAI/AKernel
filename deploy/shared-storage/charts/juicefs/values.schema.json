@@ -54,6 +54,9 @@
           "enum": [
             false
           ]
+        },
+        "enabled": {
+          "type": "boolean"
         }
       }
     },

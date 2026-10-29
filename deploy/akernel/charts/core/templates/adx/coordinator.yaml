@@ -72,6 +72,7 @@ spec:
               exec:
                 command: [/opt/adx/current/bin/adxctl, --config, /etc/akernel/adx-coordinator.yaml, stop]
           env:
+            {{- include "core.checkpointCredentialsEnv" . | nindent 12 }}
             {{- if eq .Values.adx.redis.mode "managed" }}
             - name: ADX_REDIS_PASSWORD
               valueFrom:

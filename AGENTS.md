@@ -761,15 +761,16 @@ templates, and Python deployment helpers with:
 make deploy-script-check
 ```
 
-Shared filesystem staging and native runsc reflink use
-`adx.checkpointStorage.localCache` plus `node.config.sandboxd.nativeFilestore`
-and `runscCheckpointMode`. Qualify the ADX package in the selected image before
-enabling these opt-in settings. The preflight probes FICLONE on the actual
-filestore and cache mounts. Validate HA storage manifests with
-`python deploy/shared-storage/tests/test_ha_layout.py -v`; this does not replace
-native cross-node restore or failover tests. Existing ACK clusters can add
-dedicated storage pools through `deploy/terraform/aliyun-node-pools` without
-importing or modifying the cluster and its existing node pools.
+S3 checkpoint capture/restore uses the pinned ADX backend through
+`adx.checkpointStorage.kind=s3`, with identity and cache settings under `s3`.
+Only nodes and Coordinator receive the existing credential Secret. Native runsc
+reflink uses `node.config.sandboxd.nativeFilestore` and `runscCheckpointMode`;
+the preflight probes FICLONE between local checkpoint inputs and filestore.
+It does not require JuiceFS. Direct distributed_fs remains supported separately.
+See `deploy/shared-storage/production.md` for transfer costs and migration gates.
+Validate HA layouts with `python deploy/shared-storage/tests/test_ha_layout.py -v`;
+rendering does not replace native cross-node or failover tests. Existing ACK
+clusters can add dedicated storage pools through `deploy/terraform/aliyun-node-pools`.
 
 For Kubernetes SDK ingress changes, validate the rendered ADX public Service
 and cloud-provider templates:
@@ -860,12 +861,11 @@ SDK control-plane access.
 ## ADX observability
 
 The monitor chart's opt-in `prometheusServer.config.sharedStorage` discovers
-Ceph, CloudNativePG and Redis/Sentinel metrics and loads storage alert rules.
-Validate the rendered Prometheus configuration with `promtool`, then verify
-live scrape targets and samples. Shared checkpoint backup is disabled by
-default; its authentication, consistency and isolated restore requirements are
-documented in `deploy/shared-storage/backup/README.md`. Never enable ACK RRSA
-implicitly while deploying the backup chart.
+Ceph, optional CloudNativePG and Redis/Sentinel metrics and loads storage alert
+rules. Disable postgresEnabled when no PostgreSQL consumers run. Validate the
+rendered configuration with promtool, then verify live targets and samples.
+Backup and isolated recovery remain independent acceptance requirements;
+never enable irreversible cluster identity features implicitly.
 
 Collector configs live in `deploy/akernel/charts/core/files/otel-collector/`;
 standalone adds scrape targets through a small overlay. Preserve dashboard UIDs,

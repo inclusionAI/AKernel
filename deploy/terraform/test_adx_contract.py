@@ -19,19 +19,21 @@ ROOT = Path(__file__).resolve().parent
     shutil.which("terraform"), "Terraform is required for evaluated storage validation"
 )
 class CheckpointStorageValidationTest(unittest.TestCase):
-    def test_cached_storage_is_forwarded_and_requires_shared_storage(self):
+    def test_s3_forwards_identity_and_local_cache_without_mount_requirements(self):
         for provider in ("aliyun", "huaweicloud"):
-            result, value = self.run_plan(provider, {
-                "kind": "distributed_fs", "host_path": "/srv/shared",
-                "local_cache": {"enabled": True, "root": "/home/akernel/adx/cache-v1",
-                                "budget_bytes": 53687091200, "max_entries": 500},
-            })
+            value = {"kind": "s3", "alias": "checkpoints-s3", "s3": {
+                "bucket": "checkpoints", "region": "us-east-1",
+                "endpoint": "https://rgw.example.com", "credentials_secret": "s3-credentials"}}
+            result, output = self.run_plan(provider, value)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(value["localCache"], {"enabled": True, "root": "/home/akernel/adx/cache-v1",
-                                                 "budgetBytes": 53687091200, "maxEntries": 500})
-            result, _ = self.run_plan(provider, {"local_cache": {"enabled": True}})
+            self.assertEqual(output["s3"]["credentialsSecret"], "s3-credentials")
+            self.assertEqual(output["s3"]["cacheBudgetBytes"], 53687091200)
+            value["s3"]["endpoint"] = "http://rgw.example.com"
+            result, _ = self.run_plan(provider, value)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("local_cache requires distributed_fs", result.stderr)
+            value["s3"]["allow_http"] = True
+            result, _ = self.run_plan(provider, value)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def run_plan(self, provider, storage, juicefs=None):
         with tempfile.TemporaryDirectory() as directory:

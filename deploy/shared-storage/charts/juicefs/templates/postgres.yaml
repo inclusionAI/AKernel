@@ -1,3 +1,4 @@
+{{- if .Values.juicefs.enabled }}
 {{- $name := include "juicefs.name" . -}}
 {{- if eq .Values.postgres.mode "managed" }}
 {{- if not .Values.postgres.existingSecret }}
@@ -68,4 +69,6 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: {{ $name }}-postgres}
+{{- end }}
+
 {{- end }}

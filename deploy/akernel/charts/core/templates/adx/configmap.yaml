@@ -22,27 +22,40 @@
 {{- end }}
 {{- end }}
 {{- $storage := .Values.adx.checkpointStorage }}
-{{- $cache := $storage.localCache }}
-{{- if eq (toString $cache.enabled) "true" }}
-{{- if ne $storage.kind "distributed_fs" }}
-{{- fail "checkpointStorage.localCache requires distributed_fs" }}
+{{- if not (has $storage.kind (list "local" "distributed_fs" "s3")) }}
+{{- fail "adx.checkpointStorage.kind must be local, distributed_fs or s3" }}
 {{- end }}
-{{- if not (regexMatch "^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $cache.root) }}
-{{- fail "checkpointStorage.localCache.root must be a dedicated directory under /home/akernel/adx" }}
+{{- if eq $storage.kind "s3" }}
+{{- if or (empty $storage.s3.bucket) (empty $storage.s3.region) (empty $storage.s3.credentialsSecret) }}
+{{- fail "S3 checkpoints require bucket, region and credentialsSecret" }}
 {{- end }}
-{{- range $reserved := list "/home/akernel/adx/run" "/home/akernel/adx/logs" }}
-{{- if or (eq $cache.root $reserved) (hasPrefix (printf "%s/" $reserved) $cache.root) }}
-{{- fail "checkpointStorage.localCache.root overlaps ADX runtime state" }}
+{{- if and $storage.s3.endpoint (not (regexMatch "^https?://[^/?#@]+/?$" $storage.s3.endpoint)) }}
+{{- fail "S3 endpoint must be an HTTP(S) origin without credentials, query or path" }}
+{{- end }}
+{{- if and (hasPrefix "http://" $storage.s3.endpoint) (ne (toString $storage.s3.allowHttp) "true") }}
+{{- fail "HTTP S3 endpoints require explicit allowHttp=true" }}
+{{- end }}
+{{- if not (regexMatch "^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $storage.s3.cacheRoot) }}
+{{- fail "S3 cacheRoot must be a dedicated directory under /home/akernel/adx" }}
+{{- end }}
+{{- range $reserved := list "/home/akernel/adx/run" "/home/akernel/adx/logs" "/home/akernel/adx/degraded" }}
+{{- if or (eq $storage.s3.cacheRoot $reserved) (hasPrefix (printf "%s/" $reserved) $storage.s3.cacheRoot) }}
+{{- fail "S3 cacheRoot overlaps ADX runtime state" }}
 {{- end }}
 {{- end }}
-{{- range $limit := list $cache.budgetBytes $cache.maxEntries }}
+{{- range $limit := list $storage.s3.cacheBudgetBytes $storage.s3.cacheMaxEntries }}
 {{- if or (le (int64 $limit) 0) (ne (float64 $limit) (float64 (int64 $limit))) }}
-{{- fail "checkpointStorage.localCache limits must be positive integers" }}
+{{- fail "S3 cache limits must be positive integers" }}
 {{- end }}
 {{- end }}
 {{- end }}
-{{- if not (has $storage.kind (list "local" "distributed_fs")) }}
-{{- fail "adx.checkpointStorage.kind must be local or distributed_fs" }}
+{{- if has $storage.kind (list "s3" "distributed_fs") }}
+{{- if or (eq $storage.alias "local") (not (regexMatch "^[A-Za-z0-9-]+$" $storage.alias)) }}
+{{- fail "checkpointStorage.alias must contain only ASCII letters, digits or hyphens and must not be local" }}
+{{- end }}
+{{- if not (regexMatch "^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $storage.prefix) }}
+{{- fail "checkpointStorage prefixes must contain safe relative directory components" }}
+{{- end }}
 {{- end }}
 {{- if eq $storage.kind "distributed_fs" }}
 {{- if eq (empty $storage.hostPath) (empty $storage.existingClaim) }}
@@ -90,7 +103,7 @@ data:
           advertised_address: http://akernel-adx-coordinator.{{ .Release.Namespace }}.svc.cluster.local:19000
           scheduler_shards: {{ .Values.adx.schedulerShards }}
           placement: {{ eq (.Values.coordinator.schedulePlacementPolicy | default "spread") "binpack" | ternary "pack" "spread" | quote }}
-          {{- if eq $storage.kind "distributed_fs" }}
+          {{- if has $storage.kind (list "s3" "distributed_fs") }}
           checkpoint_reclaimers:
             - {{ include "core.checkpointStorage" . | nindent 14 | trim }}
           {{- end }}
@@ -240,7 +253,7 @@ data:
             ADX_TRACE_SAMPLE_RATIO: "0.1"
             OTEL_EXPORTER_OTLP_ENDPOINT: http://${INSTANCE_IP}:4318
             {{- end }}
-          {{- if eq $storage.kind "distributed_fs" }}
+          {{- if has $storage.kind (list "s3" "distributed_fs") }}
           checkpoint_storage:
             {{- include "core.nodeCheckpointStorage" . | nindent 12 }}
           {{- else }}

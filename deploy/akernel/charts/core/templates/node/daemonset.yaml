@@ -72,7 +72,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
-        {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
+        {{- if or (has .Values.adx.checkpointStorage.kind (list "s3" "distributed_fs")) (eq .Values.node.config.sandboxd.runscCheckpointMode "reflink") }}
         - name: prepare-checkpoint-storage
           image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
           imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.node.image) }}
@@ -80,16 +80,22 @@ spec:
           args:
             - --config
             - /config/sandboxd_config.toml
+            {{- if eq .Values.adx.checkpointStorage.kind "s3" }}
+            - --local-cache-root
+            - {{ .Values.adx.checkpointStorage.s3.cacheRoot | quote }}
+            {{- else if eq .Values.adx.checkpointStorage.kind "local" }}
+            - --local-cache-root
+            - /home/akernel/adx/checkpoints
+            {{- else }}
             - --mount-root
             - {{ .Values.adx.checkpointStorage.mountPath | quote }}
-            {{- if eq (toString .Values.adx.checkpointStorage.localCache.enabled) "true" }}
-            - --local-cache-root
-            - {{ .Values.adx.checkpointStorage.localCache.root | quote }}
             {{- end }}
           volumeMounts:
+            {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
             - {{ include "core.checkpointMount" . | nindent 14 | trim }}
+            {{- end }}
             - {name: akernel-node-config, mountPath: /config, readOnly: true}
-            - {name: home-disk, mountPath: /home/akernel, readOnly: {{ ne (toString .Values.adx.checkpointStorage.localCache.enabled) "true" }}}
+            - {name: home-disk, mountPath: /home/akernel, readOnly: {{ not (or (eq .Values.adx.checkpointStorage.kind "s3") (eq .Values.node.config.sandboxd.runscCheckpointMode "reflink")) }}}
         {{- end }}
         - name: migrate-adx-state
           image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
@@ -131,6 +137,7 @@ spec:
         resources:
           {{- toYaml .Values.node.resources | nindent 10 }}
         env:
+        {{- include "core.checkpointCredentialsEnv" . | nindent 8 }}
         # Required for systemd shutdown safety, including with older images.
         - name: container
           value: "oci"

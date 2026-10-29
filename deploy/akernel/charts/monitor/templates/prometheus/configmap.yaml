@@ -45,6 +45,7 @@ data:
             labels:
               cluster: {{ $.Values.prometheusServer.config.clusterName | quote }}
               adx_env: {{ $.Values.prometheusServer.config.environment | quote }}
+{{- if .postgresEnabled }}
       - job_name: akernel-postgres
         kubernetes_sd_configs:
           - role: pod
@@ -58,6 +59,7 @@ data:
           - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
           - {target_label: cluster, replacement: {{ $.Values.prometheusServer.config.clusterName | quote }}}
           - {target_label: adx_env, replacement: {{ $.Values.prometheusServer.config.environment | quote }}}
+{{- end }}
       - job_name: akernel-redis
         kubernetes_sd_configs:
           - role: pod

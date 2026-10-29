@@ -240,6 +240,7 @@ prometheusServer:
       enabled: false
       namespace: akernel-storage
       postgresCluster: juicefs-metadata
+      postgresEnabled: true
       redisName: akernel-redis
       cephManagerService: rook-ceph-mgr
 

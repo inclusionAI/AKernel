@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Ant Group Corporation.
 # SPDX-License-Identifier: Apache-2.0
-"""Validate shared checkpoints while preserving node-local runtime storage."""
+"""Validate local reflink inputs and optional shared checkpoint mounts."""
 
 from __future__ import annotations
 
@@ -81,16 +81,20 @@ def validate_runtime_storage(source: str, mount_root: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--mount-root", type=Path, required=True)
+    parser.add_argument("--mount-root", type=Path)
     parser.add_argument("--local-cache-root", type=Path)
     args = parser.parse_args()
-    shared_mount(args.mount_root, Path("/proc/self/mountinfo").read_text())
+    if args.mount_root is None and args.local_cache_root is None:
+        parser.error("a shared mount or local object cache is required")
+    if args.mount_root is not None:
+        shared_mount(args.mount_root, Path("/proc/self/mountinfo").read_text())
     source = args.config.read_text()
-    validate_runtime_storage(source, args.mount_root)
+    if args.mount_root is not None:
+        validate_runtime_storage(source, args.mount_root)
     validate_reflink_storage(source, args.mount_root, args.local_cache_root)
 
 
-def validate_reflink_storage(source: str, mount_root: Path, cache_root: Path | None) -> None:
+def validate_reflink_storage(source: str, mount_root: Path | None, cache_root: Path | None) -> None:
     """Probe native FICLONE on the actual filestore/cache mounts before launch."""
     config = tomllib.loads(source)
     runtime = config.get("plugin", {}).get("runtime", {})
@@ -98,7 +102,7 @@ def validate_reflink_storage(source: str, mount_root: Path, cache_root: Path | N
     if cache_root is not None:
         if not cache_root.is_absolute() or cache_root.resolve() != cache_root:
             raise ValueError("local checkpoint cache must be absolute without symlinks")
-        if cache_root == mount_root or mount_root in cache_root.parents or cache_root in mount_root.parents:
+        if mount_root is not None and (cache_root == mount_root or mount_root in cache_root.parents or cache_root in mount_root.parents):
             raise ValueError("local checkpoint cache overlaps shared storage")
         paths = [config.get("rootDir"), config.get("storeDir"), runtime.get("filestore_dir"),
                  runtime.get("firecracker", {}).get("storage_dir")]

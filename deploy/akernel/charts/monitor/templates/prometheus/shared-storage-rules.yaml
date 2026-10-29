@@ -19,11 +19,13 @@ data:
             for: 10m
             labels: {severity: warning}
             annotations: {summary: "AKernel checkpoint Ceph capacity exceeds 80 percent"}
+{{- if .Values.prometheusServer.config.sharedStorage.postgresEnabled }}
           - alert: AKernelPostgresReplicationMissing
             expr: (cnpg_pg_replication_streaming_replicas{job="akernel-postgres"} < 1) and on(instance) (cnpg_pg_replication_in_recovery{job="akernel-postgres"} == 0)
             for: 2m
             labels: {severity: critical}
             annotations: {summary: "JuiceFS metadata primary has no streaming replica"}
+{{- end }}
           - alert: AKernelStateExporterMissing
             expr: up{job=~"akernel-ceph|akernel-postgres|akernel-redis"} == 0
             for: 5m
