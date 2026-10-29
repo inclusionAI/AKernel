@@ -31,6 +31,9 @@ ceph:
   zones: []
   gatewayInstances: 2
   gatewayTcpNoDelay: true
+  # Set [aes256k] only after verifying all CephX keys use that type.
+  # Empty preserves the operator's compatibility defaults for existing clients.
+  allowedCiphers: []
   nodeSelector: {kubernetes.io/arch: amd64}
   tolerations: []
   resources:

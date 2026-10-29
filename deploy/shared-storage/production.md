@@ -130,10 +130,27 @@ ESSD sizes; no existing host disk or image-cache PVC is selected or formatted.
 Three 1 TiB OSDs with three replicas provide approximately 1 TiB logical
 capacity; alert at 80% usage and retain headroom for recovery.
 
+For a new RGW-only Ceph 20.2.4 cluster, verify every entry in
+`ceph auth dump-keys --format=json` uses `aes256k` before setting
+`ceph.allowedCiphers: [aes256k]`. This resolves the insecure-key compatibility
+warnings without muting them. Existing kernel RBD/CephFS clients may require
+older keys; follow [Rook's CephX guidance](https://rook.io/docs/rook/v1.21/Storage-Configuration/Advanced/cephx-key-rotation/)
+before restricting an existing cluster.
+
 Label only consuming control/business hosts for JuiceFS clients. Storage-pool
 taints exclude sandbox workers. Keep the existing `OnDelete` client update
 strategy: drain consumers before explicitly replacing clients and then
 restart consumers to pin the new mount identity.
+
+Use `node.nodeSelector` for worker generation/canary placement separately from
+the shared client selector, which also applies to Coordinator. Conflicting
+worker/client selectors fail rendering. On ACK, check each pool's Terway mode:
+exclusive ENI does not support NetworkPolicy, including matching those clients
+as sources of a policy protecting shared-ENI state Pods. This mixed layout must
+set `networkPolicy.enabled=false` for the state chart and use an appropriate
+VPC/security-group boundary plus service authentication. This does not provide
+namespace-level network isolation. Use supported shared ENI pools when that
+isolation is required; do not claim an untested NetworkPolicy is effective.
 
 ## Change and acceptance gates
 

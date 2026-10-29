@@ -49,11 +49,19 @@ spec:
       # Allow the 120s systemd service stop, then 30s for container shutdown.
       terminationGracePeriodSeconds: 150
       serviceAccountName: {{ include "core.serviceAccountName" . }}
+      {{- $selector := dict }}
       {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
-      {{- with .Values.adx.checkpointStorage.nodeSelector }}
+      {{- $selector = deepCopy .Values.adx.checkpointStorage.nodeSelector }}
+      {{- end }}
+      {{- range $key, $value := .Values.node.nodeSelector }}
+      {{- if and (hasKey $selector $key) (ne (index $selector $key) $value) }}
+      {{- fail "Worker nodeSelector conflicts with checkpoint client placement" }}
+      {{- end }}
+      {{- $_ := set $selector $key $value }}
+      {{- end }}
+      {{- with $selector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
-      {{- end }}
       {{- end }}
       {{- with .Values.node.affinity }}
       affinity:

@@ -63,6 +63,18 @@ class SharedCheckpointStorageTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.shared_resources("adx.checkpointStorage.nodeSelector.pool=workers", "adx.coordinator.nodeSelector.pool=control")
 
+    def test_worker_selector_can_target_a_canary_without_selecting_coordinator(self):
+        resources = self.shared_resources(
+            "adx.checkpointStorage.nodeSelector.storage=juicefs",
+            "node.nodeSelector.generation=canary",
+        )
+        node = resources[("DaemonSet", "akernel-node")]["spec"]["template"]["spec"]
+        coordinator = resources[("Deployment", "akernel-adx-coordinator")]["spec"]["template"]["spec"]
+        self.assertEqual(node["nodeSelector"], {"storage": "juicefs", "generation": "canary"})
+        self.assertEqual(coordinator["nodeSelector"], {"storage": "juicefs"})
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.shared_resources("adx.checkpointStorage.nodeSelector.pool=clients", "node.nodeSelector.pool=other")
+
     def test_local_cache_is_node_owned_and_reclaimer_stays_shared_only(self) -> None:
         resources = self.shared_resources(
             "adx.checkpointStorage.localCache.enabled=true",

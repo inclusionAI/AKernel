@@ -126,6 +126,7 @@ coordinator:
   schedulePlacementPolicy: spread
 
 node:
+  nodeSelector: {}
   secret:
     create: true
     oss_auths: {}

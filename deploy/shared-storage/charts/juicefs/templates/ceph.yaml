@@ -30,6 +30,11 @@ spec:
     image: {{ .Values.ceph.image | quote }}
     allowUnsupported: false
   dataDirHostPath: {{ $cephRoot | quote }}
+  {{- with .Values.ceph.allowedCiphers }}
+  security:
+    cephx:
+      allowedCiphers: {{ toYaml . | nindent 8 }}
+  {{- end }}
   mon:
     count: {{ .Values.ceph.monCount }}
     allowMultiplePerNode: false

@@ -31,7 +31,7 @@ class HALayoutTests(unittest.TestCase):
         return {
             "ceph": {"storageClass": "independent-essd", "failureDomain": "zone",
                      "zones": ["zone-b", "zone-c", "zone-d"], "osdCount": 3,
-                     "osdSize": "1Ti", "mgrCount": 2,
+                     "osdSize": "1Ti", "mgrCount": 2, "allowedCiphers": ["aes256k"],
                      "nodeSelector": {"node-role": "akernel-storage"},
                      "tolerations": [{"key": "dedicated", "operator": "Equal",
                                       "value": "akernel-storage", "effect": "NoSchedule"}]},
@@ -43,6 +43,7 @@ class HALayoutTests(unittest.TestCase):
         docs = render("juicefs", self.shared())
         cluster = docs[("CephCluster", "rook-ceph")]["spec"]
         self.assertEqual(cluster["mgr"]["count"], 2)
+        self.assertEqual(cluster["security"]["cephx"]["allowedCiphers"], ["aes256k"])
         self.assertEqual(cluster["placement"]["all"]["tolerations"][0]["value"], "akernel-storage")
         sets = cluster["storage"]["storageClassDeviceSets"]
         self.assertEqual(len(sets), 3)
