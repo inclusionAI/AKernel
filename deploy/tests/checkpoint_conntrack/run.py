@@ -123,12 +123,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["baseline", "dind", "netns"], required=True)
     parser.add_argument("--attempts", type=int, default=3)
+    parser.add_argument("--restores", type=int, default=2)
+    parser.add_argument("--veth-path", choices=["move", "direct"], default="move")
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--container", default="akernel-node")
     args = parser.parse_args()
     if not 1 <= args.attempts <= 8:
         parser.error("--attempts must be between 1 and 8")
+    if not 1 <= args.restores <= 2:
+        parser.error("--restores must be between 1 and 2")
 
     data = args.data_dir.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -174,7 +178,8 @@ def main():
     out.mkdir()
     result = {
         "mode": args.mode, "sdk": sdk_version, "node_id": node_id,
-        "image_id": node["Image"], "attempts": [],
+        "image_id": node["Image"], "veth_path": args.veth_path,
+        "attempts": [], "restores": [],
     }
 
     def save():
@@ -188,6 +193,16 @@ def main():
                 response.stdout[-1500:], response.stderr[-1500:],
             ))
         return response.stdout
+
+    def wait_for_traffic(sandbox, previous):
+        deadline = time.monotonic() + 5
+        while True:
+            current = json.loads(run(sandbox, "cat /tmp/issue129-progress.json", timeout=5))
+            if current["requests"] > previous["requests"]:
+                return current
+            if time.monotonic() >= deadline:
+                raise RuntimeError("HTTP traffic did not progress within the observation budget")
+            time.sleep(0.25)
 
     def capture(label):
         listing = subprocess.run(
@@ -218,8 +233,14 @@ def main():
         print("sandbox created", sandbox.id, flush=True)
         if args.mode != "baseline":
             sandbox.files.write("/tmp/issue129-server.py", NETNS_SERVER)
+            setup_command = DIND_SETUP if args.mode == "dind" else NETNS_SETUP
+            if args.mode == "netns" and args.veth_path == "direct":
+                setup_command = setup_command.replace(
+                    "ip link add veth129 type veth peer name peer129\n",
+                    "ip link add veth129 type veth peer name peer129 netns issue129\n",
+                ).replace("ip link set peer129 netns issue129\n", "")
             setup = sandbox.commands.run(
-                DIND_SETUP if args.mode == "dind" else NETNS_SETUP, timeout=240,
+                setup_command, timeout=240,
             )
             (out / "setup.log").write_text(setup.stdout + setup.stderr)
             if setup.exit_code != 0:
@@ -247,6 +268,7 @@ def main():
                 sandbox, f"/usr/sbin/iptables-legacy -t nat -nvxL {chain}",
             )
             print("traffic ready", result["initial_traffic"], flush=True)
+            source_traffic = result["initial_traffic"]
 
         sandbox.files.write("/tmp/issue129-checkpoint.py", CHECKPOINT)
         for attempt in range(args.attempts):
@@ -304,43 +326,68 @@ def main():
                 )
             run(sandbox, "printf after > /tmp/issue129-rollback-state")
             if args.mode != "baseline":
-                item["source_traffic"] = json.loads(run(
-                    sandbox, "cat /tmp/issue129-progress.json",
-                ))
+                source_traffic = wait_for_traffic(sandbox, source_traffic)
+                item["source_traffic"] = source_traffic
             save()
             time.sleep(0.25 + 0.15 * (attempt % 3))
 
-        if not sandbox.reload():
-            raise RuntimeError("Reload did not succeed")
-        if run(sandbox, "cat /tmp/issue129-rollback-state") != "before":
-            raise RuntimeError("Reload did not restore checkpointed file contents")
-        result["reload_rollback_passed"] = True
-        if args.mode != "baseline":
-            restored = sandbox.commands.run(
-                "curl --noproxy '*' --fail --max-time 10 http://172.30.0.1:18080/",
-                timeout=20,
-            )
-            result["after_reload_http"] = {
-                "exit_code": restored.exit_code,
-                "stdout": restored.stdout, "stderr": restored.stderr,
-            }
+        for restore_number in range(1, args.restores + 1):
+            restore_result = {"restore": restore_number}
+            result["restores"].append(restore_result)
             save()
-            if restored.exit_code != 0:
-                diagnostic = sandbox.commands.run(
-                    "ip addr; ip route; /usr/sbin/iptables-legacy -t nat -S; "
-                    "ip netns exec issue129 ip addr; "
-                    "tail -30 /tmp/issue129-server.log /tmp/issue129-traffic.log",
-                    timeout=30,
+            if not sandbox.reload():
+                raise RuntimeError("Reload did not succeed")
+            if run(sandbox, "cat /tmp/issue129-rollback-state") != "before":
+                raise RuntimeError("Reload did not restore checkpointed file contents")
+            restore_result["file_rollback_passed"] = True
+            if args.mode != "baseline":
+                restored = sandbox.commands.run(
+                    "curl --noproxy '*' --fail --max-time 10 http://172.30.0.1:18080/",
+                    timeout=20,
                 )
-                (out / "reload-diagnostic.log").write_text(
-                    diagnostic.stdout + diagnostic.stderr
-                )
-                raise RuntimeError("Restored NAT HTTP request failed; see reload-diagnostic.log")
-            if "issue129-" not in restored.stdout:
-                raise RuntimeError("Restored HTTP body missing")
-            result["after_reload_traffic"] = json.loads(run(
-                sandbox, "cat /tmp/issue129-progress.json",
-            ))
+                restore_result["http"] = {
+                    "exit_code": restored.exit_code,
+                    "stdout": restored.stdout, "stderr": restored.stderr,
+                }
+                save()
+                if restored.exit_code != 0:
+                    diagnostic = sandbox.commands.run(
+                        "ip addr; ip route; /usr/sbin/iptables-legacy -t nat -S; "
+                        "ip netns exec issue129 ip addr; "
+                        "tail -30 /tmp/issue129-server.log /tmp/issue129-traffic.log",
+                        timeout=30,
+                    )
+                    (out / f"reload-{restore_number}-diagnostic.log").write_text(
+                        diagnostic.stdout + diagnostic.stderr
+                    )
+                    raise RuntimeError("Restored NAT HTTP request failed; see reload diagnostic")
+                expected_body = "issue129-inner-ok" if args.mode == "dind" else "issue129-nat-ok"
+                if expected_body not in restored.stdout:
+                    raise RuntimeError("Restored HTTP body missing")
+                if args.mode == "netns":
+                    addresses = json.loads(run(sandbox, "ip -j -n issue129 addr show dev peer129"))
+                    routes = json.loads(run(sandbox, "ip -j -n issue129 route show"))
+                    restore_result["topology"] = {"addresses": addresses, "routes": routes}
+                    has_address = any(
+                        address.get("local") == "172.30.0.2"
+                        for interface in addresses if interface.get("ifname") == "peer129"
+                        for address in interface.get("addr_info", [])
+                    )
+                    has_route = any(
+                        route.get("dst") == "default"
+                        and route.get("gateway") == "172.30.0.1"
+                        and route.get("dev") == "peer129" for route in routes
+                    )
+                    if not has_address or not has_route:
+                        raise RuntimeError("Restored child peer address or route is missing")
+                before = json.loads(run(sandbox, "cat /tmp/issue129-progress.json"))
+                after = wait_for_traffic(sandbox, before)
+                restore_result.update(traffic_before=before, traffic_after=after)
+                save()
+            run(sandbox, f"printf after-restore-{restore_number} > /tmp/issue129-rollback-state")
+            save()
+            print("restore result", restore_result, flush=True)
+        result["reload_rollback_passed"] = True
         result["status"] = "passed"
         save()
     except BaseException as error:

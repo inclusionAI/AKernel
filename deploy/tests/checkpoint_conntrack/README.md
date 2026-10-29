@@ -13,7 +13,7 @@ From the repository root, after starting the dedicated standalone:
 python deploy/tests/checkpoint_conntrack/run.py \
   --data-dir /absolute/path/to/dedicated/standalone/data \
   --output /absolute/path/to/ignored/evidence \
-  --mode netns --attempts 2
+  --mode netns --veth-path move --attempts 8 --restores 2
 ```
 
 `--container` defaults to `akernel-node`. Modes are:
@@ -29,6 +29,8 @@ python deploy/tests/checkpoint_conntrack/run.py \
   failure before checkpoint coverage, even if an alternative mode works.
 
 Network modes open 32 keepalive connections and short-lived HTTP connections.
+For `netns`, run both `--veth-path move` (create the pair, then move the peer)
+and `--veth-path direct` (create the peer in the destination namespace).
 The netns HTTP server waits for the client FIN on `/active-close`; retaining up
 to 256 socket handles makes their TIME_WAIT state visible through gVisor's
 socket-based `/proc/net/tcp` enumeration. A zero count after closing every file
@@ -44,8 +46,11 @@ duplicate checkpoint or restore. The SDK observation budget is 120 seconds;
 the host performs up to 25 five-second waits plus bounded diagnostic calls.
 Cold network-image creation gets a separate 360-second budget.
 
-Only explicit checkpoint completion permits reload. File rollback and the
-post-reload HTTP request are checked separately. The HTTP exit code and body
+Only explicit checkpoint completion permits reload. `--restores` selects one
+or two reloads (default 2) from the same last checkpoint, with a fresh marker
+write between them. File rollback, restored peer address/default route and the
+post-reload HTTP request are checked separately. Source and restored HTTP
+request counters must keep increasing. The HTTP exit code and body
 are recorded directly so a later command cannot mask a failed request.
 The probe deletes the sandbox in `finally`; inspect `summary.json` and the
 actual runsc inventory before reusing or stopping the standalone. Local logs
