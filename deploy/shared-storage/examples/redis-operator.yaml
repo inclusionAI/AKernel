@@ -1,0 +1,25 @@
+# Qualified with redis-operator chart 0.27.0. Change watchNamespace together
+# with the release namespace and role scope if using another storage namespace.
+replicas: 2
+rbac:
+  scope: namespace
+  aggregate: false
+redisOperator:
+  imageName: quay.io/opstree/redis-operator
+  imageTag: v0.27.0@sha256:3a2696ded0ea9ef20b05d97ac994b1f23f017c8352e6b2fdcf802be09ab936e4
+  initContainerImageTag: v0.27.0@sha256:3a2696ded0ea9ef20b05d97ac994b1f23f017c8352e6b2fdcf802be09ab936e4
+  watchNamespace: akernel-storage
+  webhook: false
+nodeSelector: {node-role: akernel-control-plane}
+tolerations:
+  - {key: dedicated, operator: Equal, value: akernel-control-plane, effect: NoSchedule}
+  - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+  - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector: {matchLabels: {name: redis-operator}}
+        topologyKey: topology.kubernetes.io/zone
+resources:
+  requests: {cpu: 500m, memory: 512Mi}
+  limits: {cpu: "2", memory: 1Gi}

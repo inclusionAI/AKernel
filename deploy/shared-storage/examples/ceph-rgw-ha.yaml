@@ -1,0 +1,19 @@
+# Replace the StorageClass and zone names with independently verified values.
+juicefs:
+  enabled: false
+ceph:
+  storageClass: independent-block-storage
+  nodeSelector: {node-role: akernel-storage}
+  tolerations:
+    - {key: dedicated, operator: Equal, value: akernel-storage, effect: NoSchedule}
+  failureDomain: zone
+  zones: [zone-b, zone-c, zone-d]
+  osdCount: 3
+  osdSize: 1Ti
+  replicas: 3
+  monCount: 3
+  monSize: 20Gi
+  mgrCount: 2
+  gatewayInstances: 2
+  # Keep the default cipher compatibility until every existing key is checked.
+  allowedCiphers: []

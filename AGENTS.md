@@ -797,6 +797,8 @@ make deploy-standalone-test
 Keep opt-in native Restore fault tests under `deploy/tests/native_restore/`
 aligned with the pinned ADX source and Sandboxd/runtime bundle; run only against
 a dedicated empty backend with checkpoint paths shared by the test process.
+The directory's README documents remote native probes and the SDK lifecycle
+driver, including TLS, actual worker registration, outage ownership and cleanup.
 
 The opt-in [TCP/conntrack checkpoint diagnostic](deploy/tests/checkpoint_conntrack/README.md)
 uses a dedicated empty local standalone and an explicitly installed SDK. Keep

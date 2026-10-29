@@ -87,6 +87,32 @@ Install pinned Rook before its resources. With Rook 1.21.0, disabling the CSI
 operator and CSI resources still leaves a ClientProfile API dependency in the
 filesystem controller. Install the six API CRDs from the verified bundled CSI
 subchart, without deploying its controllers or drivers for RGW-only use.
+The qualified operator overlays are [rook-operator.yaml](examples/rook-operator.yaml)
+for rook-ceph chart 1.21.0 and [redis-operator.yaml](examples/redis-operator.yaml)
+for redis-operator chart 0.27.0. They keep controllers on control hosts, scope
+watches to the storage namespace and pin the qualified amd64 image bytes.
+Acquire the chart from https://charts.rook.io/release and the Redis chart from
+https://ot-container-kit.github.io/helm-charts. Review rendered RBAC and workloads
+with those versions and overlays. Namespace changes require changing the Redis
+watch namespace and role scope together.
+
+Rook's chart bundles ceph-csi-operator 1.1.0. With the qualified Rook chart
+extracted into ROOK_CHART_DIR, render only these API definitions for review:
+
+```bash
+helm template akernel-csi-api "$ROOK_CHART_DIR/charts/ceph-csi-operator" \
+  -n akernel-storage \
+  --show-only templates/cephconnection-crd.yaml \
+  --show-only templates/clientprofile-crd.yaml \
+  --show-only templates/clientprofilemapping-crd.yaml \
+  --show-only templates/clientprofilereplication-crd.yaml \
+  --show-only templates/driver-crd.yaml \
+  --show-only templates/operatorconfig-crd.yaml
+```
+
+Require exactly six CustomResourceDefinitions and no controller workloads in
+this output. Apply the reviewed API definitions before starting Rook; keep
+them while its controller depends on them.
 For a new Ceph 20.2.4 cluster, verify all ceph auth dump-keys entries use aes256k
 before setting ceph.allowedCiphers=[aes256k]. Do not restrict existing kernel
 clients without qualifying their key requirements.
@@ -112,6 +138,36 @@ remains the monitoring deployment's responsibility.
 
 ## Migration and acceptance
 
+Reusable overlays are checked in under examples/: [Ceph RGW](examples/ceph-rgw-ha.yaml),
+[Redis HA](examples/redis-ha.yaml), [core S3/reflink](examples/core-s3-reflink.yaml)
+and [monitoring](examples/monitor-s3.yaml). Replace the zone names, independent
+StorageClasses, bound bucket name and Secret names for the target environment.
+Retain an environment-owned overlay and a private secrets delivery workflow;
+the examples do not provision credentials or authorize cloud changes.
+
+Install the qualified Rook and Redis operators before rendering their custom
+resources. The Redis example selects the qualified amd64 images; use the
+corresponding qualified image pins on another architecture. Then render and
+review the storage/state releases, create the bucket claim, deliver its Secret
+and the Redis URL Secret, and render core with an explicit image digest:
+
+```bash
+helm template akernel-core deploy/akernel/charts/core -n akernel \
+  -f deploy/shared-storage/examples/core-s3-reflink.yaml \
+  -f "$PRIVATE_CORE_VALUES" \
+  --set-string image.repository="${AKERNEL_IMAGE_REPOSITORY:?}" \
+  --set-string image.digest="${AKERNEL_IMAGE_DIGEST:?}"
+```
+
+Keep rendered output private if an environment overlay includes sensitive
+resources. Apply reviewed values through the existing releases; do not install
+a competing release over live storage. Check actual container imageIDs against
+the expected digest. After every worker rollout, query the authenticated
+`/api/environment/v1/resources` endpoint and require all expected node IDs in
+the available state before scheduling qualification. Helm wait and Pod Running
+alone do not establish completed ADX registration. Use one generation selector
+consistently; remove obsolete generation constraints from inherited affinity.
+
 For existing ACK clusters, deploy/terraform/aliyun-node-pools manages only the
 new storage pools. Review the saved plan and keep state and private profiles
 outside Git. Pin the qualified runtime and service images by digest.
@@ -134,8 +190,19 @@ backend switch. Restoring the previous core requires restoring its clients and
 metadata service before restarting consumers. For later client upgrades, retain
 OnDelete and drain consumers before explicitly replacing clients.
 
+For a retained CloudNativePG cluster, its keep policy preserves the custom
+resource when postgres.enabled=false removes it from the state chart. After
+the last filesystem client has stopped, annotate the retained Cluster with
+`cnpg.io/hibernation=on` and require its hibernation condition to report True /
+Hibernated with no database Pods. Keep its PVCs and operator. To roll back,
+clear the annotation or set it to off, wait for healthy metadata service,
+restore the filesystem clients, and only then restore the previous core.
+See the [CloudNativePG hibernation contract](https://cloudnative-pg.io/documentation/1.30/declarative_hibernation/).
+
 The maintained native probes are deploy/tests/native_restore/shared_checkpoint_probe.py
-and shared_checkpoint_soak.py. The capture phase intentionally retains its
+and shared_checkpoint_soak.py, with checkpoint_lifecycle.py for SDK entry checks.
+The [qualification guide](../tests/native_restore/README.md) documents their
+connection, outage, observation and cleanup contracts. The capture phase intentionally retains its
 source for an operator-owned outage test. Other phases explicitly delete their
 detached instances with kill(delete_remote=True). Keep a recorded Snapshot until
 its observation process ends; a detached handle's ordinary kill only closes

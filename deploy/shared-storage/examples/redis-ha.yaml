@@ -1,0 +1,16 @@
+# Install the qualified Opstree operator and precreate akernel-redis-auth.
+# A registry mirror must preserve these qualified Linux/amd64 bytes.
+storageClass: independent-cloud-disk
+postgres:
+  enabled: false
+redis:
+  image: quay.io/opstree/redis@sha256:f52d954e4ba03d5f0efbd86a9f356c4d0418c6fb64ae3567b842b865669762a3
+  sentinelImage: quay.io/opstree/redis-sentinel@sha256:f9f1a7a5bd68d34a9a237f221694076a7ea4503cf9e8b8be4977caee9064f3c3
+  exporterImage: quay.io/opstree/redis-exporter@sha256:5e91283578080b5b5713bb9dbf800803890d2c38c5b94c3eeb86b4152fa6780b
+  size: 20Gi
+haproxy:
+  image: docker.io/library/haproxy@sha256:ea333907b42acad3ef6e538399c2724b508cc1f443ca258b0949eadea68d28fe
+# Disable only for an accepted private-network boundary where the CNI cannot
+# enforce policies. Shared-ENI pools can retain the chart's policy by default.
+networkPolicy:
+  enabled: true
