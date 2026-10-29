@@ -30,23 +30,64 @@ assert json.loads(body)['status']=='completed',body
 DIND_SETUP = '''set -eu
 export PATH="/usr/local/sbin/.iptables-legacy:$PATH"
 iptables --version
-apk add --no-cache python3 curl iproute2 >/tmp/issue129-apk.log 2>&1
+apk add --no-cache python3 curl iproute2 busybox-extras >/tmp/issue129-apk.log 2>&1
 mkdir -p /var/lib/docker /tmp/docker-exec
 nohup dockerd --host=unix:///var/run/docker.sock --storage-driver=vfs --data-root=/var/lib/docker --exec-root=/tmp/docker-exec --pidfile=/tmp/issue129-dockerd.pid --bip=172.30.0.1/24 --iptables=true --ip6tables=false --userland-proxy=true > /tmp/issue129-dockerd.log 2>&1 </dev/null &
 for n in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
 docker info --format 'storage={{.Driver}}'
 mkdir -p /tmp/issue129-inner/bin /tmp/issue129-inner/lib /tmp/issue129-inner/www
 cp /bin/busybox /tmp/issue129-inner/bin/busybox
+cp /bin/busybox-extras /tmp/issue129-inner/bin/busybox-extras
+/bin/busybox-extras --list | grep -qx httpd
 cp /lib/ld-musl-x86_64.so.1 /tmp/issue129-inner/lib/
 printf 'issue129-inner-ok\\n' > /tmp/issue129-inner/www/index.html
 tar -C /tmp/issue129-inner -cf - . | docker import - issue129-inner:local
-docker run -d --name issue129-inner -p 18080:8080 --entrypoint /bin/busybox issue129-inner:local httpd -f -p 8080 -h /www
-curl --fail --max-time 10 http://172.30.0.1:18080/
+docker run -d --name issue129-inner -p 18080:8080 --entrypoint /bin/busybox-extras issue129-inner:local httpd -f -p 8080 -h /www
+for n in $(seq 1 20); do
+ curl --noproxy '*' --fail --max-time 2 http://172.30.0.1:18080/ >/dev/null 2>&1 && break
+ sleep 0.2
+done
+curl --noproxy '*' --fail --max-time 10 http://172.30.0.1:18080/
 iptables-save -t nat
 docker inspect issue129-inner --format 'inner_pid={{.State.Pid}}'
 readlink /proc/self/ns/net
 inner_pid=$(docker inspect issue129-inner --format '{{.State.Pid}}')
 readlink "/proc/${inner_pid}/ns/net"
+ip netns add ingress129
+ip link add ingress129-host type veth peer name ingress129-peer
+ip addr add 192.0.2.1/24 dev ingress129-host
+ip link set ingress129-host up
+ip link set ingress129-peer netns ingress129
+ip -n ingress129 addr add 192.0.2.2/24 dev ingress129-peer
+ip -n ingress129 link set lo up
+ip -n ingress129 link set ingress129-peer up
+nohup ip netns exec ingress129 python3 /tmp/issue129-egress.py > /tmp/issue129-egress.log 2>&1 </dev/null &
+for n in $(seq 1 50); do
+ curl --noproxy '*' --fail --max-time 2 http://192.0.2.2:18081/ >/dev/null 2>&1 && break
+ sleep 0.2
+done
+curl --noproxy '*' --fail --max-time 2 http://192.0.2.2:18081/
+proxy_pids=$(pidof docker-proxy || true)
+if [ -n "$proxy_pids" ]; then kill $proxy_pids; fi
+for n in $(seq 1 20); do
+ test -z "$(pidof docker-proxy || true)" && break
+ sleep 0.2
+done
+test -z "$(pidof docker-proxy || true)"
+'''
+DIND_EGRESS_SERVER = '''import json
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingTCPServer
+class Handler(BaseHTTPRequestHandler):
+ def do_GET(self):
+  body=json.dumps({'source':self.client_address[0]}).encode()
+  self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+ def log_message(self,*args):pass
+# Bind without HTTPServer's reverse lookup in this isolated namespace.
+class Server(ThreadingTCPServer):
+ allow_reuse_address=True
+ daemon_threads=True
+Server(('192.0.2.2',18081),Handler).serve_forever()
 '''
 NETNS_SETUP = '''set -eu
 export PATH="/usr/local/sbin/.iptables-legacy:$PATH"
@@ -204,6 +245,34 @@ def main():
                 raise RuntimeError("HTTP traffic did not progress within the observation budget")
             time.sleep(0.25)
 
+    def verify_dind_network(sandbox, expected_container_id=None):
+        container_id = run(
+            sandbox, "docker inspect issue129-inner --format '{{.Id}}'",
+        ).strip()
+        if expected_container_id is not None and container_id != expected_container_id:
+            raise RuntimeError("Restored Docker container identity changed")
+        run(sandbox, 'test -z "$(pidof docker-proxy || true)"')
+        local = run(
+            sandbox, "curl --noproxy '*' --fail --max-time 10 http://172.30.0.1:18080/",
+        ).strip()
+        ingress = run(
+            sandbox, "ip netns exec ingress129 curl --noproxy '*' --fail --max-time 10 "
+            "http://192.0.2.1:18080/",
+        ).strip()
+        if local != "issue129-inner-ok" or ingress != "issue129-inner-ok":
+            raise RuntimeError("Docker published-port HTTP body did not match")
+        egress = json.loads(run(
+            sandbox, "docker exec issue129-inner /bin/busybox wget -qO- "
+            "http://192.0.2.2:18081/",
+        ))
+        if egress.get("source") != "192.0.2.1":
+            raise RuntimeError(f"Docker egress did not use MASQUERADE: {egress}")
+        return {
+            "inner_container_id": container_id, "userland_proxy_absent": True,
+            "local_http": local, "ingress_http": ingress,
+            "egress_masquerade_source": egress["source"],
+        }
+
     def capture(label):
         listing = subprocess.run(
             runtime + ["list", "--format=json"],
@@ -233,6 +302,8 @@ def main():
         print("sandbox created", sandbox.id, flush=True)
         if args.mode != "baseline":
             sandbox.files.write("/tmp/issue129-server.py", NETNS_SERVER)
+            if args.mode == "dind":
+                sandbox.files.write("/tmp/issue129-egress.py", DIND_EGRESS_SERVER)
             setup_command = DIND_SETUP if args.mode == "dind" else NETNS_SETUP
             if args.mode == "netns" and args.veth_path == "direct":
                 setup_command = setup_command.replace(
@@ -244,8 +315,13 @@ def main():
             )
             (out / "setup.log").write_text(setup.stdout + setup.stderr)
             if setup.exit_code != 0:
+                container_diagnostic = (
+                    "docker inspect issue129-inner --format '{{json .State}}'; "
+                    "docker logs issue129-inner; "
+                ) if args.mode == "dind" else ""
                 diagnostic = sandbox.commands.run(
-                    "tail -80 /tmp/issue129-dockerd.log /tmp/issue129-apk.log 2>/dev/null",
+                    container_diagnostic + "tail -80 /tmp/issue129-dockerd.log /tmp/issue129-apk.log "
+                    "/tmp/issue129-egress.log 2>/dev/null",
                     timeout=30,
                 )
                 (out / "setup-diagnostic.log").write_text(
@@ -254,6 +330,9 @@ def main():
                 raise RuntimeError(
                     f"{args.mode} fixture setup failed: exit={setup.exit_code}; see setup logs"
                 )
+            if args.mode == "dind":
+                result["initial_dind_network"] = verify_dind_network(sandbox)
+                save()
             sandbox.files.write("/tmp/issue129-traffic.py", TRAFFIC)
             run(sandbox, "nohup python3 /tmp/issue129-traffic.py "
                 "> /tmp/issue129-traffic.log 2>&1 </dev/null &")
@@ -328,6 +407,10 @@ def main():
             if args.mode != "baseline":
                 source_traffic = wait_for_traffic(sandbox, source_traffic)
                 item["source_traffic"] = source_traffic
+                if args.mode == "dind":
+                    item["dind_network"] = verify_dind_network(
+                        sandbox, result["initial_dind_network"]["inner_container_id"],
+                    )
             save()
             time.sleep(0.25 + 0.15 * (attempt % 3))
 
@@ -364,6 +447,10 @@ def main():
                 expected_body = "issue129-inner-ok" if args.mode == "dind" else "issue129-nat-ok"
                 if expected_body not in restored.stdout:
                     raise RuntimeError("Restored HTTP body missing")
+                if args.mode == "dind":
+                    restore_result["dind_network"] = verify_dind_network(
+                        sandbox, result["initial_dind_network"]["inner_container_id"],
+                    )
                 if args.mode == "netns":
                     addresses = json.loads(run(sandbox, "ip -j -n issue129 addr show dev peer129"))
                     routes = json.loads(run(sandbox, "ip -j -n issue129 route show"))

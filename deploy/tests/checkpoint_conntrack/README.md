@@ -31,10 +31,7 @@ python deploy/tests/checkpoint_conntrack/run.py \
   installed from Alpine. A child network namespace, bridge, veth, DNAT and
   MASQUERADE carry real HTTP traffic. A rule-removal negative control verifies
   that access depends on DNAT. This mode does not run dockerd.
-- `dind`: start dockerd with the image's legacy iptables wrappers, vfs storage,
-  default userland proxy, IPv4 bridge/NAT and an imported local busybox image.
-  It requires the runtime's legacy addrtype support. A setup failure is a
-  failure before checkpoint coverage, even if an alternative mode works.
+- `dind`: start dockerd with the image's legacy iptables wrappers, vfs storage, default userland proxy, IPv4 bridge/NAT and an imported local busybox image. Explicitly install `busybox-extras` for its HTTP applet, which is absent from the image's base BusyBox, and wait for the server before continuing. Stop docker-proxy before checkpointing, then require published-port HTTP from both the sandbox and an independent ingress network namespace. An HTTP server in that namespace observes the inner container's outbound source address to verify MASQUERADE. Repeat these checks after every checkpoint and reload, retaining the same inner container ID. It requires the runtime's legacy addrtype and conntrack support. A setup failure is a failure before checkpoint coverage, even if an alternative mode works; container state and logs are retained alongside daemon diagnostics.
 
 Network modes open 32 keepalive connections and short-lived HTTP connections.
 For `netns`, run both `--veth-path move` (create the pair, then move the peer)
