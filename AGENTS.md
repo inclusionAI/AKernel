@@ -798,6 +798,11 @@ Keep opt-in native Restore fault tests under `deploy/tests/native_restore/`
 aligned with the pinned ADX source and Sandboxd/runtime bundle; run only against
 a dedicated empty backend with checkpoint paths shared by the test process.
 
+The opt-in [TCP/conntrack checkpoint diagnostic](deploy/tests/checkpoint_conntrack/README.md)
+uses a dedicated empty local standalone and an explicitly installed SDK. Keep
+checkpoint completion, file rollback and restored network access as separate
+checks; retain setup failures and unknown command outcomes as incomplete coverage.
+
 Run the basic e2e example against a deployed cluster with:
 
 ```bash
