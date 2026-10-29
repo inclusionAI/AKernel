@@ -236,6 +236,12 @@ prometheusServer:
       - "akernel"
       - "akernel-monitor"
     pushgateways: []
+    sharedStorage:
+      enabled: false
+      namespace: akernel-storage
+      postgresCluster: juicefs-metadata
+      redisName: akernel-redis
+      cephManagerService: rook-ceph-mgr
 
 # Optional native Environment inventory and resource scrapes into Prometheus.
 environmentDetails:

@@ -181,3 +181,21 @@ Render and validate the storage and core charts, then validate native behavior:
 
 Manifest rendering is a configuration gate, not evidence that these operational
 acceptance scenarios have passed.
+
+Enable `prometheusServer.config.sharedStorage.enabled` in the monitor chart to
+discover all CloudNativePG and Redis/Sentinel exporters in the configured
+namespace and scrape the active Ceph manager. It loads Ceph health/capacity,
+PostgreSQL replication and exporter-availability alert rules. Include the state
+namespace in PVC metrics discovery as well. Verify actual targets and samples
+after applying the configuration; notification routing remains the monitoring
+deployment's responsibility. The optional [backup chart](backup/README.md)
+requires its own authentication and recovery qualification before scheduling.
+
+`deploy/tests/native_restore/shared_checkpoint_probe.py` provides capture,
+cross-node restore and concurrent isolation phases. The operator owns source
+outages and mount/extent inspection. The capture phase intentionally retains
+the source for an outage test; record its ID and explicitly delete it afterward.
+Other phases explicitly delete their detached sandboxes with
+`kill(delete_remote=True)`. A detached handle's ordinary `kill()` only closes
+local transports and must not be used as proof of remote deletion or reference
+reclamation.

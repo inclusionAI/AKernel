@@ -859,6 +859,14 @@ SDK control-plane access.
 
 ## ADX observability
 
+The monitor chart's opt-in `prometheusServer.config.sharedStorage` discovers
+Ceph, CloudNativePG and Redis/Sentinel metrics and loads storage alert rules.
+Validate the rendered Prometheus configuration with `promtool`, then verify
+live scrape targets and samples. Shared checkpoint backup is disabled by
+default; its authentication, consistency and isolated restore requirements are
+documented in `deploy/shared-storage/backup/README.md`. Never enable ACK RRSA
+implicitly while deploying the backup chart.
+
 Collector configs live in `deploy/akernel/charts/core/files/otel-collector/`;
 standalone adds scrape targets through a small overlay. Preserve dashboard UIDs,
 optional native detail sampling and runtime-control events. Verify real SDK

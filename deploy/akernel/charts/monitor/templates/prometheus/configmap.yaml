@@ -17,6 +17,9 @@ data:
 
     rule_files:
       - /etc/prometheus/adx-rules.yaml
+{{- if .Values.prometheusServer.config.sharedStorage.enabled }}
+      - /etc/prometheus/shared-storage-rules.yaml
+{{- end }}
 
     scrape_configs:
       # Prometheus self-monitoring endpoint
@@ -33,6 +36,43 @@ data:
         file_sd_configs:
           - files:
             - /etc/prometheus/pushgateways.json
+
+{{- with .Values.prometheusServer.config.sharedStorage }}
+{{- if .enabled }}
+      - job_name: akernel-ceph
+        static_configs:
+          - targets: [{{ printf "%s.%s.svc:9283" .cephManagerService .namespace | quote }}]
+            labels:
+              cluster: {{ $.Values.prometheusServer.config.clusterName | quote }}
+              adx_env: {{ $.Values.prometheusServer.config.environment | quote }}
+      - job_name: akernel-postgres
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: [{{ .namespace | quote }}]}
+            selectors:
+              - role: pod
+                label: {{ printf "cnpg.io/cluster=%s" .postgresCluster | quote }}
+        relabel_configs:
+          - {source_labels: [__meta_kubernetes_pod_phase], action: keep, regex: Running}
+          - {source_labels: [__meta_kubernetes_pod_container_port_name], action: keep, regex: metrics}
+          - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+          - {target_label: cluster, replacement: {{ $.Values.prometheusServer.config.clusterName | quote }}}
+          - {target_label: adx_env, replacement: {{ $.Values.prometheusServer.config.environment | quote }}}
+      - job_name: akernel-redis
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: [{{ .namespace | quote }}]}
+            selectors:
+              - role: pod
+                label: {{ printf "app in (%s,%s-sentinel-sentinel)" .redisName .redisName | quote }}
+        relabel_configs:
+          - {source_labels: [__meta_kubernetes_pod_phase], action: keep, regex: Running}
+          - {source_labels: [__meta_kubernetes_pod_container_port_name], action: keep, regex: redis-exporter}
+          - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+          - {target_label: cluster, replacement: {{ $.Values.prometheusServer.config.clusterName | quote }}}
+          - {target_label: adx_env, replacement: {{ $.Values.prometheusServer.config.environment | quote }}}
+{{- end }}
+{{- end }}
 
 {{- $controlPlanePods := .Values.prometheusServer.config.controlPlanePods | default dict }}
 {{- if $controlPlanePods.enabled }}

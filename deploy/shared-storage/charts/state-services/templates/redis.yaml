@@ -18,6 +18,7 @@ data:
     min-replicas-to-write 1
     min-replicas-max-lag 5
     repl-backlog-size 64mb
+    repl-diskless-sync-delay 0
     stop-writes-on-bgsave-error yes
     save 900 1
 ---

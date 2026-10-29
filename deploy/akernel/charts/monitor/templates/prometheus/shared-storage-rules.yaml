@@ -1,0 +1,32 @@
+{{- if .Values.prometheusServer.config.sharedStorage.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-storage-alert-rules
+  namespace: {{ .Release.Namespace }}
+data:
+  shared-storage-rules.yaml: |
+    groups:
+      - name: akernel-shared-storage
+        rules:
+          - alert: AKernelCephUnhealthy
+            expr: ceph_health_status{job="akernel-ceph"} > 0
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "AKernel checkpoint Ceph cluster is not healthy"}
+          - alert: AKernelCephCapacityLow
+            expr: ceph_cluster_total_used_bytes{job="akernel-ceph"} / ceph_cluster_total_bytes{job="akernel-ceph"} > 0.8
+            for: 10m
+            labels: {severity: warning}
+            annotations: {summary: "AKernel checkpoint Ceph capacity exceeds 80 percent"}
+          - alert: AKernelPostgresReplicationMissing
+            expr: (cnpg_pg_replication_streaming_replicas{job="akernel-postgres"} < 1) and on(instance) (cnpg_pg_replication_in_recovery{job="akernel-postgres"} == 0)
+            for: 2m
+            labels: {severity: critical}
+            annotations: {summary: "JuiceFS metadata primary has no streaming replica"}
+          - alert: AKernelStateExporterMissing
+            expr: up{job=~"akernel-ceph|akernel-postgres|akernel-redis"} == 0
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "AKernel shared-state metrics endpoint is unavailable"}
+{{- end }}
