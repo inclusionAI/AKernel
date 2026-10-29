@@ -65,3 +65,21 @@ post-reload HTTP request timed out with the moved child veth missing
 DinD NAT also fails earlier on the legacy addrtype matcher
 ([AKernel #133](https://github.com/inclusionAI/AKernel/issues/133)). These are
 diagnostic failures to retain, not passing full network-restore acceptance.
+
+
+The candidate for `release-20261012.0-akernel.2` from merged gVisor commit
+`16f123ed6da34fb2303368acb21754ccaab60cfe`
+([candidate run 40827753118](https://github.com/akernel-dev/gvisor/actions/runs/40827753118))
+passed this probe on Linux amd64 with both systrap and KVM. Each platform ran
+both veth creation paths with 32 keepalive connections and advancing HTTP
+traffic, eight live checkpoints, and two reloads of the same last checkpoint.
+Both reloads retained the peer address/default route, restored the file marker,
+and passed separately checked NAT HTTP requests and traffic-progress checks.
+The full published SDK 0.2.0rc4 standalone suite and a two-sandbox writable-state
+isolation check also passed on each platform.
+
+Use the deterministic gVisor timer regression for the original lock cycle;
+passing this natural workload does not establish that the old deadlock was
+naturally reproduced. These results do not qualify ARM64 networking or the
+full Docker daemon chain. The independent legacy addrtype issue above remains
+outside this fix.
