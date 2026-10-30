@@ -30,6 +30,8 @@ classifiers = [
 dependencies = [
     "adx-environment==0.1.0rc3",
     "idna>=3,<4",
+    "httpx>=0.27,<1",
+    "PyYAML>=6,<7",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
 ]
@@ -42,6 +44,7 @@ dev = [
     "build>=1.2,<2",
     "mypy>=1.10,<2",
     "ruff>=0.11,<1",
+    "types-PyYAML>=6,<7",
 ]
 
 [project.scripts]

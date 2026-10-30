@@ -63,6 +63,9 @@ class SnapshotCreateTest(unittest.TestCase):
             cwd="/not-created",
             port_forwardings=[8080],
             mounts=[Mount(target="/tools", image_url="tools:latest")],
+            extra_config={
+                "fileBackedTmpfsMounts": [{"target": "/upper", "sizeMB": 64}]
+            },
             reverse_tunnel=HttpReverseTunnel(target="http://127.0.0.1:8123"),
             detached=False,
             failover=True,
@@ -105,6 +108,8 @@ class SnapshotCreateTest(unittest.TestCase):
             {"snapshot_id": "saved", "port_forwardings": [8080, 8080]},
             {"snapshot_id": "saved", "mounts": [object()]},
             {"snapshot_id": "saved", "network_policy": {}},
+            {"snapshot_id": "saved", "extra_config": []},
+            {"snapshot_id": "saved", "extra_config": {"size": float("nan")}},
         ):
             with (
                 self.subTest(options=options),

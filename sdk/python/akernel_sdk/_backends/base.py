@@ -103,6 +103,7 @@ class SnapshotRestoreSpec:
     failover: bool
     node_id: str | None
     network_policy: NetworkPolicy | None
+    extra_config: Mapping[str, object] = field(default_factory=dict)
     xpu: str | None = None
     storage_mb: int | None = None
     inherit_entrypoint: bool = False
@@ -122,6 +123,7 @@ class SandboxConnectSpec:
     schedule_timeout: int = 30
     network_policy: NetworkPolicy | None = None
     mounts: tuple[Mount, ...] = ()
+    extra_config: Mapping[str, object] = field(default_factory=dict)
     xpu: str | None = None
     storage_mb: int | None = None
     inherit_entrypoint: bool = False

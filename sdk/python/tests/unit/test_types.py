@@ -124,6 +124,13 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
                 "DockerfileBuildError",
                 "DockerfileParseError",
                 "BuildInstruction",
+                "ComposeProject",
+                "ComposeOperationError",
+                "ServiceHandle",
+                "ServiceProcessHandle",
+                "DockerRuntime",
+                "ImageMountPlan",
+                "prepare_compose_images",
             },
         )
         for removed in (

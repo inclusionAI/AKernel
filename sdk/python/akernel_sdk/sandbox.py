@@ -757,6 +757,7 @@ class Sandbox:
         cwd: str | None = None,
         port_forwardings: Sequence[int] | None = None,
         mounts: Sequence[Mount] | None = None,
+        extra_config: Mapping[str, object] | None = None,
         reverse_tunnel: HttpReverseTunnel | None = None,
         detached: bool = False,
         failover: bool = False,
@@ -797,6 +798,7 @@ class Sandbox:
                 cwd=cwd,
                 port_forwardings=port_forwardings,
                 mounts=mounts,
+                extra_config=extra_config,
                 reverse_tunnel=reverse_tunnel,
                 detached=detached,
                 failover=failover,
@@ -835,6 +837,7 @@ class Sandbox:
             cwd=cwd,
             port_forwardings=port_forwardings,
             mounts=mounts,
+            extra_config=extra_config,
             reverse_tunnel=reverse_tunnel,
             detached=detached,
             failover=failover,
@@ -854,6 +857,7 @@ class Sandbox:
         cwd: str | None = None,
         port_forwardings: Sequence[int] | None = None,
         mounts: Sequence[Mount] | None = None,
+        extra_config: Mapping[str, object] | None = None,
         reverse_tunnel: HttpReverseTunnel | None = None,
         detached: bool = False,
         failover: bool = False,
@@ -868,6 +872,9 @@ class Sandbox:
         Inherits captured runtime, resource geometry and process state; does not
         rerun Dockerfile setup or the image entrypoint. The source is unaffected.
         Rebind client-side tunnels, ports and mounts explicitly as needed.
+        ``extra_config`` is defensively copied JSON runtime configuration.
+        Restore the same managed-mount geometry used by the captured runtime;
+        the backend owns compatibility checks and does not rerun fresh setup.
         ``cwd`` sets a command default without creating directories. Supply
         ``network_policy`` explicitly to restore restrictions: the pinned ADX
         backend uses its default if omitted or empty. ``timeout`` is the logical
@@ -915,6 +922,7 @@ class Sandbox:
             command_cwd=cwd,
             port_forwardings=tuple(ports),
             mounts=tuple(mount_list),
+            extra_config=_normalize_extra_config(extra_config),
             reverse_tunnel=reverse_tunnel,
             detached=detached,
             failover=failover,

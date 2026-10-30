@@ -232,7 +232,14 @@ class NativeSnapshotsTest(unittest.TestCase):
             patch.object(httpx.Client, "send", autospec=True, side_effect=deny),
             self.assertRaises(BackendOperationError) as raised,
         ):
-            Sandbox.from_snapshot("saved", cwd="/app", node_id="node-a")
+            Sandbox.from_snapshot(
+                "saved",
+                cwd="/app",
+                node_id="node-a",
+                extra_config={
+                    "fileBackedTmpfsMounts": [{"target": "/upper", "sizeMB": 64}]
+                },
+            )
         self.assertEqual(len(requests), 1)
         body = json.loads(requests[0].content)
         self.assertEqual(body["snapshotId"], "saved")
@@ -247,6 +254,10 @@ class NativeSnapshotsTest(unittest.TestCase):
             self.assertNotIn(key, body)
         self.assertEqual(body["rootfs"], {})
         self.assertEqual(body["cwd"], "/app")
+        self.assertEqual(
+            body["extra_config"],
+            {"fileBackedTmpfsMounts": [{"target": "/upper", "sizeMB": 64}]},
+        )
         self.assertEqual(raised.exception.code, "PERMISSION_DENIED")
         self.assertEqual(raised.exception.request_id, "restore-test")
         self.assertEqual(raised.exception.outcome, "not_started")

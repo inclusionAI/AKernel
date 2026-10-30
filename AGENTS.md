@@ -908,3 +908,16 @@ ADX profile, applying patches only to present roles. Resolve profile/role
 selectors with ADX's single-pass environment/default/escape rules while
 preserving source expressions for the authoritative loader. Severity queries consume
 Collector-normalized log metadata and plain bodies.
+
+
+## Managed Docker runtime
+
+The source-preview SDK owns Compose image discovery/OCI metadata validation, ROFS mount plans and guest bridge/containerd/dockerd startup. Sources live in `builder/image-bridge`, `builder/dind`, and `sdk/python/akernel_sdk/_docker_runtime.py`. Callers supply original project files and keep service orchestration in their adapter. Snapshot restore must rebind mounts, runtime extra_config and local tunnels without rerunning startup. Reuse the existing sandboxd image provider; do not add a parallel layer cache or modify deployment/runtime pins for client refactoring. See the SDK and builder guides for managed-upper prerequisites and supported scope.
+
+Compose project lifecycle and Docker service/process operations are SDK extensions in `_compose.py` and `_service_process.py`; the dependency-free `_service_process_guest.py` runs in the selected service PID namespace. Keep project descriptors JSON-compatible and restore attachment free of fresh-boot operations. Preserve explicit build/network-policy/up boundaries, unknown-outcome identities, source fencing, and container/process start-time checks before signals. Callers retain task/harness semantics. Run the real-process helper unit tests with owned-process cleanup and the complete SDK quality gate when changing these contracts. This feature does not add Docker semantics to Agent DX or change runtime pins.
+
+Automatic Compose image preparation covers image-only services as well as Dockerfile bases. Verify pinned Docker references and committed ROFS snapshots instead of running native pulls, including during up. Keep digest-reference regression coverage and fail closed on missing registrations; never relax bridge extraction protection or populate the private upper with replacement lower layers.
+
+Managed discovery requires helper schema 2 and probes capabilities before sending project input. Confine client Dockerfile/build-context and `.env` reads to the frozen project; never inherit unspecified host environment variables. External include/extends files remain unsupported. Validate manifest/config/chain relationships and allow legitimate same-chain roots with different target digests. Keep the empty automatic-plan marker for scratch-only builds. Unknown command exits and failed cancellation retain their identities and cleanup errors without replay.
+
+Managed Compose defaults preserve native IPv4 bridge definitions. Keep forwarding/NAT and per-service tunnel exposure in the SDK/runtime, with daemon-only legacy iptables selection for Docker DNS. Restore attachment stays pure; explicit reconnect_network refreshes only owned chains for the new outer TAP before the harness resumes. Do not claim external TCP address migration. Keep the opt-in Compose network integration regression, including existing inner and published-port sockets, synchronized with these APIs. Docker 28 operator flags are prerequisites; client work must not change production or runtime bundle pins.
