@@ -150,7 +150,13 @@ The build creates only the selected image reference; it does not add a second
 `akernel-all-in-one` alias. `make push` pushes that selected reference directly.
 
 The build helper performs two Docker builds. `builder/runtime.Dockerfile`
-creates the EXECD-only `akernel-runtime-rootfs.img` from the pinned ADX release.
+creates the EXECD-only `akernel-runtime-rootfs.img` from the pinned ADX release
+by default. `AKERNEL_ENABLE_E2B=true` instead reuses an envd-enabled ADX Execd
+component's runtime image, manifest and license. It requires explicit matching
+ADX platform/Execd archive URL/checksum pairs; default pins remain unchanged.
+Keep commit, architecture and Execd digest checks, and leave E2B activation to
+explicit deployment configuration. See `builder/README.md` for the build and
+configuration boundary.
 `builder/node.Dockerfile` then compiles the node components and produces the
 AKernel all-in-one image using that runtime image. The actor-based Python
 runtime is not a build input.
@@ -783,6 +789,9 @@ python deploy/terraform/test_adx_contract.py -v
 ADX directly terminates HTTPS control/API/PTY on its 8443 listener and exposes
 HTTP sandbox traffic on 8080. Public Services map these to configurable external
 ports (443/80 by default). Preserve both ports and the existing SDK variables.
+Standalone `sdk.env` selects the HTTPS control listener for SDK gateway URLs,
+including custom ports: private published-port requests carry credentials,
+which the plaintext data listener rejects.
 Validate real TLS authentication, PTY and HTTP port access with the
 `direct-ingress` standalone E2E group; PR CI discovers this group alongside the
 other standalone tests. Keep ADX public certificates and remove redundant

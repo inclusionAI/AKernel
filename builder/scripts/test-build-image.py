@@ -42,6 +42,25 @@ AMBIENT_BUILD_PREFIXES = (
 
 
 class BuildImageTests(unittest.TestCase):
+    def test_e2b_selects_existing_adx_runtime_only_when_requested(self):
+        for enabled, target in (("false", "runtime-execd"), ("true", "runtime-e2b")):
+            with self.subTest(enabled=enabled):
+                result = self.run_helper(AKERNEL_ENABLE_E2B=enabled)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                runtime = self.docker_calls()[-2]
+                self.assertEqual(runtime[runtime.index("--target") + 1], target)
+                self.assertEqual(self.build_arguments(runtime)["ADX_EXECD_SHA256"], "4" * 64)
+
+    def test_e2b_requires_explicit_release_pairs_and_valid_switch(self):
+        for changes in ({"AKERNEL_ENABLE_E2B": "yes"},
+                        {"AKERNEL_ENABLE_E2B": "true", "ADX_EXECD_URL": None,
+                         "ADX_EXECD_SHA256": None},
+                        {"AKERNEL_ENABLE_E2B": "true", "ADX_RELEASE_URL": None,
+                         "ADX_RELEASE_SHA256": None}):
+            with self.subTest(changes=changes):
+                self.assertNotEqual(self.run_helper(**changes).returncode, 0)
+                self.assertFalse(self.docker_calls())
+
     def test_gvisor_download_keeps_http11_and_archive_verification(self):
         dockerfile = (ROOT / "builder/node.Dockerfile").read_text()
         gvisor = dockerfile.split("AS gvisor-runtime", 1)[1].split("\nFROM ", 1)[0]

@@ -204,6 +204,7 @@ deploy-standalone-test:
 .PHONY: build-helper-test
 build-helper-test:
 	@python3 builder/scripts/test-build-image.py
+	@python3 builder/scripts/test_e2b_runtime.py
 	@python3 builder/scripts/test-apt-mirror.py
 	@python3 builder/scripts/test-apt-get-update.py
 	@python3 builder/scripts/test-elf-arch.py

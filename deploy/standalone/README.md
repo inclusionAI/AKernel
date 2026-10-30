@@ -262,11 +262,13 @@ these listeners remain within the standalone container network. SDK address
 and token settings are unchanged.
 
 `data/sdk.env` follows the hostname and published ports selected at startup.
-For default ports it exports only the server address; with custom ports it
-also exports the data-plane address. CI reads the same file.
+It exports the server address and an HTTPS gateway address on the same control
+listener, including custom ports. Private port forwarding sends credentials;
+the plaintext data listener rejects them. The standalone HTTP listener test uses
+`AKERNEL_TEST_HTTP_DATA_PORT` (default `80`) when custom data ports are selected.
+CI reads the same file. Source the
+complete SDK environment rather than exporting only the server address.
 `data/token` points to the deployment token. Keep the data directory private.
-For custom host port mappings, use the additional gateway override printed by
-`start.sh`; the default deployment does not require it.
 
 The bundled standalone Ingress accepts Host-subdomain port forwarding under
 `localhost`: `<sandbox-id>-<port>.localhost`. The SDK continues to return its

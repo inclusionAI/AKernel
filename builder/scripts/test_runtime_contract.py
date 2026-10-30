@@ -137,7 +137,7 @@ class RuntimeContractTest(unittest.TestCase):
         build = (ROOT / "deploy/scripts/build-image.sh").read_text(encoding="utf-8")
         self.assertNotIn("openyuanrong_sdk", runtime)
         self.assertNotIn("runtime-python", runtime)
-        self.assertIn("--target runtime-execd", build)
+        self.assertIn("false) runtime_target=runtime-execd", build)
         self.assertNotIn("--runtime-profile", build)
 
     def test_dockerfiles_install_the_pinned_release_build(self) -> None:

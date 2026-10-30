@@ -421,10 +421,16 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 COPY --from=runtime-image /akernel-runtime-rootfs.img /opt/akernel/runtime/akernel-runtime-rootfs.img
+RUN --mount=from=runtime-image,target=/mnt/akernel-runtime \
+    mkdir -p /opt/akernel/runtime/metadata && \
+    if test -d /mnt/akernel-runtime/runtime-metadata; then \
+      cp -a /mnt/akernel-runtime/runtime-metadata/. /opt/akernel/runtime/metadata/; \
+    fi
+COPY ./builder/scripts/verify-e2b-release.py /usr/local/libexec/verify-e2b-release.py
 
 # ADX provides the control and data plane processes. AKernel keeps building
-# sandboxd and its runtime rootfs from pinned sources and installs only EXECD
-# from the verified ADX release into that rootfs.
+# sandboxd from pinned sources. The default rootfs installs only EXECD; the
+# opt-in E2B rootfs reuses the envd-enabled ADX Execd component.
 COPY --from=adx-release /opt/adx/current/bin/ /opt/adx/current/bin/
 COPY --from=adx-release /opt/adx/current/third_party/ /opt/adx/current/third_party/
 COPY --from=adx-release /opt/adx/current/LICENSE /opt/adx/current/LICENSE
@@ -439,6 +445,11 @@ RUN set -eux; \
     test -x /opt/adx/current/bin/adx-apiserver; \
     test -x /opt/adx/current/runtime/adx-execd; \
     test ! -e /opt/adx/current/runtime/adx-runtime-rootfs.img; \
+    if test -f /opt/akernel/runtime/metadata/adx-component-manifest.json; then \
+      python3 /usr/local/libexec/verify-e2b-release.py \
+        /opt/akernel/runtime/metadata/adx-component-manifest.json \
+        /opt/adx/current/manifest.json; \
+    fi; \
     for binary in adxctl adx-coordinator adxlet adx-apiserver; do \
       sh /usr/local/libexec/verify-elf-arch.sh "/opt/adx/current/bin/${binary}" "${TARGETARCH}"; \
     done; \

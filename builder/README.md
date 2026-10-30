@@ -2,6 +2,87 @@
 
 The shared `deploy/scripts/build-image.sh` helper builds the runtime rootfs and all-in-one node image for `make build` and `make standalone`. Downloads use official repositories and pinned upstream releases by default.
 
+## Optional E2B runtime
+
+The default build still creates AKernel's Execd-only runtime. To package envd,
+select the optional target and provide both archives from the same ADX build:
+
+```bash
+AKERNEL_ENABLE_E2B=true \
+ADX_RELEASE_URL="$RELEASE_URL" ADX_RELEASE_SHA256="$RELEASE_SHA256" \
+ADX_EXECD_URL="$EXECD_URL" ADX_EXECD_SHA256="$EXECD_SHA256" \
+make build
+```
+
+The selected ADX release must implement E2B compatibility. Its Execd component
+must have been built with ADX's `ADX_ENVD_SOURCE` option and contain
+`adx-runtime-rootfs.img`, `envd-manifest.json` and `envd-LICENSE`, covered by
+the component manifest. The current default release pins do not provide this
+capability; this option requires explicit archive URL/checksum pairs. Standard
+ADX split-component archives use a GNU release target even though Execd itself
+is a static musl executable.
+
+AKernel verifies the archive and component hashes and architecture, then uses
+the ADX EROFS image unchanged as `akernel-runtime-rootfs.img`. It contains Execd,
+envd, bash and the dependencies assembled by ADX. AKernel does not compile envd
+or maintain another copy of its upstream pins. The Node build also checks that
+the platform release and runtime component identify the same commit, target
+and Execd bytes; mismatches fail the build. Provenance and the envd license are
+installed under `/opt/akernel/runtime/metadata/`, with the envd manifest at
+`envd/manifest.json`.
+
+Packaging alone does not enable E2B routes. Supply a reviewed deployment YAML
+through the existing `AKERNEL_ADX_CONFIG` entry point. Keep its current runtime
+paths and bootstrap entrypoint, and add these fields to the corresponding
+sections (merge them into the existing maps):
+
+```yaml
+runtime_profile:
+  env:
+    ADX_ENVD_PATH: /__adx/usr/local/bin/envd
+    ADX_ENVD_SHA256: REPLACE_WITH_ENVD_MANIFEST_SHA256_FIELD
+    ADX_ENVD_DEFAULT_USER: user
+    ADX_ENVD_DEFAULT_WORKDIR: /home/user
+service_overrides:
+  apiserver:
+    config:
+      e2b:
+        domain: sandbox.example.com
+        envdVersion: REPLACE_WITH_ENVD_MANIFEST_VERSION_FIELD
+        envdIngressSources: [REPLACE_WITH_EXACT_RELAY_SOURCE_IPV4]
+  ingress:
+    env:
+      ADX_DATA_PLANE_INGRESS_E2B_ENABLED: "true"
+      ADX_DATA_PLANE_INGRESS_PORT_HOST_DOMAIN: sandbox.example.com
+```
+
+This fragment applies to profile-based standalone deployments. Explicit-service
+deployments put the same API configuration and Ingress environment in their
+existing service objects; the Helm chart does not yet expose dedicated E2B
+values. Configure matching trusted profiles on API Server and workers. Select
+runsc, Firecracker or firecracker-pvm according to the ADX release's supported
+backends and the actual node capability. Firecracker `fromImage` uses OCI
+directory roots: enable `virtiofs_enabled = true` under
+`[plugin.runtime.firecracker]` in the dedicated worker's sandboxd TOML. The
+stock profile disables virtio-fs for its local EROFS runtime.
+E2B lifecycle requests also need their
+control-plane routes forwarded to API Server by Ingress; preserve the existing
+native routes and include `/sandboxes`, `/v2/sandboxes`, `/snapshots`, `/templates`,
+`/v2/templates` and `/v3/templates` as required by that release.
+
+Use ADX's E2B deployment instructions for the complete route allowlist, OCI
+capabilities, authentication, TLS/DNS and network isolation configuration.
+In gateway-authenticated mode envd has no guest token: restrict external and
+other-sandbox access to its port to the exact trusted Relay sources. This
+packaging option does not establish those network rules by itself. Use a
+dedicated matching worker profile and retain old runtime artifacts for existing
+instances and snapshots; building a new image does not migrate them.
+
+`make build-helper-test` checks target selection, rejection of missing or
+inconsistent artifacts, and byte-preserving assembly without compiling ADX or
+running a sandbox. A full image build and E2B/native SDK lifecycle tests against
+the resulting image remain separate acceptance steps.
+
 ## Package repositories
 
 Select mirrors for one invocation without changing host package-manager or Docker daemon configuration:
