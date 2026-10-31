@@ -86,10 +86,10 @@ adx:
     affinity: {}
     resources:
       requests:
-        cpu: 250m
+        cpu: "2"
         memory: 256Mi
       limits:
-        cpu: "1"
+        cpu: "4"
         memory: 1Gi
   ingressApi:
     nodeSelector: {}

@@ -32,6 +32,13 @@ class AdxPerformanceResourcesTest(unittest.TestCase):
         self.assertEqual(resources["requests"]["cpu"], "2")
         self.assertEqual(resources["limits"]["cpu"], "8")
 
+    def test_coordinator_can_run_four_publication_workers(self) -> None:
+        rendered = subprocess.run(["helm", "template", "akernel", str(CHART), "--namespace", "akernel"], check=True, capture_output=True, text=True).stdout
+        deployment = next(item for item in yaml.safe_load_all(rendered) if item and item.get("kind") == "Deployment" and item["metadata"]["name"] == "akernel-adx-coordinator")
+        resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+        self.assertEqual(resources["requests"]["cpu"], "2")
+        self.assertEqual(resources["limits"]["cpu"], "4")
+
 
 if __name__ == "__main__":
     unittest.main()
