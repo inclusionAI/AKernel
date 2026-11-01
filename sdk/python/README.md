@@ -76,8 +76,9 @@ Address behavior is deterministic:
   public sandbox URLs use HTTP/WS on that explicit port.
 - `AKERNEL_GATEWAY_ADDRESS` overrides only the port-forwarding and reverse
   tunnel data endpoint for nonstandard ports or TLS gateways. An override
-  without a scheme uses HTTP/WS. Exec and file transfer continue to use
-  `AKERNEL_SERVER_ADDRESS`.
+  without a scheme uses HTTP/WS. Scheme-qualified overrides without a port
+  use 443 for HTTPS/WSS and 80 for HTTP/WS; an explicit port is preserved.
+  Exec and file transfer continue to use `AKERNEL_SERVER_ADDRESS`.
 
 ### TLS certificate verification
 

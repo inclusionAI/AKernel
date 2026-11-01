@@ -706,6 +706,9 @@ entirely. Do not publish per-commit SHA tags or other historical image tags.
 The job checks the image contains runsc and excludes Kata, Firecracker,
 virtiofsd, and runc before starting standalone E2E.
 
+CI explicitly trusts the generated standalone public certificate through
+`SSL_CERT_FILE` and enables `AKERNEL_VERIFY_TLS=1` before SDK examples and
+integration tests. Keep HTTPS certificate and hostname validation enabled.
 CI runs examples with unbuffered Python output. Ordinary examples have a
 120-second limit; `dockerfile_launch.py` gets 600 seconds for its nine
 sections. Its core startup script uses the Ubuntu base image's shell and

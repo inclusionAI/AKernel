@@ -23,7 +23,8 @@ The public SDK accepts a compact ``AKERNEL_SERVER_ADDRESS`` value:
 
 ``AKERNEL_GATEWAY_ADDRESS`` remains an explicit override for standalone or
 custom network topologies.  When it is set without a scheme, it is treated as a
-plain HTTP/WebSocket gateway.
+plain HTTP/WebSocket gateway. Scheme-qualified gateway overrides use the
+standard 443 port for HTTPS/WSS and 80 for HTTP/WS unless a port is supplied.
 """
 
 from __future__ import annotations
@@ -124,9 +125,13 @@ def gateway_endpoint_from_env() -> Endpoint:
     """
     override = _gateway_override_raw()
     if override:
+        scheme = urlparse(override).scheme
+        default_port = (
+            DEFAULT_API_PORT if scheme in ("https", "wss") else DEFAULT_PUBLIC_PORT
+        )
         return _parse_endpoint(
             override,
-            default_port=DEFAULT_PUBLIC_PORT,
+            default_port=default_port,
             default_scheme="http",
         )
 
