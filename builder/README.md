@@ -15,12 +15,15 @@ make build
 ```
 
 The selected ADX release must implement E2B compatibility. Its Execd component
-must have been built with ADX's `ADX_ENVD_SOURCE` option and contain
-`adx-runtime-rootfs.img`, `envd-manifest.json` and `envd-LICENSE`, covered by
-the component manifest. The current default release pins do not provide this
-capability; this option requires explicit archive URL/checksum pairs. Standard
-ADX split-component archives use a GNU release target even though Execd itself
-is a static musl executable.
+must contain `adx-runtime-rootfs.img`, `envd-manifest.json` and `envd-LICENSE`,
+covered by the component manifest. ADX's split-component CI builds the pinned
+envd by default; standalone ADX source builds require `ADX_ENVD_SOURCE`.
+AKernel still requires explicit archive URL/checksum pairs when enabling E2B,
+including when selecting its default pinned build. Keep the default platform
+and Execd pins aligned with `src/agent-dx`; validate the published manifests
+and archive checksums before updating them. Standard ADX split-component
+archives use a GNU release target even though Execd itself is a static musl
+executable.
 
 AKernel verifies the archive and component hashes and architecture, then uses
 the ADX EROFS image unchanged as `akernel-runtime-rootfs.img`. It contains Execd,
