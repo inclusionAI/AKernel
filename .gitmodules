@@ -6,4 +6,4 @@
 	url = https://github.com/inclusionAI/distill-fs.git
 [submodule "src/agent-dx"]
 	path = src/agent-dx
-	url = https://github.com/WenYuLuo/agent-dx.git
+	url = https://github.com/openJiuwen-ai/agent-dx.git
