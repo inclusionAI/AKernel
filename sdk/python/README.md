@@ -624,9 +624,67 @@ Pause errors and unknown outcomes propagate; False means authoritatively paused.
 
 ### Timeouts and supported backend surface
 
-`create_timeout` on the constructor and factory/restore `timeout` are logical
-creation budgets, not maximum lifetimes. `schedule_timeout` bounds scheduling;
-`idle_timeout` measures inactivity. These meanings remain unchanged.
+`init_timeout` is available in this source revision. The published
+`akernel-sdk==0.2.0rc4` package does not expose it; install this revision from
+source or its locally built wheel until a subsequent release is published.
+The declared `adx-environment==0.1.0rc3` dependency already supports the option.
+
+All budgets use seconds. The constructor, fresh `Sandbox.create()`,
+`Sandbox.create(snapshot_id=...)` and compatible `Sandbox.from_snapshot()`
+accept `init_timeout=30`, an integer in 1..86400. Booleans are rejected.
+The constructor's `create_timeout` and factory/restore `timeout` have identical
+logical creation-budget semantics:
+
+- Omitted: derive `schedule_timeout + init_timeout + 30`.
+- Explicit: require at least that minimum, preserving the supplied value exactly.
+  Invalid combinations raise `ValueError` before allocating an environment;
+  fork validates before capturing its temporary snapshot. The 30-second reserve
+  follows the supported ADX create contract. AKernel prevents native automatic
+  budget expansion rather than silently changing an explicit caller limit.
+- Defaults stay scheduling 30, initialization 30, logical creation 90 seconds.
+  `ADX_ENVIRONMENT_CREATE_TIMEOUT` does not override the public SDK budget.
+
+```python
+# A 120-second initialization policy derives a 180-second create budget.
+with Sandbox(init_timeout=120, failover=True) as sandbox:
+    print(sandbox.commands.run("echo ready").stdout)
+# Sandbox(init_timeout=120, create_timeout=150) raises before allocation.
+```
+
+| Budget | Covered stages and limits |
+| --- | --- |
+| `schedule_timeout` | Central scheduling queue, where that path is used; default 30. |
+| `init_timeout` during fresh create / reusable-snapshot restore | Execd initialization and readiness after backend preparation, within the remaining total create deadline. Cold image/checkpoint preparation and runtime start also consume the logical creation budget. |
+| `init_timeout` during in-place reload / same-node failover | The retained server execution policy bounds the initialization attempt, including execution preparation, checkpoint materialization, runtime restore, Execd readiness and route activation. It does not bound prior teardown or all reconciliation/cleanup. |
+| `create_timeout` / factory `timeout` | Logical creation of a new environment, including admission, preparation, start and publication. Not a running lifetime or a wall-clock guarantee for the Python call or physical cleanup. |
+| Client observation / transport | Separate deadlines. Native create transport adds its communication margin; tunnel setup and client bootstrap have independent bounds. Native reload uses 300 seconds plus communication margin (default 30) per transport attempt, with the same operation identity on transport retries. |
+| `idle_timeout` | Inactivity before reclamation, not a maximum lifetime. |
+
+The stage coverage above describes the pinned backend packaged by this revision;
+initialization is not only Execd work on every lifecycle path. A larger
+initialization policy does not extend unrelated backend RPC, transport, task or
+command-wait deadlines. Configure cold-image total budgets separately.
+`reload()` does not accept per-call initialization or observation overrides.
+A `False` reload result is not proof that a server operation was canceled.
+
+Initialization policy persists on the server and is reused by manual reload and
+automatic failover, including after `connect()`. Named creation can reuse an
+existing environment and does not replace that policy. Reusable-snapshot
+restore creates a new environment with the requested policy (default 30), not
+a policy inferred from snapshot metadata.
+
+Enable DEBUG logging for `akernel_sdk._backends.adx` to see resolved request
+budgets. These diagnostics contain budget scalars and operation/identity fields,
+not tokens, environment variables, mounts, runtime configuration or request bodies.
+A reused/connected environment's actual policy cannot be queried by this SDK;
+reload diagnostics mark it as server-owned rather than reporting a local default
+as its effective policy. Creation errors retain server `failure`, `probe_failure`,
+request ID and operation ID when supplied; their reason/message identify the
+failing stage. Missing server context remains unknown. For reload returning
+False, inspect server lifecycle diagnostics for the environment ID; do not retry
+rollback or replay the business command to obtain diagnostics.
+The maintained `ak` CLI currently exposes inventory, exec and delete, without a
+create or restore command.
 
 This SDK change uses the released `adx-environment==0.1.0rc3` and existing
 cluster operations. It does not require a new backend or bundle rollout.
@@ -692,7 +750,7 @@ while pages.has_next:
 Restore inherits captured runtime and CPU/memory geometry rather than applying
 constructor defaults. It does not replay a Dockerfile, image ENTRYPOINT, CMD or
 working-directory creation. `cwd` only sets the command default. `idle_timeout`
-(default 300), `schedule_timeout` (30), `timeout` (schedule timeout + 60), `name`,
+(default 300), `schedule_timeout` (30), `init_timeout` (30), `timeout` (schedule timeout + init timeout + 30), `name`,
 `detached`, `failover`, `node_id`, `port_forwardings`, `mounts`, `reverse_tunnel`
 and `network_policy` configure the new environment/client. Rebind the local
 `HttpReverseTunnel` target explicitly; source client sockets/PTYs/Python handles
@@ -742,7 +800,7 @@ to delete the known-created clone and preserve the original error. Failed
 rollback errors remain in `cleanup_errors` for diagnosis and explicit retry.
 See [`examples/snapshots.py`](./examples/snapshots.py).
 
-`timeout` must be at least `schedule_timeout + 60` seconds; shorter budgets raise
+`timeout` must be at least `schedule_timeout + init_timeout + 30` seconds; shorter budgets raise
 `ValueError` before a create request. This prevents the pinned native SDK from
 silently increasing the supplied budget. It is the frontend's logical creation
 budget, not a wall-clock deadline for the entire Python call: transport margins,
@@ -797,7 +855,8 @@ known children even when one deletion fails, and preserves workload exceptions.
 | `count=1` | Integer 1..20; booleans are rejected. |
 | `idle_timeout=None` | Child idle timeout in seconds; omitted inherits the source's configured idle timeout. Zero disables idle expiry. |
 | `snapshot_timeout=300` | Capture operation deadline in seconds, 1..3600. |
-| `restore_timeout=None` | Logical creation budget per child in seconds; minimum/default is the source's schedule timeout + 60. Checked before capture. |
+| `restore_timeout=None` | Logical creation budget per child in seconds; minimum/default is the handle's schedule timeout + effective child init timeout + 30. Checked before capture. |
+| `init_timeout=None` | Child initialization budget, integer seconds 1..86400. Omission inherits this handle's creation configuration; an override applies only to children. Connected handles use 30 by default. Named reuse retains the handle's requested configuration for children; neither path queries or changes the existing server initialization policy. |
 
 Children inherit captured resources. Fork explicitly supplies the source
 client's last acknowledged network policy with each create request, including

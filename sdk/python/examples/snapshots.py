@@ -26,10 +26,11 @@ from akernel_sdk import Sandbox
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
+    parser.add_argument("--init-timeout", type=int, default=30)
     args = parser.parse_args()
     snapshot = None
     try:
-        with Sandbox(image=args.image) as source:
+        with Sandbox(image=args.image, init_timeout=args.init_timeout) as source:
             source.files.write("/tmp/snapshot-example", "saved")
             snapshot = source.create_snapshot(name="sdk-example")
             source.files.write("/tmp/snapshot-example", "changed")
@@ -42,7 +43,7 @@ def main() -> None:
                 )
             assert found
         # Sandbox.from_snapshot(snapshot) remains supported with identical options.
-        with Sandbox.create(snapshot) as restored:
+        with Sandbox.create(snapshot, init_timeout=args.init_timeout) as restored:
             assert restored.id != source.id
             assert restored.files.read("/tmp/snapshot-example") == "saved"
             print("Restored a new sandbox from", snapshot.snapshot_id)

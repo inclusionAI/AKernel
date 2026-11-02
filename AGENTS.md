@@ -490,8 +490,16 @@ through fork_snapshot_id for explicit reconciliation after close/by-ID deletion.
 Other cleanup errors remain visible and retryable through ForkCleanupError.
 Never treat an arbitrary conflict as accepted or deferred deletion. Idle timeout
 is not an absolute sandbox lifetime; snapshot/restore timeouts bound operations.
-Restore budgets below schedule_timeout + 60 fail before creating an environment
-or taking a fork snapshot. They are logical frontend budgets, not wall-clock
+Restore budgets below schedule_timeout + init_timeout + 30 fail before creating an environment
+or taking a fork snapshot. Keep init_timeout (integer 1..86400, default 30)
+threaded through constructor, fresh create, both snapshot restore entry points
+and fork. Omitted creation budgets derive scheduling + initialization + a
+30-second handoff reserve; explicit caller budgets must never be widened.
+Fork inherits the handle's configuration, with a child-only override; connected
+handles use a documented 30-second child default rather than claiming knowledge
+of the remote policy. Reload/failover reuse the persisted server policy and
+retain their existing results/identity; transport observation is separate.
+These are logical frontend budgets, not wall-clock
 deadlines for client bootstrap/cleanup. Preserve known IDs and cleanup_errors
 through constructor, route and facade failures, including BaseException during
 tunnel bootstrap. The pinned ADX restore does not inherit network policy:
