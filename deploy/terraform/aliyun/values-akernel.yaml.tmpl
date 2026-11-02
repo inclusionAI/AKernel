@@ -164,6 +164,11 @@ node:
         max_instance_num=1000
         enable_cache_in_stock_mode=true
 
+        [plugin.resource.memory_limit]
+        enabled = false
+        # Set a deployment-specific total reserve before enabling.
+        # total_reserve = "22GiB"
+
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
         # The Aliyun module mounts a dedicated filesystem at /home/akernel.
