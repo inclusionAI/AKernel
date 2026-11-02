@@ -114,7 +114,7 @@ class PublicForkTest(unittest.TestCase):
         (result,) = self.source.fork(
             idle_timeout=0, snapshot_timeout=45, restore_timeout=70
         )
-        self.session.fork.assert_called_once_with(1, 0, 45, 70)
+        self.session.fork.assert_called_once_with(1, 0, 45, 70, init_timeout=None)
         result.kill()
 
     def test_snapshot_cleanup_failure_keeps_child_handles_and_original_error(self):

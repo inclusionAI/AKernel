@@ -84,6 +84,7 @@ class SandboxSpec:
     network_policy: NetworkPolicy | None
     extra_config: Mapping[str, object]
     create_timeout: int | None = None
+    init_timeout: int = 30
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,7 @@ class SnapshotRestoreSpec:
     xpu: str | None = None
     storage_mb: int | None = None
     inherit_entrypoint: bool = False
+    init_timeout: int = 30
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,7 @@ class SandboxConnectSpec:
     storage_mb: int | None = None
     inherit_entrypoint: bool = False
     failover: bool = False
+    init_timeout: int = 30
 
 
 @dataclass(frozen=True)
@@ -242,6 +245,8 @@ class BackendSession(Protocol):
         idle_timeout: int | None,
         snapshot_timeout: int,
         restore_timeout: int | None,
+        *,
+        init_timeout: int | None = None,
     ) -> ForkOutcome: ...
 
     def reload(self) -> bool: ...

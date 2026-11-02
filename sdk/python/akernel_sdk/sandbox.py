@@ -44,6 +44,7 @@ from ._sandboxes import SandboxPaginator, SandboxQuery
 from ._sandboxes import sandbox_id as _sandbox_id
 from ._snapshots import SnapshotPaginator, optional_name
 from ._snapshots import snapshot_id as _snapshot_id
+from ._timeouts import resolve_create_timeout, validate_init_timeout
 from .commands import CommandHandle, Commands
 from .filesystem import Filesystem
 from .pty import Pty
@@ -199,6 +200,7 @@ class Sandbox:
         dockerfile: DockerfileLaunch | None = None,
         extra_config: Mapping[str, object] | None = None,
         create_timeout: int | None = None,
+        init_timeout: int = 30,
     ) -> None:
         """Create and wait for a sandbox to become ready.
 
@@ -214,7 +216,12 @@ class Sandbox:
             idle_timeout: Seconds before an idle sandbox is reclaimed.
             schedule_timeout: Positive scheduling timeout in seconds.
             create_timeout: Optional total logical creation budget; minimum
-                schedule_timeout + 60 seconds. Not a running lifetime.
+                schedule_timeout + init_timeout + 30 seconds. Omission derives
+                that minimum. Not a running lifetime or cleanup deadline.
+            init_timeout: Native execution initialization budget, in integer
+                seconds (1..86400, default 30). Retained by the server for
+                reload/failover. Independent of client transport deadlines;
+                see the SDK guide for lifecycle-specific stage coverage.
             env: Environment variables applied to the sandbox process.
             name: Optional stable name for a detached sandbox.
             cwd: Default working directory for subsequent ``commands.run()``
@@ -272,13 +279,9 @@ class Sandbox:
             RuntimeError: The backend cannot create or initialize the sandbox.
         """
 
-        if create_timeout is not None:
-            _validate_integer("create_timeout", create_timeout, minimum=1)
-            _validate_integer("schedule_timeout", schedule_timeout, minimum=1)
-            if create_timeout < schedule_timeout + 60:
-                raise ValueError(
-                    "create_timeout must be at least schedule_timeout + 60"
-                )
+        create_timeout = resolve_create_timeout(
+            schedule_timeout, init_timeout, create_timeout
+        )
         if image is not None and (not isinstance(image, str) or not image.strip()):
             raise ValueError("image must be a non-empty string")
         if rootfs is not None and not isinstance(rootfs, S3Config):
@@ -411,6 +414,7 @@ class Sandbox:
             ),
             extra_config=normalized_extra_config,
             create_timeout=create_timeout,
+            init_timeout=init_timeout,
         )
         self._session = self._backend().create(spec)
         try:
@@ -476,6 +480,7 @@ class Sandbox:
         idle_timeout: int | None = None,
         snapshot_timeout: int = 300,
         restore_timeout: int | None = None,
+        init_timeout: int | None = None,
     ) -> list[Sandbox | Exception]:
         """Capture once and derive ``count`` independent running sandboxes.
 
@@ -489,8 +494,13 @@ class Sandbox:
 
         ``count`` is 1..20. All timeouts use seconds: ``snapshot_timeout`` bounds
         capture (1..3600), ``restore_timeout`` is each child's logical create
-        budget (minimum/default source schedule_timeout + 60), and
+        budget (minimum/default schedule_timeout + init_timeout + 30), and
         ``idle_timeout`` overrides the source idle timeout for children.
+        ``init_timeout`` overrides child initialization only; omission inherits
+        this handle's creation configuration. A connected handle uses 30 seconds
+        by default; it cannot query the original server policy. Named reuse also
+        retains this handle's requested configuration, without changing the
+        existing environment's server policy.
         Invalid create budgets fail before capture. Transport margins, tunnel
         setup and cleanup add elapsed time; this is not an overall wall-clock
         deadline or an E2B-style absolute lifetime.
@@ -522,11 +532,14 @@ class Sandbox:
             _validate_integer("idle_timeout", idle_timeout, minimum=0)
         if restore_timeout is not None:
             _validate_integer("restore_timeout", restore_timeout, minimum=1)
+        if init_timeout is not None:
+            validate_init_timeout(init_timeout)
         if self._closed or self._session is None:
             raise RuntimeError("cannot fork a closed sandbox")
         try:
             outcome = self._session.fork(
-                count, idle_timeout, snapshot_timeout, restore_timeout
+                count, idle_timeout, snapshot_timeout, restore_timeout,
+                init_timeout=init_timeout,
             )
         except BaseException as failure:
             pending = getattr(failure, "_fork_pending_sessions", None)
@@ -753,6 +766,7 @@ class Sandbox:
         idle_timeout: int = 300,
         schedule_timeout: int = 30,
         timeout: int | None = None,
+        init_timeout: int = 30,
         name: str | None = None,
         cwd: str | None = None,
         port_forwardings: Sequence[int] | None = None,
@@ -779,6 +793,9 @@ class Sandbox:
         With snapshot_id, this delegates to the compatible from_snapshot().
         timeout retains its existing logical creation-budget meaning; it does
         not set a maximum running lifetime.
+        init_timeout is the initialization budget in seconds (1..86400, default
+        30). An omitted timeout is schedule_timeout + init_timeout + 30;
+        a smaller explicit timeout fails before allocation.
         Template aliases and foreign platform snapshot IDs are not resolved.
         """
         if snapshot_id is None:
@@ -793,6 +810,7 @@ class Sandbox:
                 idle_timeout=idle_timeout,
                 schedule_timeout=schedule_timeout,
                 create_timeout=timeout,
+                init_timeout=init_timeout,
                 name=name,
                 cwd=cwd,
                 port_forwardings=port_forwardings,
@@ -831,6 +849,7 @@ class Sandbox:
             idle_timeout=idle_timeout,
             schedule_timeout=schedule_timeout,
             timeout=timeout,
+            init_timeout=init_timeout,
             name=name,
             cwd=cwd,
             port_forwardings=port_forwardings,
@@ -850,6 +869,7 @@ class Sandbox:
         idle_timeout: int = 300,
         schedule_timeout: int = 30,
         timeout: int | None = None,
+        init_timeout: int = 30,
         name: str | None = None,
         cwd: str | None = None,
         port_forwardings: Sequence[int] | None = None,
@@ -871,7 +891,10 @@ class Sandbox:
         ``cwd`` sets a command default without creating directories. Supply
         ``network_policy`` explicitly to restore restrictions: the pinned ADX
         backend uses its default if omitted or empty. ``timeout`` is the logical
-        create budget, at least schedule_timeout + 60 seconds (also the default).
+        create budget, at least schedule_timeout + init_timeout + 30 seconds
+        (also the default). ``init_timeout`` is integer seconds (1..86400,
+        default 30) and becomes the new environment's reload/failover policy;
+        it is not inherited from snapshot metadata.
         Shorter budgets raise ValueError before creation; transport, tunnel and
         cleanup overhead can add elapsed time.
         The SDK never starts a second logical restore to hide a failed one;
@@ -882,9 +905,9 @@ class Sandbox:
         name = optional_name(name)
         _validate_integer("idle_timeout", idle_timeout, minimum=0)
         _validate_integer("schedule_timeout", schedule_timeout, minimum=1)
-        if timeout is None:
-            timeout = schedule_timeout + 60
-        _validate_integer("timeout", timeout, minimum=1)
+        timeout = resolve_create_timeout(
+            schedule_timeout, init_timeout, timeout, name="timeout"
+        )
         for key, value in (("detached", detached), ("failover", failover)):
             if not isinstance(value, bool):
                 raise TypeError(f"{key} must be a boolean")
@@ -911,6 +934,7 @@ class Sandbox:
             idle_timeout=idle_timeout,
             schedule_timeout=schedule_timeout,
             timeout=timeout,
+            init_timeout=init_timeout,
             name=name,
             command_cwd=cwd,
             port_forwardings=tuple(ports),
@@ -1090,6 +1114,10 @@ class Sandbox:
         facades remain valid. ``False`` means that the rollback was not
         completed, including when no usable checkpoint exists, the sandbox has
         already been closed, or the backend reports an operational failure.
+        The server reuses its persisted init_timeout policy, including after
+        connect or named reuse. This call cannot override it. The pinned native
+        transport separately waits 300 seconds plus communication margin per
+        attempt; False does not prove that a timed-out server operation stopped.
         """
 
         if self._closed or self._session is None:
