@@ -224,7 +224,7 @@ class BootstrapCancellationTest(unittest.TestCase):
         def capture(native, _body):
             native._newly_created = True
             natives.append(native)
-            return {"environmentId": "native-constructor-child"}
+            return {"environmentId": "native-constructor-child", "newlyCreated": True}
 
         with (
             patch.object(adx._OwnedSandbox, "_create", new=capture),
@@ -252,7 +252,7 @@ class BootstrapCancellationTest(unittest.TestCase):
         def capture(native, _body):
             native._newly_created = True
             natives.append(native)
-            return {"environmentId": "native-constructor-child"}
+            return {"environmentId": "native-constructor-child", "newlyCreated": True}
 
         with (
             patch.object(adx._OwnedSandbox, "_create", new=capture),

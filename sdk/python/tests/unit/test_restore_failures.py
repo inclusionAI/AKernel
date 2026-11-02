@@ -63,7 +63,7 @@ class RestoreFailureTest(unittest.TestCase):
         def capture_create(native, _body):
             self.native = native
             native._newly_created = True
-            return {"environmentId": "known-child"}
+            return {"environmentId": "known-child", "newlyCreated": True}
 
         self.capture_create = capture_create
 

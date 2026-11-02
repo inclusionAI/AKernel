@@ -265,6 +265,14 @@ jobs:
             AKERNEL_DATA_BIND=127.0.0.1 \
             ./deploy/standalone/start.sh
 
+      - name: Trust the standalone HTTPS certificate
+        run: |
+          docker cp akernel-node:/home/akernel/adx/tls/ingress-public.pem \
+            "${RUNNER_TEMP}/akernel-public.pem"
+          test -s "${RUNNER_TEMP}/akernel-public.pem"
+          echo "SSL_CERT_FILE=${RUNNER_TEMP}/akernel-public.pem" >> "${GITHUB_ENV}"
+          echo "AKERNEL_VERIFY_TLS=1" >> "${GITHUB_ENV}"
+
       - name: Verify PID 1 detects its container
         run: |
           docker exec akernel-node bash -euo pipefail -c '

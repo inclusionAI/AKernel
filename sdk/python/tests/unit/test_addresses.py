@@ -87,6 +87,28 @@ class AddressConfigTest(unittest.TestCase):
                 ("https", "gw.example.com", 9443, True),
             )
 
+    def test_gateway_override_uses_scheme_default_port(self):
+        cases = (
+            ("https://gw.example.com", "https", 443, True),
+            ("wss://gw.example.com", "wss", 443, True),
+            ("http://gw.example.com", "http", 80, False),
+            ("ws://gw.example.com", "ws", 80, False),
+            ("gw.example.com", "http", 80, False),
+            ("https://gw.example.com:80", "https", 80, True),
+        )
+        for address, scheme, port, tls in cases:
+            with self.subTest(address=address), patch.dict(
+                os.environ,
+                {"AKERNEL_GATEWAY_ADDRESS": address},
+                clear=True,
+            ):
+                endpoint = gateway_endpoint_from_env()
+                self.assertEqual(
+                    endpoint_tuple(endpoint), (scheme, "gw.example.com", port, tls)
+                )
+                if address == "https://gw.example.com":
+                    self.assertEqual(endpoint.base_url(), address)
+
     def test_missing_server_address_is_clear(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "AKERNEL_SERVER_ADDRESS"):

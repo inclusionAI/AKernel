@@ -21,6 +21,7 @@ adx_release_url="${ADX_RELEASE_URL:-}"
 adx_release_sha256="${ADX_RELEASE_SHA256:-}"
 adx_execd_url="${ADX_EXECD_URL:-}"
 adx_execd_sha256="${ADX_EXECD_SHA256:-}"
+enable_e2b="${AKERNEL_ENABLE_E2B-false}"
 otelcol_contrib_url="${OTELCOL_CONTRIB_URL:-}"
 otelcol_contrib_sha256="${OTELCOL_CONTRIB_SHA256:-}"
 # Download routing is caller-local, independent of cloud profiles.
@@ -312,6 +313,16 @@ validate_override() {
 }
 validate_override ADX_RELEASE "${adx_release_url}" "${adx_release_sha256}"
 validate_override ADX_EXECD "${adx_execd_url}" "${adx_execd_sha256}"
+case "${enable_e2b}" in
+  false) runtime_target=runtime-execd ;;
+  true)
+    runtime_target=runtime-e2b
+    if [[ -z "${adx_release_url}" || -z "${adx_execd_url}" ]]; then
+      die "AKERNEL_ENABLE_E2B=true requires matching ADX_RELEASE and envd-enabled ADX_EXECD URL/checksum pairs"
+    fi
+    ;;
+  *) die "AKERNEL_ENABLE_E2B must be true or false" ;;
+esac
 if [[ "${target_arch}" == arm64 && ( -z "${adx_release_url}" || -z "${adx_execd_url}" ) ]]; then
   die "linux/arm64 requires architecture-matched ADX_RELEASE and ADX_EXECD URL/checksum pairs"
 fi
@@ -355,7 +366,7 @@ require_cmd docker
 runtime_build_args=(
   --platform "linux/${target_arch}"
   -f builder/runtime.Dockerfile
-  --target runtime-execd
+  --target "${runtime_target}"
 )
 if [[ ${#mirror_build_args[@]} -gt 0 ]]; then
   runtime_build_args+=("${mirror_build_args[@]}")
@@ -384,7 +395,7 @@ if [[ "${firecracker_kernel_profile}" = pvm && "${AKERNEL_ENABLE_FIRECRACKER}" =
   python3 "${ROOT}/src/sandboxd/third_party/prepare-firecracker-pvm.py" "${candidate_args[@]}"
 fi
 
-info "building ${runtime_image} with the EXECD runtime profile"
+info "building ${runtime_image} with target ${runtime_target}"
 docker build \
   "${runtime_build_args[@]}" \
   -t "${runtime_image}" \

@@ -150,7 +150,14 @@ The build creates only the selected image reference; it does not add a second
 `akernel-all-in-one` alias. `make push` pushes that selected reference directly.
 
 The build helper performs two Docker builds. `builder/runtime.Dockerfile`
-creates the EXECD-only `akernel-runtime-rootfs.img` from the pinned ADX release.
+creates the EXECD-only `akernel-runtime-rootfs.img` from the pinned ADX release
+by default. `AKERNEL_ENABLE_E2B=true` instead reuses an envd-enabled ADX Execd
+component's runtime image, manifest and license. It requires explicit matching
+ADX platform/Execd archive URL/checksum pairs. Keep the default archive pins
+aligned with the `src/agent-dx` gitlink and verify their published manifests.
+Keep commit, architecture and Execd digest checks, and leave E2B activation to
+explicit deployment configuration. See `builder/README.md` for the build and
+configuration boundary.
 `builder/node.Dockerfile` then compiles the node components and produces the
 AKernel all-in-one image using that runtime image. The actor-based Python
 runtime is not a build input.
@@ -699,6 +706,9 @@ entirely. Do not publish per-commit SHA tags or other historical image tags.
 The job checks the image contains runsc and excludes Kata, Firecracker,
 virtiofsd, and runc before starting standalone E2E.
 
+CI explicitly trusts the generated standalone public certificate through
+`SSL_CERT_FILE` and enables `AKERNEL_VERIFY_TLS=1` before SDK examples and
+integration tests. Keep HTTPS certificate and hostname validation enabled.
 CI runs examples with unbuffered Python output. Ordinary examples have a
 120-second limit; `dockerfile_launch.py` gets 600 seconds for its nine
 sections. Its core startup script uses the Ubuntu base image's shell and
@@ -783,6 +793,9 @@ python deploy/terraform/test_adx_contract.py -v
 ADX directly terminates HTTPS control/API/PTY on its 8443 listener and exposes
 HTTP sandbox traffic on 8080. Public Services map these to configurable external
 ports (443/80 by default). Preserve both ports and the existing SDK variables.
+Standalone `sdk.env` selects the HTTPS control listener for SDK gateway URLs,
+including custom ports: private published-port requests carry credentials,
+which the plaintext data listener rejects.
 Validate real TLS authentication, PTY and HTTP port access with the
 `direct-ingress` standalone E2E group; PR CI discovers this group alongside the
 other standalone tests. Keep ADX public certificates and remove redundant

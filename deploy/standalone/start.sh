@@ -723,12 +723,8 @@ write_sdk_env() {
         mkdir -p "${DATA_DIR}"
         {
             printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${sdk_address}"
-            if [[ "${AKERNEL_DATA_PORT}" != 80 || "${AKERNEL_CONTROL_PORT}" != 443 ]]; then
-                printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' \
-                    "http://${AKERNEL_ENDPOINT_HOST}:${AKERNEL_DATA_PORT}"
-            else
-                printf 'unset AKERNEL_GATEWAY_ADDRESS\n'
-            fi
+            # Private port forwarding carries credentials and must use TLS.
+            printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' "https://${sdk_address}"
         } > "${DATA_DIR}/sdk.env"
         chmod 600 "${DATA_DIR}/sdk.env"
     )
@@ -760,9 +756,7 @@ main() {
         sdk_address+=":${AKERNEL_CONTROL_PORT}"
     fi
     log_info "Set AKERNEL_SERVER_ADDRESS=${sdk_address}"
-    if [[ "${AKERNEL_DATA_PORT}" != 80 || "${AKERNEL_CONTROL_PORT}" != 443 ]]; then
-        log_info "Set AKERNEL_GATEWAY_ADDRESS=${DATA_URL}"
-    fi
+    log_info "Set AKERNEL_GATEWAY_ADDRESS=${CONTROL_URL}"
     log_info "Set AKERNEL_TOKEN=\$(cat ${TOKEN_FILE})"
 }
 
