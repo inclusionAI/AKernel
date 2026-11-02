@@ -68,7 +68,8 @@ payloads.
 ADX platform and Execd binaries come from the release archives pinned in the
 Dockerfiles. Archive manifests identify the packaged binaries;
 `src/agent-dx/` is a source reference.
-The internal adapter uses `adx-environment==0.1.0rc3` and
+The internal adapter uses the ADX dependency declared in
+[`sdk/python/pyproject.toml`](./sdk/python/pyproject.toml) and
 `/api/environment/v1`, while AKernel retains its public `Sandbox` API.
 Keep source installation, CI and publication dependency resolution through
 the configured package index.
@@ -497,8 +498,16 @@ through fork_snapshot_id for explicit reconciliation after close/by-ID deletion.
 Other cleanup errors remain visible and retryable through ForkCleanupError.
 Never treat an arbitrary conflict as accepted or deferred deletion. Idle timeout
 is not an absolute sandbox lifetime; snapshot/restore timeouts bound operations.
-Restore budgets below schedule_timeout + 60 fail before creating an environment
-or taking a fork snapshot. They are logical frontend budgets, not wall-clock
+Restore budgets below schedule_timeout + init_timeout + 30 fail before creating an environment
+or taking a fork snapshot. Keep init_timeout (integer 1..86400, default 30)
+threaded through constructor, fresh create, both snapshot restore entry points
+and fork. Omitted creation budgets derive scheduling + initialization + a
+30-second handoff reserve; explicit caller budgets must never be widened.
+Fork inherits the handle's configuration, with a child-only override; connected
+handles use a documented 30-second child default rather than claiming knowledge
+of the remote policy. Reload/failover reuse the persisted server policy and
+retain their existing results/identity; transport observation is separate.
+These are logical frontend budgets, not wall-clock
 deadlines for client bootstrap/cleanup. Preserve known IDs and cleanup_errors
 through constructor, route and facade failures, including BaseException during
 tunnel bootstrap. The pinned ADX restore does not inherit network policy:
@@ -864,6 +873,11 @@ SDK control-plane access.
   `akernel-sdk` sandbox workflows.
 - Prefer linking to `sdk/python/README.md` for detailed SDK usage instead of
   copying long examples into other docs.
+- Keep API guides scoped to their source revision or release tag. Put
+  version-specific feature availability and release history in release notes,
+  keep dependency pins in package metadata, and record actual tested versions
+  and artifact digests in qualification evidence. Avoid temporary publication
+  status or repeated version literals in API and qualification instructions.
 - Do not reintroduce obsolete top-level examples or tests. Maintained SDK
   examples and tests live under `sdk/python/`.
 - When code changes alter source layout, public APIs, build or deployment

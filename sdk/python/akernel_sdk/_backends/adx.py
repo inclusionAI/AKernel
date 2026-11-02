@@ -32,6 +32,7 @@ from adx_environment.tunnel_client import TunnelClient
 
 from .._fork import ForkCleanupError, retain_fork_failure
 from .._sandboxes import SandboxQuery
+from .._timeouts import resolve_create_timeout
 from ..types import (
     CommandInfo,
     CommandResult,
@@ -72,9 +73,6 @@ from .errors import (
 
 _NAMESPACE = "default"
 _DEFAULT_LISTEN_PORT = 8766
-# Pinned ADX reserves 30s for initialization and 30s for create handoff. Below
-# this reserve it either rejects the budget or silently increases it.
-_CREATE_RESERVE_SECONDS = 60
 logger = logging.getLogger(__name__)
 
 
@@ -131,13 +129,14 @@ def _unbind_tunnel(sandbox: Any) -> None:
         sandbox._tunnel_client = None
 
 
-def _validate_restore_timeout(schedule_timeout: int, timeout: int) -> None:
-    minimum = schedule_timeout + _CREATE_RESERVE_SECONDS
-    if timeout < minimum:
-        raise ValueError(
-            "restore timeout must be at least schedule_timeout + 60 seconds "
-            f"({minimum} seconds for this source)"
-        )
+def _log_creation_budgets(
+    operation: str, spec: SandboxSpec | SnapshotRestoreSpec, timeout: int
+) -> None:
+    logger.debug(
+        "sandbox lifecycle budgets operation=%s schedule_timeout=%s "
+        "init_timeout=%s create_timeout=%s idle_timeout=%s policy_source=request",
+        operation, spec.schedule_timeout, spec.init_timeout, timeout, spec.idle_timeout,
+    )
 
 
 @dataclass(frozen=True)
@@ -635,6 +634,7 @@ class _Session:
             not isinstance(spec, SandboxConnectSpec)
             and getattr(sandbox, "newly_created", False) is True
         )
+        self._initialization_policy_known = self._network_policy_known
         self._fork_snapshot: _ForkSnapshotLease | None = None
 
     @classmethod
@@ -723,6 +723,8 @@ class _Session:
         idle_timeout: int | None,
         snapshot_timeout: int,
         restore_timeout: int | None,
+        *,
+        init_timeout: int | None = None,
     ) -> ForkOutcome:
         if self._terminated or self._closed:
             raise BackendOperationError("fork failed: sandbox is closed")
@@ -733,12 +735,13 @@ class _Session:
                 outcome="not_started",
                 environment_id=self.id,
             )
-        timeout = (
-            self._spec.schedule_timeout + _CREATE_RESERVE_SECONDS
-            if restore_timeout is None
-            else restore_timeout
+        child_init_timeout = (
+            self._spec.init_timeout if init_timeout is None else init_timeout
         )
-        _validate_restore_timeout(self._spec.schedule_timeout, timeout)
+        timeout = resolve_create_timeout(
+            self._spec.schedule_timeout, child_init_timeout, restore_timeout,
+            name="restore_timeout",
+        )
         # The pinned ADX API has snapshot/create/delete primitives, not a batch
         # fork route. Capture once and keep the snapshot until all creates settle.
         snapshot = self.create_snapshot(None, snapshot_timeout)
@@ -752,6 +755,7 @@ class _Session:
                 ),
                 schedule_timeout=self._spec.schedule_timeout,
                 timeout=timeout,
+                init_timeout=child_init_timeout,
                 name=None,
                 command_cwd=self._spec.command_cwd,
                 port_forwardings=self._spec.port_forwardings,
@@ -855,7 +859,19 @@ class _Session:
                 "sandbox reload. Upgrade it to a version with failover support."
             )
         try:
+            logger.debug(
+                "reload sandbox environment_id=%s init_timeout=%s "
+                "policy_source=%s transport_timeout=300+communication_margin",
+                self.id,
+                self._spec.init_timeout if self._initialization_policy_known else None,
+                "confirmed_creation" if self._initialization_policy_known else "server",
+            )
             if not reload_sandbox():
+                logger.warning(
+                    "sandbox reload not confirmed environment_id=%s; "
+                    "inspect environment failure and server lifecycle diagnostics",
+                    self.id,
+                )
                 return False
             # The lifecycle commit can precede Edge applying the new route.
             # Probe read-only data traffic; never repeat the rollback itself.
@@ -1312,6 +1328,10 @@ class AdxBackend:
 
     def create(self, spec: SandboxSpec) -> BackendSession:
         self._validate(spec)
+        create_timeout = resolve_create_timeout(
+            spec.schedule_timeout, spec.init_timeout, spec.create_timeout
+        )
+        _log_creation_budgets("create", spec, create_timeout)
         create_started = time.monotonic()
         rootfs = None
         if spec.rootfs is not None:
@@ -1326,7 +1346,6 @@ class AdxBackend:
         if spec.network_policy is not None:
             network = _native_network_policy(spec.network_policy)
         mounts = [_native_mount(mount) for mount in spec.mounts]
-        create_timeout = spec.create_timeout or spec.schedule_timeout + 60
         create_args = dict(
             image=spec.image,
             rootfs=rootfs,
@@ -1337,6 +1356,7 @@ class AdxBackend:
             mem_limit=spec.mem_limit,
             idle_timeout=spec.idle_timeout,
             schedule_timeout=spec.schedule_timeout,
+            init_timeout=spec.init_timeout,
             env=dict(spec.env),
             name=spec.name,
             cwd=spec.command_cwd,
@@ -1416,7 +1436,10 @@ class AdxBackend:
 
     @staticmethod
     def _restore_snapshot(spec: SnapshotRestoreSpec, connection: Any) -> BackendSession:
-        _validate_restore_timeout(spec.schedule_timeout, spec.timeout)
+        resolve_create_timeout(
+            spec.schedule_timeout, spec.init_timeout, spec.timeout, name="timeout"
+        )
+        _log_creation_budgets("restore", spec, spec.timeout)
         tunnel = spec.reverse_tunnel
         if tunnel is not None and tunnel.reverse_port != tunnel.listen_port - 1:
             raise UnsupportedBackendFeatureError(
@@ -1428,6 +1451,7 @@ class AdxBackend:
                 spec.snapshot_id,
                 idle_timeout=spec.idle_timeout,
                 schedule_timeout=spec.schedule_timeout,
+                init_timeout=spec.init_timeout,
                 create_timeout=spec.timeout,
                 name=spec.name,
                 cwd=spec.command_cwd,
