@@ -68,7 +68,8 @@ payloads.
 ADX platform and Execd binaries come from the release archives pinned in the
 Dockerfiles. Archive manifests identify the packaged binaries;
 `src/agent-dx/` is a source reference.
-The internal adapter uses `adx-environment==0.1.0rc3` and
+The internal adapter uses the ADX dependency declared in
+[`sdk/python/pyproject.toml`](./sdk/python/pyproject.toml) and
 `/api/environment/v1`, while AKernel retains its public `Sandbox` API.
 Keep source installation, CI and publication dependency resolution through
 the configured package index.
@@ -859,6 +860,11 @@ SDK control-plane access.
   `akernel-sdk` sandbox workflows.
 - Prefer linking to `sdk/python/README.md` for detailed SDK usage instead of
   copying long examples into other docs.
+- Keep API guides scoped to their source revision or release tag. Put
+  version-specific feature availability and release history in release notes,
+  keep dependency pins in package metadata, and record actual tested versions
+  and artifact digests in qualification evidence. Avoid temporary publication
+  status or repeated version literals in API and qualification instructions.
 - Do not reintroduce obsolete top-level examples or tests. Maintained SDK
   examples and tests live under `sdk/python/`.
 - When code changes alter source layout, public APIs, build or deployment

@@ -1,11 +1,21 @@
 # Initialization timeout qualification
 
 Run this opt-in qualification on an empty, task-owned Linux runsc standalone,
-using a separately installed candidate SDK wheel with `init_timeout` support.
-Published `akernel-sdk==0.2.0rc4` lacks this API. This probe does not install the
-SDK or add the checkout to Python's import path. Record the source SHA, wheel
-SHA-256, native dependency version and node image ID with the results; the
-candidate retains source version metadata and is not a new published release.
+using a separately installed SDK wheel with `init_timeout` support. This probe
+does not install the SDK or add the checkout to Python's import path. Record
+the SDK version, wheel SHA-256, native dependency version and node image ID with
+the results. For source builds, also record the exact source commit: package
+version metadata alone may not identify the implementation being qualified.
+
+Verify the installed SDK exposes the required option before allocating resources:
+
+```python
+import inspect
+from akernel_sdk import Sandbox
+
+for api in (Sandbox, Sandbox.create, Sandbox.from_snapshot, Sandbox.fork):
+    assert "init_timeout" in inspect.signature(api).parameters, api.__qualname__
+```
 
 Prepare the node with the [standalone guide](../../standalone/README.md).
 Use an exclusive persistent data directory and loopback control/data ports.
@@ -83,7 +93,7 @@ Retain failed summaries/process output and inspect the node before teardown.
 The summary contains IDs, timings, version/budget and failure context; it never
 writes the token or full Environment specification.
 
-This qualifies the installed candidate and recorded runtime bundle. It does
+This qualifies the installed SDK artifact and recorded runtime bundle. It does
 not establish cross-node failover, a universal 600-second default, arbitrary
 workload timing, released-package availability, or a caller-side reload deadline.
 

@@ -32,6 +32,11 @@ PTYs, port forwarding, and reverse tunnels.
 
 AKernel SDK requires Python 3.10 or newer.
 
+This guide describes the SDK at the selected source revision or release tag.
+For package installations, read the guide at the corresponding release tag and
+consult the [release notes](https://github.com/inclusionAI/AKernel/releases) for
+version-specific feature availability and changes.
+
 Install the stable SDK from PyPI:
 
 ```bash
@@ -45,14 +50,17 @@ python -m pip install --pre akernel-sdk
 ```
 
 Choose an SDK version compatible with the deployed backend and pin its exact
-published version for reproducible installations. For an unpublished source
-revision, install from the repository root:
+published version for reproducible installations. To install from source, pin
+the tested commit and run from the repository root:
 
 ```bash
 python -m pip install ./sdk/python
 ```
 
-The SDK's ADX dependency is declared in `pyproject.toml`.
+For source builds, record the commit and artifact digest as well as the package
+version; version metadata alone may not identify unpublished source changes.
+
+The SDK's ADX dependency is declared in [pyproject.toml](./pyproject.toml).
 The ADX adapter translates the public AKernel `Sandbox` API
 to `adx_environment.Environment`. Deploy a matching ADX release exposing
 `/api/environment/v1` for lifecycle, resources and command subscriptions.
@@ -559,10 +567,8 @@ public gateway.
 
 ## Lifecycle compatibility
 
-These source APIs follow E2B's Python naming while preserving AKernel's existing
+These APIs follow E2B's Python naming while preserving AKernel's existing
 constructor, ID, detached cleanup, command-result and creation-budget contracts.
-They are not present in an older published wheel merely because its package
-version matches this checkout. Pin a tested source revision when installing.
 
 ```python
 from akernel_sdk import Client, SandboxQuery, SandboxState
@@ -624,11 +630,6 @@ Pause errors and unknown outcomes propagate; False means authoritatively paused.
 
 ### Timeouts and supported backend surface
 
-`init_timeout` is available in this source revision. The published
-`akernel-sdk==0.2.0rc4` package does not expose it; install this revision from
-source or its locally built wheel until a subsequent release is published.
-The declared `adx-environment==0.1.0rc3` dependency already supports the option.
-
 All budgets use seconds. The constructor, fresh `Sandbox.create()`,
 `Sandbox.create(snapshot_id=...)` and compatible `Sandbox.from_snapshot()`
 accept `init_timeout=30`, an integer in 1..86400. Booleans are rejected.
@@ -686,18 +687,17 @@ rollback or replay the business command to obtain diagnostics.
 The maintained `ak` CLI currently exposes inventory, exec and delete, without a
 create or restore command.
 
-This SDK change uses the released `adx-environment==0.1.0rc3` and existing
-cluster operations. It does not require a new backend or bundle rollout.
+Timeout configuration uses the Environment lifecycle operations supported by
+the declared ADX dependency. The deployed backend must support the documented
+creation and recovery semantics.
 Custom user metadata and filtering, a running-lifetime deadline/set_timeout,
 live command-output callbacks, and per-command user selection are outside this
-API change. They require separately reviewed backend capabilities; the SDK does
-not emulate them with scheduler labels, idle timers or output replay.
+public SDK surface. They require separately reviewed backend capabilities; the
+SDK does not emulate them with scheduler labels, idle timers or output replay.
 
 ## Reusable snapshots
 
-These APIs require `akernel-sdk>=0.2.0rc4`; `0.2.0rc3` and earlier wheels do
-not contain them. Install a compatible release candidate with `--pre` or install
-this revision from source. The cluster/runtime must support reusable
+Reusable snapshots require a cluster and runtime that support reusable
 memory/filesystem snapshots. Unsupported operations fail with the backend's
 structured error.
 
@@ -876,9 +876,9 @@ memory. Deleting the source or one child does not delete its siblings.
 The count/ordered partial-result convention follows
 [E2B fork](https://docs.e2b.dev/sandbox/fork). Deliberate differences:
 
-- This release provides an instance method, not E2B's additional fork-by-ID
+- AKernel provides an instance method, not E2B's additional fork-by-ID
   class variant. There is no separate all-or-nothing `clone()` operation.
-- The pinned `adx-environment==0.1.0rc3` and AKernel-pinned ADX API have
+- The supported ADX SDK and packaged Environment API have
   snapshot/create/delete primitives but no native batch fork method/route.
   The ADX adapter captures once and then creates children **sequentially**;
   this is multiple requests, not E2B's single server-side fork operation.
