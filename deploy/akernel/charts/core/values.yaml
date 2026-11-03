@@ -114,6 +114,7 @@ adx:
     portHostDomain: ""
     # Operators may hold the first Ready replica during a controlled canary.
     minReadySeconds: 0
+    progressDeadlineSeconds: 600
     publicService:
       enabled: false
       # Keep the existing load balancer while withholding public traffic.

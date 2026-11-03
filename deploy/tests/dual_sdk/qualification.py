@@ -115,6 +115,7 @@ def main():
     parser.add_argument("phase", choices=["native", "e2b", "native-logs", "e2b-logs"])
     parser.add_argument("--connection-file", type=Path, required=True)
     parser.add_argument("--ca", type=Path, required=True)
+    parser.add_argument("--e2b-origin", help="optional HTTP E2B origin; native placement inspection retains TLS")
     parser.add_argument("--other-key-file", type=Path)
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--image", default=IMAGE)
@@ -143,8 +144,8 @@ def main():
     native = Client(**config)
     e2b_options = {
         "api_key": config["api_key"],
-        "api_url": config["api_url"],
-        "sandbox_url": config["gateway_address"],
+        "api_url": args.e2b_origin or config["api_url"],
+        "sandbox_url": args.e2b_origin or config["gateway_address"],
         "retries": 0,
         "request_timeout": 180,
         "debug": False,

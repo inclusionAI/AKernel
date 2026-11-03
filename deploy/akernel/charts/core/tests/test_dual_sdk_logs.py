@@ -69,12 +69,17 @@ class DualSDKLogsTests(unittest.TestCase):
 
     def test_ingress_canary_readiness_hold_does_not_change_other_roles(self):
         values = copy.deepcopy(E2B)
-        values['adx']['ingressApi'] = {'minReadySeconds': 3600, 'replicas': 3}
+        values['adx']['ingressApi'] = {'minReadySeconds': 3600, 'progressDeadlineSeconds': 3660, 'replicas': 3}
         objects = render(values)
         ingress = objects['Deployment', 'akernel-adx-ingress-api']['spec']
         self.assertEqual(ingress['minReadySeconds'], 3600)
+        self.assertEqual(ingress['progressDeadlineSeconds'], 3660)
         self.assertEqual(ingress['strategy']['rollingUpdate'], {'maxSurge': 0, 'maxUnavailable': 1})
         self.assertNotIn('minReadySeconds', objects['Deployment', 'akernel-adx-coordinator']['spec'])
+
+    def test_canary_requires_a_longer_progress_deadline(self):
+        with self.assertRaises(ValueError):
+            render({'adx': {'ingressApi': {'minReadySeconds': 3600}}})
 
     def test_separate_ingress_image_keeps_worker_and_coordinator_pins(self):
         values = copy.deepcopy(E2B)

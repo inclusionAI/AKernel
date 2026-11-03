@@ -1,4 +1,7 @@
 {{- $image := include "core.ingressImageSettings" . | fromYaml -}}
+{{- if le (int .Values.adx.ingressApi.progressDeadlineSeconds) (int .Values.adx.ingressApi.minReadySeconds) -}}
+{{- fail "adx.ingressApi.progressDeadlineSeconds must exceed minReadySeconds" -}}
+{{- end -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -23,6 +26,7 @@ metadata:
 spec:
   replicas: {{ .Values.adx.ingressApi.replicas }}
   minReadySeconds: {{ .Values.adx.ingressApi.minReadySeconds }}
+  progressDeadlineSeconds: {{ .Values.adx.ingressApi.progressDeadlineSeconds }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
