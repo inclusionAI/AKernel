@@ -74,6 +74,7 @@ class ApplicationLogsTest(unittest.TestCase):
             logs.install(directory, '/host-proc', '/home/akernel', 'shared/app-logs', 0, 1000, 0o2770)
             command = run.call_args.args[0]
             self.assertIn('--root=/host-proc/1/root', command)
+            self.assertIn('--wd=/host-proc/1/root', command)
             self.assertIn('--mount=/host-proc/1/ns/mnt', command)
             self.assertNotIn('--root=' + directory, command)
             self.assertFalse(any(arg.startswith('--pid') for arg in command),

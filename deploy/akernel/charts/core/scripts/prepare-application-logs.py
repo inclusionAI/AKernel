@@ -170,7 +170,7 @@ WantedBy=multi-user.target
     # Entering an ancestor PID namespace is not permitted from a normal Pod.
     # The bind itself needs only the original host mount namespace and root.
     subprocess.run(['nsenter', f'--mount={host_proc}/1/ns/mnt',
-                    f'--root={host_proc}/1/root', '--wd=/', '--',
+                    f'--root={host_proc}/1/root', f'--wd={host_proc}/1/root', '--',
                     '/usr/local/libexec/akernel-application-logs'], check=True)
 
 
