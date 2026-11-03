@@ -76,6 +76,11 @@ class ApplicationLogsTest(unittest.TestCase):
             self.assertIn('--root=/host-proc/1/root', command)
             self.assertIn('--mount=/host-proc/1/ns/mnt', command)
             self.assertNotIn('--root=' + directory, command)
+            self.assertFalse(any(arg.startswith('--pid') for arg in command),
+                             'a Pod cannot enter its ancestor host PID namespace')
+            self.assertNotIn('systemctl', ' '.join(command))
+            enabled = Path(directory)/'etc/systemd/system/multi-user.target.wants/akernel-application-logs.service'
+            self.assertEqual(os.readlink(enabled), '/etc/systemd/system/akernel-application-logs.service')
 
 
 if __name__ == '__main__':unittest.main()

@@ -149,12 +149,29 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 ''')
+    unit.chmod(0o644)
+    # Enable the next host boot without D-Bus: systemctl cannot authenticate a
+    # peer in an ancestor PID namespace. Startup is checked directly below.
+    wants = unit.parent/'multi-user.target.wants'
+    wants.mkdir(exist_ok=True)
+    if wants.is_symlink():
+        raise ValueError('host boot target directory must not be a symlink')
+    enabled = wants/unit.name
+    target = '/etc/systemd/system/' + unit.name
+    if enabled.is_symlink():
+        if os.readlink(enabled) not in (target, '../' + unit.name):
+            raise ValueError('unexpected existing application log boot link')
+    elif enabled.exists():
+        raise ValueError('application log boot link is not a symlink')
+    else:
+        enabled.symlink_to(target)
     # Enter PID1's original root, not the initializer's bind clone of it: the
     # clone may hide host submounts such as /proc after switching namespaces.
-    subprocess.run(['nsenter', f'--mount={host_proc}/1/ns/mnt', f'--pid={host_proc}/1/ns/pid',
-                    f'--root={host_proc}/1/root', '--wd=/', '--', '/bin/sh', '-ec',
-                    'systemctl daemon-reload; systemctl enable akernel-application-logs.service; '
-                    '/usr/local/libexec/akernel-application-logs; systemctl start akernel-application-logs.service'], check=True)
+    # Entering an ancestor PID namespace is not permitted from a normal Pod.
+    # The bind itself needs only the original host mount namespace and root.
+    subprocess.run(['nsenter', f'--mount={host_proc}/1/ns/mnt',
+                    f'--root={host_proc}/1/root', '--wd=/', '--',
+                    '/usr/local/libexec/akernel-application-logs'], check=True)
 
 
 def main():
