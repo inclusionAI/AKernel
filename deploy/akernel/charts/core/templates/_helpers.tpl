@@ -153,3 +153,29 @@ all-in-one image, while each component can still override repository/tag/policy.
 {{- printf "%s:%s" (include "core.image.repository" .) (include "core.image.tag" .) -}}
 {{- end }}
 {{- end }}
+
+
+{{/* Preserve the existing coordinator override when no dedicated ingress image is set. */}}
+{{- define "core.ingressImageSettings" -}}
+{{- mergeOverwrite (deepCopy .Values.coordinator.image) (.Values.adx.ingressApi.image | default dict) | toYaml -}}
+{{- end -}}
+
+{{/*
+Hash only the role's configuration. During the first upgrade from a chart that
+hashed the entire ConfigMap, retain the live annotation when that role's YAML is
+unchanged. A server-side render is required to prove no unintended rollout.
+Lookup errors fail the upgrade rather than silently changing the rollout scope.
+*/}}
+{{- define "core.adxRoleChecksum" -}}
+{{- $root := .root -}}
+{{- $rendered := include (print $root.Template.BasePath "/adx/configmap.yaml") $root | fromYaml -}}
+{{- $config := index $rendered.data .key -}}
+{{- $liveConfig := lookup "v1" "ConfigMap" $root.Release.Namespace "akernel-adx-config" -}}
+{{- $liveController := lookup "apps/v1" .kind $root.Release.Namespace .name -}}
+{{- $prior := dig "spec" "template" "metadata" "annotations" "checksum/adx-config" "" $liveController -}}
+{{- if and $prior (eq (dig "data" .key "" $liveConfig) $config) -}}
+{{- $prior -}}
+{{- else -}}
+{{- $config | sha256sum -}}
+{{- end -}}
+{{- end -}}

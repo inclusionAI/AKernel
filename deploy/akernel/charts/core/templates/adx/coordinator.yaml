@@ -32,7 +32,7 @@ spec:
         app: akernel-adx-coordinator
       annotations:
         checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
-        checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
+        checksum/adx-config: {{ include "core.adxRoleChecksum" (dict "root" . "key" "coordinator.yaml" "kind" "Deployment" "name" "akernel-adx-coordinator") }}
     spec:
       terminationGracePeriodSeconds: 120
       {{- $selector := dict }}

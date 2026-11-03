@@ -56,10 +56,29 @@ process after restoration and count that as restored memory. The phased probe
 uses the unlimited command timeout and the operator should delay restoration
 past the default deadline to verify the intended contract.
 
-For the current transport contract, optionally add `--http-port-entry` to each
-core phase. Native public application ports return the workload over HTTP; ADX
-intentionally rejects every E2B plaintext route with HTTP426. Control routes
-also return426 without sending any credentials. Official E2B uses the existing
-trusted HTTPS entry for API, envd and header-routed application ports. Neither
-plain HTTP E2B routes nor wildcard `get_host()` URLs are qualified by the fixed
-IP/certificate configuration.
+For the default TLS transport contract, optionally add `--http-port-entry` to
+each core phase. It asserts native public application ports work over HTTP
+while E2B returns426 with the HTTP opt-in disabled. Keep that negative contract
+separate from an explicitly HTTP-enabled deployment.
+
+For `adx.e2b.allowHttp=true` on a supporting ADX build, run the official SDK
+without CA environment overrides using `http_qualification.py`:
+
+```bash
+# Protected JSON: {"origin": "http://EXISTING_IP", "api_key": "..."}
+env -u SSL_CERT_FILE -u SSL_CERT_DIR -u REQUESTS_CA_BUNDLE -u CURL_CA_BUNDLE \
+  python http_qualification.py --connection-file "$HTTP_CONNECTION" \
+  --other-key-file "$FOREIGN_TENANT_KEY" --template base --result "$NEW_RESULT"
+```
+
+The probe checks create/commands/files/PTY/application port/delete, same-ID
+pause/connect, leave-running Snapshot, two independent restored clones, invalid
+API keys/foreign tenants/missing and cross-sandbox envd tokens, forbidden envd
+init/Execd, and the retained native/admin TLS boundary. Cleanup failure fails
+the run. It uses the existing fixed HTTP entry and routing headers; `get_host()`
+wildcard DNS and public signed URLs remain separate capabilities. The old
+`qualification.py` TLS phase and actual private business image/log qualification
+remain necessary; HTTP success does not imply HostPath or registry support.
+For cross-node E2B restores, `e2b_checkpoint.py --e2b-origin http://EXISTING_IP`
+uses HTTP for the official E2B SDK and trusted native TLS separately for physical
+placement inspection. Record source availability and actual target/cache state.

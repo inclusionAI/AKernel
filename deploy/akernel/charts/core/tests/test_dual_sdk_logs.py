@@ -1,5 +1,6 @@
 """Deployment contracts for one shared native/E2B pool and durable application logs."""
 import json
+import copy
 from pathlib import Path
 import subprocess
 import unittest
@@ -39,6 +40,46 @@ class DualSDKLogsTests(unittest.TestCase):
         for route in ['prefix:/api/environment', 'prefix:/v2/sandboxes', 'prefix:/sandboxes',
                       'prefix:/templates', 'prefix:/v3/templates', 'prefix:/api-keys']:
             self.assertIn(route, routes)
+
+    def test_http_is_opt_in_and_only_changes_ingress_role(self):
+        baseline = render(E2B)
+        values = copy.deepcopy(E2B)
+        values['adx']['e2b']['allowHttp'] = True
+        enabled = render(values)
+        key = 'ADX_DATA_PLANE_INGRESS_E2B_ALLOW_HTTP'
+        before = baseline['ConfigMap', 'akernel-adx-config']['data']
+        after = enabled['ConfigMap', 'akernel-adx-config']['data']
+        self.assertNotIn(key, before['ingress-api.yaml'])
+        env = yaml.safe_load(after['ingress-api.yaml'])['services'][1]['env']
+        self.assertEqual(env[key], 'true')
+        for role, kind, name in [('node.yaml', 'DaemonSet', 'akernel-node'),
+                                  ('coordinator.yaml', 'Deployment', 'akernel-adx-coordinator')]:
+            self.assertEqual(before[role], after[role])
+            self.assertEqual(baseline[kind, name]['spec']['template'],
+                             enabled[kind, name]['spec']['template'])
+        self.assertEqual(yaml.safe_load(before['ingress-api.yaml'])['runtime_profile'],
+                         yaml.safe_load(after['ingress-api.yaml'])['runtime_profile'])
+        self.assertNotEqual(baseline['Deployment', 'akernel-adx-ingress-api']['spec']['template'],
+                            enabled['Deployment', 'akernel-adx-ingress-api']['spec']['template'])
+
+    def test_http_requires_e2b_and_boolean_configuration(self):
+        for value in [True, 'false', 'true']:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                render({'adx': {'e2b': {'allowHttp': value}}})
+
+    def test_separate_ingress_image_keeps_worker_and_coordinator_pins(self):
+        values = copy.deepcopy(E2B)
+        values['image'] = {'repository': 'base.example/runtime', 'digest': 'sha256:' + '1' * 64}
+        values['coordinator'] = {'image': {'repository': 'base.example/control', 'digest': 'sha256:' + '2' * 64}}
+        values['adx']['ingressApi'] = {'image': {'repository': 'base.example/ingress', 'digest': 'sha256:' + '3' * 64}}
+        objects = render(values)
+        for kind, name, repository, digest in [
+                ('DaemonSet', 'akernel-node', 'runtime', '1'),
+                ('Deployment', 'akernel-adx-coordinator', 'control', '2'),
+                ('Deployment', 'akernel-adx-ingress-api', 'ingress', '3')]:
+            pod = objects[kind, name]['spec']['template']['spec']
+            for container in pod['containers']:
+                self.assertEqual(container['image'], 'base.example/' + repository + '@sha256:' + digest * 64)
 
     def test_log_mount_is_independent_and_all_initializers_have_guarded_inputs(self):
         objects = render(E2B)

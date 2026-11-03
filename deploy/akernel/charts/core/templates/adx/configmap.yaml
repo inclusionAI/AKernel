@@ -82,6 +82,12 @@
 {{- end }}
 {{- end }}
 {{- $e2b := .Values.adx.e2b | default dict }}
+{{- if not (kindIs "bool" $e2b.allowHttp) }}
+{{- fail "adx.e2b.allowHttp must be a boolean" }}
+{{- end }}
+{{- if and $e2b.allowHttp (not $e2b.enabled) }}
+{{- fail "adx.e2b.allowHttp requires adx.e2b.enabled" }}
+{{- end }}
 {{- if $e2b.enabled }}
 {{- if or (empty $e2b.domain) (empty $e2b.envdVersion) (not (regexMatch "^[a-f0-9]{64}$" $e2b.envdSha256)) (empty $e2b.envdIngressSources) }}
 {{- fail "E2B requires a domain, envd version/SHA256 and exact trusted Relay IPv4 sources" }}
@@ -201,6 +207,9 @@ data:
           ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ROUTES: exact:/,exact:/healthz,prefix:/api/instances,prefix:/api/environment,prefix:/api/admin/v1/keys,prefix:/global-scheduler{{ if $e2b.enabled }},prefix:/sandboxes,prefix:/v2/sandboxes,prefix:/snapshots,prefix:/templates,prefix:/v2/templates,prefix:/v3/templates,prefix:/api-keys{{ end }}
           {{- if $e2b.enabled }}
           ADX_DATA_PLANE_INGRESS_E2B_ENABLED: "true"
+          {{- if $e2b.allowHttp }}
+          ADX_DATA_PLANE_INGRESS_E2B_ALLOW_HTTP: "true"
+          {{- end }}
           ADX_DATA_PLANE_INGRESS_PORT_HOST_DOMAIN: {{ $e2b.domain | quote }}
           {{- end }}
           ADX_DATA_PLANE_INGRESS_TLS_BIND: 0.0.0.0:8443

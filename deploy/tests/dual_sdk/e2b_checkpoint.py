@@ -20,6 +20,7 @@ def main():
     parser.add_argument("phase", choices=["capture", "restore"])
     parser.add_argument("--connection-file", required=True, type=Path)
     parser.add_argument("--ca", required=True, type=Path)
+    parser.add_argument("--e2b-origin", help="optional HTTP E2B entry; native placement remains trusted TLS")
     parser.add_argument("--state", required=True, type=Path)
     parser.add_argument("--expected-node", required=True)
     parser.add_argument("--result", type=Path)
@@ -31,8 +32,8 @@ def main():
     config = json.loads(args.connection_file.read_text())
     options = {
         "api_key": config["api_key"],
-        "api_url": config["api_url"],
-        "sandbox_url": config["gateway_address"],
+        "api_url": args.e2b_origin or config["api_url"],
+        "sandbox_url": args.e2b_origin or config["gateway_address"],
         "request_timeout": 300,
         "retries": 0,
     }

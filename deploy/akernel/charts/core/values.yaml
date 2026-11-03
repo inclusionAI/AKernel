@@ -61,6 +61,8 @@ adx:
   # Both protocols share the same Coordinator, API, Ingress and node pool.
   e2b:
     enabled: false
+    # E2B-only plaintext ingress; requires an ADX release supporting this opt-in.
+    allowHttp: false
     domain: ""
     envdVersion: ""
     envdSha256: ""
@@ -102,6 +104,8 @@ adx:
         cpu: "1"
         memory: 1Gi
   ingressApi:
+    # Optional control-only image; defaults to coordinator.image, then image.
+    image: {}
     nodeSelector: {}
     tolerations: []
     affinity: {}

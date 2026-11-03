@@ -1,3 +1,4 @@
+{{- $image := include "core.ingressImageSettings" . | fromYaml -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -36,7 +37,7 @@ spec:
         app: akernel-adx-ingress-api
       annotations:
         checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
-        checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
+        checksum/adx-config: {{ include "core.adxRoleChecksum" (dict "root" . "key" "ingress-api.yaml" "kind" "Deployment" "name" "akernel-adx-ingress-api") }}
     spec:
       # Two services may each consume the configured 90s stop budget.
       terminationGracePeriodSeconds: 210
@@ -58,8 +59,8 @@ spec:
       {{- end }}
       containers:
         - name: ingress-api
-          image: "{{ include "core.image" (dict "root" . "image" .Values.coordinator.image) }}"
-          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
+          image: "{{ include "core.image" (dict "root" . "image" $image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" $image) }}
           command: [/opt/adx/current/bin/adxctl]
           args: [--config, /etc/akernel/adx-ingress-api.yaml, run]
           lifecycle:
@@ -120,8 +121,8 @@ spec:
               readOnly: true
         {{- if or .Values.monitoring.prometheusEndpoint .Values.monitoring.lokiEndpoint .Values.monitoring.tempoEndpoint }}
         - name: otel-collector
-          image: "{{ include "core.image" (dict "root" . "image" .Values.coordinator.image) }}"
-          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
+          image: "{{ include "core.image" (dict "root" . "image" $image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" $image) }}
           command: [/usr/local/bin/otelcol-contrib]
           args: [--config=/etc/otel/ingress-api.yaml]
           lifecycle:

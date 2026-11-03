@@ -103,16 +103,30 @@ an old checkpoint. Use a reviewed state transition if incompatible.
 
 ## Existing IP entry and command lifetime
 
-An existing certificate-matching IP and trusted CA can serve both SDKs without
-another Ingress or wildcard DNS. Native SDK callers may retain their bare
-`AKERNEL_SERVER_ADDRESS` and token: that address selects TLS443 for control;
-native public application URLs can use HTTP80. Set E2B `api_url` and
-`sandbox_url` to the same existing HTTPS origin and supply the trusted CA.
-Current ADX E2B routing rejects plaintext with HTTP426, including application
-ports. Use the fixed TLS entry with `E2b-Sandbox-Id` and `E2b-Sandbox-Port`
-headers for an application port. Envd requires its instance-specific token;
-never send API keys or envd tokens over the HTTP listener. A `get_host()` string
-is not directly reachable without separate wildcard DNS/certificate setup.
+The default remains TLS for E2B API, envd and application ports. An existing
+certificate-matching IP and trusted CA can serve both SDKs without another
+Ingress or wildcard DNS. Native SDK callers retain their existing bare
+`AKERNEL_SERVER_ADDRESS` and token; native public application URLs may use HTTP.
+
+An ADX release implementing `ADX_DATA_PLANE_INGRESS_E2B_ALLOW_HTTP` can explicitly
+opt in with `adx.e2b.enabled=true` and `adx.e2b.allowHttp=true`. E2B callers then
+set both `api_url` and `sandbox_url` to the existing `http://IP` origin and use
+the existing API key. No CA is used for those requests. This accepts unencrypted
+credentials on that network; choose the transport explicitly. HTTP redirects,
+forwarded headers and the presence of two API routes do not establish compatibility.
+The API key, tenant ownership, per-sandbox envd token, traffic-token/private-port
+policy, current route generation, forbidden `/init` and Execd restrictions
+remain enforced. Native control/admin and Agent traffic still require TLS.
+
+Use the fixed entry with `E2b-Sandbox-Id` and `E2b-Sandbox-Port` headers for an
+application port. A `get_host()` string needs separate wildcard DNS (and a
+matching certificate when using TLS); configuring an IP origin does not provision it.
+For a transport-only change, use the [control image build](../../builder/README.md#apiingress-only-maintenance-image)
+and `adx.ingressApi.image` override. Per-role ADX config checksums avoid unrelated
+worker/Coordinator rollouts. On the first upgrade, a server-side Helm render
+retains a live legacy checksum when that role's YAML is unchanged. Offline
+rendering cannot prove a no-rollout migration: compare server-rendered Pod
+templates and image digests before maintenance, then verify live Pod UIDs.
 
 For E2B processes that must survive long snapshots, explicitly use
 `commands.run(..., background=True, timeout=0)`. The published SDK's default

@@ -40,7 +40,7 @@ spec:
         {{- end }}
       annotations:
         checksum/node-config: {{ include (print $.Template.BasePath "/node/configmap.yaml") . | sha256sum }}
-        checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
+        checksum/adx-config: {{ include "core.adxRoleChecksum" (dict "root" . "key" "node.yaml" "kind" "DaemonSet" "name" "akernel-node") }}
         checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
         {{- with .Values.node.podAnnotations }}
         {{- toYaml . | nindent 8 }}
