@@ -149,8 +149,10 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 ''')
+    # Enter PID1's original root, not the initializer's bind clone of it: the
+    # clone may hide host submounts such as /proc after switching namespaces.
     subprocess.run(['nsenter', f'--mount={host_proc}/1/ns/mnt', f'--pid={host_proc}/1/ns/pid',
-                    f'--root={host_root}', '--wd=/', '--', '/bin/sh', '-ec',
+                    f'--root={host_proc}/1/root', '--wd=/', '--', '/bin/sh', '-ec',
                     'systemctl daemon-reload; systemctl enable akernel-application-logs.service; '
                     '/usr/local/libexec/akernel-application-logs; systemctl start akernel-application-logs.service'], check=True)
 

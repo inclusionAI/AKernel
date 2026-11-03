@@ -5,6 +5,7 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/prepare-application-logs.py'
 spec = importlib.util.spec_from_file_location('application_logs', SCRIPT)
@@ -67,6 +68,14 @@ class ApplicationLogsTest(unittest.TestCase):
         self.assertIn('mount --bind "$log_source" /app/logs', script)
         self.assertNotIn('chmod -R', script)
         self.assertNotIn('chown -R', script)
+
+    def test_initializer_enters_original_host_root_with_its_submounts(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(logs.subprocess, 'run') as run:
+            logs.install(directory, '/host-proc', '/home/akernel', 'shared/app-logs', 0, 1000, 0o2770)
+            command = run.call_args.args[0]
+            self.assertIn('--root=/host-proc/1/root', command)
+            self.assertIn('--mount=/host-proc/1/ns/mnt', command)
+            self.assertNotIn('--root=' + directory, command)
 
 
 if __name__ == '__main__':unittest.main()

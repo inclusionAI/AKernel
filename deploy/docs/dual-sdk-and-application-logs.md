@@ -39,7 +39,7 @@ unsafe path/symlink or unexpected existing ownership. The data hostPath uses
 `Directory`, not `DirectoryOrCreate`. Only the initializer sees the host root
 and proc mount: it installs a checked bind and host boot service. The Node Pod
 uses the data disk subPath, and the OCI baseline exposes the same fixed log
-mount to native and E2B sandboxes. Test explicit native read-only mounts as well
+mount to native and E2B sandboxes. The sandboxd pin includes the unique mount-destination fix proposed in [sandboxd#97](https://github.com/inclusionAI/sandboxd/pull/97), so explicit SDK mounts replace the baseline instead of producing conflicting duplicates. Test explicit native read-only mounts as well
 as writable mounts against the exact runtime; JSON rendering alone is insufficient.
 
 New directory ownership defaults to root:1000 and mode2770. Existing file
@@ -58,8 +58,7 @@ with Sandbox(image=BUSINESS_IMAGE, mounts=[
     print(sandbox.commands.run("printf 'hello\\n' >> /app/logs/business.log").stdout)
 ```
 
-Read-only
-is the SDK default. E2B gets this one deployment-owned path; it does not acquire
+Read-only is the SDK default. When restoring a native Snapshot captured with an explicit mount, pass the identical `mounts` argument to `Sandbox.from_snapshot(...)`; a changed access mode is not a compatible restore. E2B gets this one deployment-owned path; it does not acquire
 an arbitrary HostPath creation parameter.
 
 ## Migration and rollback
@@ -79,7 +78,7 @@ inspection of that receipt before proceeding; normal Pod startup never migrates.
 source. External native callers must change their HostPath source to `/app/logs`.
 Remove the alias only after callers have cut over and the agreed rollback
 window has passed; verify it references the canonical data before unlinking it.
-Runtime rollback retains the canonical log binding and initializer. If old
+Remove only the old log-directory declaration from any custom `prepare-node-directories` init container before enabling the new alias: its symlink guard must not try to recreate the old directory. Preserve unrelated directory declarations. Runtime rollback retains the canonical log binding and initializer. If old
 checkpoints predate the OCI log mount, set `mountInSandbox=false` and retain
 the original OCI baseline while native callers mount `/app/logs` explicitly. Restore
 old runtime/profile/checkpoint identity, not the old version-dependent data layout.
