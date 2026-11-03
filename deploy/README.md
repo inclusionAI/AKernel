@@ -14,6 +14,9 @@ uses local XFS capture and restore inputs with an S3-compatible object store.
 The separate [JuiceFS / AFS profile](shared-storage/README.md) remains available
 when a shared filesystem is independently required.
 
+For one deployment serving both native and E2B SDKs with version-independent
+application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-application-logs.md).
+
 ## Guided deployment
 
 The image installs the complete gVisor bundle pinned by sandboxd's runtime manifest: runsc, the containerd shim, and adjacent `gvisor-bin/` helpers. Its SHA-512 verifies the archive, not a standalone runsc binary. Keep these executables together when building custom images; replacing only runsc can leave mismatched checkpoint/restore helpers.

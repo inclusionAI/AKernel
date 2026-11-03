@@ -1176,12 +1176,12 @@ sandbox. For example, expose a prepared log directory on a selected runsc node:
 from akernel_sdk import Mount, Sandbox
 
 logs = Mount(
-    target="/apps/logs",       # Path inside the sandbox.
-    host_path="/apps/logs",    # Path visible to sandboxd on the selected node.
+    target="/app/logs",       # Path inside the sandbox.
+    host_path="/app/logs",    # Path visible to sandboxd on the selected node.
     read_only=False,           # Explicitly allow application log writes.
 )
 with Sandbox(node_id="<prepared-node-id>", mounts=[logs]) as sandbox:
-    print(sandbox.commands.run("ls -ld /apps/logs").stdout)
+    print(sandbox.commands.run("ls -ld /app/logs").stdout)
 ```
 
 `read_only=True` is the default. HostPath supports `type="bind"` only;
@@ -1219,7 +1219,7 @@ leaves that file on the node:
 
 ```bash
 python sdk/python/examples/hostpath_mounts.py \
-  --node-id <prepared-node-id> --host-path /apps/logs --write
+  --node-id <prepared-node-id> --host-path /app/logs --write
 ```
 
 ## Launch from a Dockerfile

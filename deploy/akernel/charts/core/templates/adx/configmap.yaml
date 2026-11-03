@@ -81,6 +81,18 @@
 {{- end }}
 {{- end }}
 {{- end }}
+{{- $e2b := .Values.adx.e2b | default dict }}
+{{- if $e2b.enabled }}
+{{- if or (empty $e2b.domain) (empty $e2b.envdVersion) (not (regexMatch "^[a-f0-9]{64}$" $e2b.envdSha256)) (empty $e2b.envdIngressSources) }}
+{{- fail "E2B requires a domain, envd version/SHA256 and exact trusted Relay IPv4 sources" }}
+{{- end }}
+{{- range $source := $e2b.envdIngressSources }}
+{{- if not (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}$" $source) }}{{ fail "E2B Relay sources must be exact IPv4 addresses" }}{{- end }}
+{{- range $octet := splitList "." $source }}{{- if gt (int $octet) 255 }}{{ fail "Invalid E2B IPv4 source" }}{{- end }}{{- end }}
+{{- $first := int (first (splitList "." $source)) }}
+{{- if or (eq $source "0.0.0.0") (ge $first 224) }}{{ fail "E2B Relay source must be unicast" }}{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -157,6 +169,12 @@ data:
           auth_cache_ttl_seconds: 10
           agent_address: ""
           loopback_http: true
+          {{- if $e2b.enabled }}
+          e2b:
+            domain: {{ $e2b.domain | quote }}
+            envdVersion: {{ $e2b.envdVersion | quote }}
+            envdIngressSources: {{ $e2b.envdIngressSources | toJson }}
+          {{- end }}
         env:
           ADX_LOG_FORMAT: json
           {{- if .Values.monitoring.tempoEndpoint }}
@@ -180,7 +198,11 @@ data:
           ADX_TRACE_SAMPLE_RATIO: "0.1"
           OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318
           {{- end }}
-          ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ROUTES: exact:/,exact:/healthz,prefix:/api/instances,prefix:/api/environment,prefix:/api/admin/v1/keys,prefix:/global-scheduler
+          ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ROUTES: exact:/,exact:/healthz,prefix:/api/instances,prefix:/api/environment,prefix:/api/admin/v1/keys,prefix:/global-scheduler{{ if $e2b.enabled }},prefix:/sandboxes,prefix:/v2/sandboxes,prefix:/snapshots,prefix:/templates,prefix:/v2/templates,prefix:/v3/templates,prefix:/api-keys{{ end }}
+          {{- if $e2b.enabled }}
+          ADX_DATA_PLANE_INGRESS_E2B_ENABLED: "true"
+          ADX_DATA_PLANE_INGRESS_PORT_HOST_DOMAIN: {{ $e2b.domain | quote }}
+          {{- end }}
           ADX_DATA_PLANE_INGRESS_TLS_BIND: 0.0.0.0:8443
           ADX_DATA_PLANE_INGRESS_PLAIN_BIND: 0.0.0.0:8080
           ADX_DATA_PLANE_INGRESS_HEALTH_BIND: 0.0.0.0:18080
@@ -189,7 +211,7 @@ data:
           ADX_DATA_PLANE_INGRESS_ALLOWED_CLIENT_CIDRS: 0.0.0.0/0
           ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ADDRESS: 127.0.0.1:18888
           ADX_DATA_PLANE_INGRESS_NODE_SECURITY_MODE: network
-          {{- if .Values.adx.ingressApi.portHostDomain }}
+          {{- if and .Values.adx.ingressApi.portHostDomain (not $e2b.enabled) }}
           ADX_DATA_PLANE_INGRESS_PORT_HOST_DOMAIN: {{ .Values.adx.ingressApi.portHostDomain | quote }}
           {{- end }}
     logging:
@@ -218,6 +240,12 @@ data:
         image_process_config: /etc/adx-image-process.json
       env:
         PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        {{- if $e2b.enabled }}
+        ADX_ENVD_PATH: /__adx/usr/local/bin/envd
+        ADX_ENVD_SHA256: {{ $e2b.envdSha256 | quote }}
+        ADX_ENVD_DEFAULT_USER: {{ $e2b.defaultUser | quote }}
+        ADX_ENVD_DEFAULT_WORKDIR: {{ $e2b.defaultWorkdir | quote }}
+        {{- end }}
   node.yaml: |
     schema_version: 1
     package_dir: /opt/adx/current
@@ -308,3 +336,9 @@ data:
         image_process_config: /etc/adx-image-process.json
       env:
         PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        {{- if $e2b.enabled }}
+        ADX_ENVD_PATH: /__adx/usr/local/bin/envd
+        ADX_ENVD_SHA256: {{ $e2b.envdSha256 | quote }}
+        ADX_ENVD_DEFAULT_USER: {{ $e2b.defaultUser | quote }}
+        ADX_ENVD_DEFAULT_WORKDIR: {{ $e2b.defaultWorkdir | quote }}
+        {{- end }}

@@ -61,8 +61,8 @@ service_overrides:
 
 This fragment applies to profile-based standalone deployments. Explicit-service
 deployments put the same API configuration and Ingress environment in their
-existing service objects; the Helm chart does not yet expose dedicated E2B
-values. Configure matching trusted profiles on API Server and workers. Select
+existing service objects. Helm exposes `adx.e2b` for the shared native/E2B
+control plane and worker pool; see [dual SDK and persistent logs](../deploy/docs/dual-sdk-and-application-logs.md). Configure matching trusted profiles on API Server and workers. Select
 runsc, Firecracker or firecracker-pvm according to the ADX release's supported
 backends and the actual node capability. Firecracker `fromImage` uses OCI
 directory roots: enable `virtiofs_enabled = true` under
