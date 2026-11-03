@@ -22,8 +22,11 @@ def main():
         parser.error('--base must be an immutable image digest')
     if not re.fullmatch('[a-f0-9]{40}', args.commit):
         parser.error('--commit must be the full source revision')
+    checksum = hashlib.sha256()
     with args.archive.open('rb') as stream:
-        actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            checksum.update(chunk)
+    actual = checksum.hexdigest()
     if not re.fullmatch('[a-f0-9]{64}', args.sha256) or actual != args.sha256:
         parser.error('archive SHA256 mismatch')
     root = Path(__file__).resolve().parents[2]
