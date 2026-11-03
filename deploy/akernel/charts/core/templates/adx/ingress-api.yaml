@@ -22,6 +22,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: {{ .Values.adx.ingressApi.replicas }}
+  minReadySeconds: {{ .Values.adx.ingressApi.minReadySeconds }}
   strategy:
     type: RollingUpdate
     rollingUpdate:

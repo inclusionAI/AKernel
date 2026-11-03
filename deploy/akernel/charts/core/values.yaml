@@ -112,6 +112,8 @@ adx:
     topologySpreadConstraints: []
     replicas: 1
     portHostDomain: ""
+    # Operators may hold the first Ready replica during a controlled canary.
+    minReadySeconds: 0
     publicService:
       enabled: false
       # Keep the existing load balancer while withholding public traffic.
