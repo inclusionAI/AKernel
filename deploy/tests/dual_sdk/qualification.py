@@ -13,6 +13,7 @@ import shlex
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from functools import partial
@@ -53,10 +54,13 @@ def memory(box, delta=None):
     return json.loads(command(box, "python3 -c " + shlex.quote(text)))
 
 
-def start_workload(box):
+def start_workload(box, protocol):
     box.files.write("/tmp/dual-sdk-state.py", SERVER)
     box.files.write("/tmp/dual-sdk-file", "checkpoint-file")
-    box.commands.run("python3 /tmp/dual-sdk-state.py", background=True)
+    if protocol == "e2b":
+        box.commands.run("python3 /tmp/dual-sdk-state.py", background=True, timeout=0)
+    else:
+        box.commands.run("python3 /tmp/dual-sdk-state.py", background=True)
     end = time.monotonic() + 30
     while True:
         try:
@@ -79,6 +83,18 @@ def fetch(url, headers):
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
+
+
+def placement(config, identity):
+    status, body = fetch(
+        config["api_url"] + "/api/instances?instance_id=" + identity,
+        {"X-Auth": config["api_key"], "Type": "json"},
+    )
+    assert status == 200
+    entry = json.loads(body)[0]
+    return {
+        key: entry[key] for key in ("node_id", "node_ip", "sandbox_ip", "runtime_id")
+    }
 
 
 def wait_delete_snapshot(delete):
@@ -106,6 +122,10 @@ def main():
     parser.add_argument("--source-node")
     parser.add_argument("--target-node")
     parser.add_argument("--hold-seconds", type=int, default=0)
+    parser.add_argument(
+        "--http-port-entry",
+        help="existing HTTP data listener, without control credentials",
+    )
     args = parser.parse_args()
     if args.phase == "e2b" and not args.other_key_file:
         parser.error("E2B qualification requires a separately owned foreign-tenant key")
@@ -164,6 +184,8 @@ def main():
             ]
             rw = native_create(node_id=args.source_node, mounts=writable)
             uid = command(rw, "id -u").strip()
+            command(rw, "test ! -e /home/akernel/sandboxd/config/registry_auths.json")
+            result["placement"] = placement(config, rw.sandbox_id)
             command(rw, "umask 0007; printf durable > " + shlex.quote(path))
             assert rw.files.read(path) == "durable"
             readonly = [Mount(host_path="/app/logs", target="/app/logs")]
@@ -202,6 +224,8 @@ def main():
             box = e2b_create()
             path = "/app/logs/dual-e2b-" + uuid.uuid4().hex + ".log"
             uid = command(box, "id -u").strip()
+            command(box, "test ! -e /home/akernel/sandboxd/config/registry_auths.json")
+            result["placement"] = placement(config, box.sandbox_id)
             assert uid != "0"
             command(box, "umask 0007; printf durable > " + shlex.quote(path))
             assert box.files.read(path) == "durable"
@@ -223,7 +247,8 @@ def main():
             else:
                 source = e2b_create()
                 identity = source.sandbox_id
-            original = start_workload(source)
+            result["created_placement"] = placement(config, identity)
+            original = start_workload(source, protocol)
             checks.extend(["create", "commands", "files", "process memory state"])
             output = []
             if protocol == "native":
@@ -260,7 +285,15 @@ def main():
                     config["api_url"] + "/sandboxes/" + identity,
                     {"X-API-Key": "invalid-qualification-key"},
                 )
-                assert no_token in (401, 403) and invalid == 401
+                wrong_token, _ = fetch(
+                    config["gateway_address"] + "/files?path=/tmp/dual-sdk-file",
+                    {**forbidden, "X-Access-Token": "invalid-envd-token"},
+                )
+                assert (
+                    no_token in (401, 403)
+                    and wrong_token in (401, 403)
+                    and invalid == 401
+                )
                 if args.other_key_file:
                     foreign, _ = fetch(
                         config["api_url"] + "/sandboxes/" + identity,
@@ -275,6 +308,26 @@ def main():
                     ]
                 )
             assert status == 200 and json.loads(body) == original
+            if args.http_port_entry:
+                entry = args.http_port_entry.rstrip("/")
+                assert urllib.parse.urlsplit(entry).scheme == "http"
+                if protocol == "native":
+                    parsed = urllib.parse.urlsplit(source.get_port_url(8088))
+                    suffix = parsed.path + ("?" + parsed.query if parsed.query else "")
+                    port_status, port_body = fetch(entry + suffix, {})
+                else:
+                    port_status, port_body = fetch(entry + "/", routing)
+                result["http_data_status"] = port_status
+                if protocol == "native":
+                    assert port_status == 200 and json.loads(port_body) == original
+                    checks.append("HTTP80 application port")
+                else:
+                    # ADX proxy_e2b deliberately requires TLS for every E2B route.
+                    assert port_status == 426
+                    checks.append("E2B HTTP80 route rejects plaintext")
+                control_status, _ = fetch(entry + "/api/environment/v1/resources", {})
+                assert control_status == 426
+                checks.append("HTTP80 control route rejects plaintext")
             checks.extend(["PTY exit7", "published HTTP port"])
             snapshot = source.create_snapshot(name="dual-sdk-" + uuid.uuid4().hex)
             sid = snapshot.snapshot_id
@@ -288,6 +341,7 @@ def main():
             else:
                 source = Sandbox.connect(identity, timeout=600, **e2b_options)
                 owned.append(("e2b", source))
+            result["resumed_placement"] = placement(config, identity)
             assert source.sandbox_id == identity and memory(source) == original
             assert source.files.read("/tmp/dual-sdk-file") == "checkpoint-file"
             checks.extend(
@@ -304,6 +358,9 @@ def main():
                 owned.append(("native", clone))
             else:
                 clone = e2b_create(sid)
+            result["clone_placement"] = placement(config, clone.sandbox_id)
+            if args.target_node:
+                assert result["clone_placement"]["node_id"] == args.target_node
             assert memory(clone) == original
             assert (
                 memory(source, 11)["counter"] == 52
@@ -313,6 +370,23 @@ def main():
             clone.files.write("/tmp/dual-sdk-file", "clone-only")
             assert source.files.read("/tmp/dual-sdk-file") == "source-only"
             assert clone.files.read("/tmp/dual-sdk-file") == "clone-only"
+            if protocol == "e2b":
+                correct_headers = clone.connection_config.sandbox_headers
+                source_headers = source.connection_config.sandbox_headers
+                assert (
+                    correct_headers["X-Access-Token"]
+                    != source_headers["X-Access-Token"]
+                )
+                path = config["gateway_address"] + "/files?path=/tmp/dual-sdk-file"
+                positive, data = fetch(path, correct_headers)
+                assert positive == 200 and data.decode() == "clone-only"
+                foreign_headers = {
+                    **correct_headers,
+                    "X-Access-Token": source_headers["X-Access-Token"],
+                }
+                rejected, _ = fetch(path, foreign_headers)
+                assert rejected in (401, 403)
+                checks.append("other sandbox envd token denied with positive control")
             checks.extend(
                 ["snapshot clone restored memory", "concurrent private memory/files"]
             )

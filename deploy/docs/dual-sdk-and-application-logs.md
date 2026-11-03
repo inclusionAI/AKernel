@@ -99,3 +99,30 @@ log writes, explicit native RO/RW, sandbox deletion, drained Node Pod replacemen
 and fresh-node preparation. Keep old checkpoints/artifacts and test compatibility:
 identical runsc strings do not prove that an updated EROFS bootstrap can restore
 an old checkpoint. Use a reviewed state transition if incompatible.
+
+
+## Existing IP entry and command lifetime
+
+An existing certificate-matching IP and trusted CA can serve both SDKs without
+another Ingress or wildcard DNS. Native SDK callers may retain their bare
+`AKERNEL_SERVER_ADDRESS` and token: that address selects TLS443 for control;
+native public application URLs can use HTTP80. Set E2B `api_url` and
+`sandbox_url` to the same existing HTTPS origin and supply the trusted CA.
+Current ADX E2B routing rejects plaintext with HTTP426, including application
+ports. Use the fixed TLS entry with `E2b-Sandbox-Id` and `E2b-Sandbox-Port`
+headers for an application port. Envd requires its instance-specific token;
+never send API keys or envd tokens over the HTTP listener. A `get_host()` string
+is not directly reachable without separate wildcard DNS/certificate setup.
+
+For E2B processes that must survive long snapshots, explicitly use
+`commands.run(..., background=True, timeout=0)`. The published SDK's default
+command timeout is independent of sandbox expiry and checkpoint state. Restore
+an unchanged, already-running workload and verify its original memory rather
+than launching a replacement process.
+
+Provision the data disk before a new worker joins, with its stable XFS mount
+at `applicationLogs.dataDiskRoot`. Keep the steady-state worker selector tied
+to the node-pool role, not a one-off runtime-generation label absent from the
+pool template. The log initializer refuses an unmounted disk; it does not
+format a device or silently create a system-disk directory. Qualify empty-disk
+initialization separately from a drained Pod replacement and actual host reboot.

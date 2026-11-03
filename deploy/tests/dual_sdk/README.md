@@ -18,3 +18,48 @@ Core phases verify real process memory and files across leave-running snapshots,
 Use `--source-node` and `--target-node` for native placement. E2B's official create API has no node selector. With `--hold-seconds`, inspect actual sandbox ownership and physical runtime placement while the source and clone are alive; requested node names alone do not prove cross-node restore. Independently make the source worker unavailable, restore on each clean target and verify checkpoint/cache ownership and background restore protection. Cross-node envd isolation also needs real guest-to-guest TCP attempts; an HTTP401 only tests authentication.
 
 The native log phase explicitly rebinds identical mounts when cloning snapshots and tests both RO and RW restoration. HostPath data remains external, node-local state; the probe does not claim cross-node copying of logs or open external files. The E2B log phase verifies the deployment-owned fixed `/app/logs` mount and non-root default user. It does not invent an arbitrary E2B HostPath parameter or request-scoped registry credentials. Use the actual business private image/template, retain the existing node registry secret, and record its independent startup and UID/GID results.
+
+
+## Source outage and envd isolation
+
+`e2b_checkpoint.py` captures and restores a real 19 MiB process-memory workload,
+ordinary files and a 64 MiB sparse file through the official SDK. Run `capture`
+on the sole admitted source, verify the recorded physical placement, then drain
+and stop the source host. With the source confirmed stopped, admit one clean
+peer at a time and run `restore --expected-node ...` against the saved state.
+Confirm the artifact ID was absent from each target cache before the outage.
+The operator owns host stop/start and must restore the source even on failure.
+Keep each state/result file and failed attempt rather than overwriting it.
+
+```bash
+python e2b_checkpoint.py capture --connection-file "$CONNECTION" --ca "$CA" --state "$NEW_STATE" --expected-node "$SOURCE"
+# After an independently recorded source-host outage and target admission:
+python e2b_checkpoint.py restore --connection-file "$CONNECTION" --ca "$CA" --state "$NEW_STATE" --expected-node "$PEER" --result "$COLD_RESULT"
+python envd_isolation.py --connection-file "$CONNECTION" --ca "$CA" --source-node "$SOURCE" --peer-node "$PEER" --internal-entry "$EXISTING_INTERNAL_TLS_ENTRY" --manage-peer-scheduling --result "$ISOLATION_RESULT"
+```
+
+The isolation phase is maintenance-only: exactly the source must initially admit
+new allocations. It temporarily admits the peer through the existing admin API,
+then blocks it in cleanup. It creates an authenticated E2B victim, proves SDK
+file access, denies a same-node guest's TCP access to the victim's envd address,
+and checks the peer cannot reach a Node-Pod envd listener or bypass envd token
+authentication through the shared Ingress. No control or envd credential enters
+an attacker guest. Restore the desired normal admission state after qualification.
+This does not qualify Kubernetes NetworkPolicy or arbitrary cross-node guest-IP
+routing; the overlay subnet may overlap on different nodes.
+
+E2B background commands default to a 60-second lifetime in the qualified SDK.
+Use the public `commands.run(..., background=True, timeout=0)` option for a
+checkpoint workload that must remain alive past that deadline. A background
+command's deadline is independent of the sandbox lifetime; do not restart a
+process after restoration and count that as restored memory. The phased probe
+uses the unlimited command timeout and the operator should delay restoration
+past the default deadline to verify the intended contract.
+
+For the current transport contract, optionally add `--http-port-entry` to each
+core phase. Native public application ports return the workload over HTTP; ADX
+intentionally rejects every E2B plaintext route with HTTP426. Control routes
+also return426 without sending any credentials. Official E2B uses the existing
+trusted HTTPS entry for API, envd and header-routed application ports. Neither
+plain HTTP E2B routes nor wildcard `get_host()` URLs are qualified by the fixed
+IP/certificate configuration.
