@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -64,7 +65,9 @@ def preserve_flattened_base(prefix):
     if legacy.exists() or legacy.is_symlink():
         raise ValueError('the retained base package already exists')
     legacy.parent.mkdir(parents=True, exist_ok=True)
-    current.rename(legacy)
+    # OverlayFS cannot rename a directory from the image's lower layer (EXDEV).
+    # shutil.move copies metadata and links before removing the old directory.
+    shutil.move(str(current), str(legacy))
     current.symlink_to(Path('akernel-base') / commit, target_is_directory=True)
 
 

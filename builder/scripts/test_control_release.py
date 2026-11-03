@@ -1,5 +1,6 @@
 """Reject corrupt, unsafe and incorrectly attributed control release inputs."""
 import hashlib
+import errno
 import importlib.util
 import io
 import json
@@ -7,6 +8,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('control_release', Path(__file__).with_name('install-control-release.py'))
 module = importlib.util.module_from_spec(spec)
@@ -21,7 +23,8 @@ class ControlReleaseTests(unittest.TestCase):
             manifest = json.dumps({'commit': COMMIT, 'files': {'pruned-runtime': 'old-hash'}})
             (current/'manifest.json').write_text(manifest)
             (current/'old-binary').write_bytes(b'old-bytes')
-            module.preserve_flattened_base(prefix)
+            with mock.patch('os.rename', side_effect=OSError(errno.EXDEV, 'image lower layer')):
+                module.preserve_flattened_base(prefix)
             self.assertTrue(current.is_symlink())
             retained = prefix/'akernel-base'/COMMIT
             self.assertEqual((retained/'manifest.json').read_text(), manifest)
