@@ -14,6 +14,20 @@ spec.loader.exec_module(module)
 COMMIT = 'a' * 40
 
 class ControlReleaseTests(unittest.TestCase):
+    def test_flattened_base_is_retained_without_changing_its_manifest_or_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            prefix = Path(temporary)
+            current = prefix / 'current';current.mkdir()
+            manifest = json.dumps({'commit': COMMIT, 'files': {'pruned-runtime': 'old-hash'}})
+            (current/'manifest.json').write_text(manifest)
+            (current/'old-binary').write_bytes(b'old-bytes')
+            module.preserve_flattened_base(prefix)
+            self.assertTrue(current.is_symlink())
+            retained = prefix/'akernel-base'/COMMIT
+            self.assertEqual((retained/'manifest.json').read_text(), manifest)
+            self.assertEqual((retained/'old-binary').read_bytes(), b'old-bytes')
+            self.assertEqual(current.resolve(), retained)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

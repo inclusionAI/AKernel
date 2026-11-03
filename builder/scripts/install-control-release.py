@@ -44,6 +44,30 @@ def unpack(archive, expected_sha, expected_commit, destination):
     return manifest
 
 
+def preserve_flattened_base(prefix):
+    """Normalize AKernel's COPY-flattened package for the official installer.
+
+    The old directory is retained exactly as supplied by the immutable base.
+    AKernel may have pruned its unused runtime payload; do not relabel it as a
+    newly verified full release or modify its manifest to match new binaries.
+    """
+    current = prefix / 'current'
+    if current.is_symlink():
+        return
+    if not current.is_dir():
+        raise ValueError('the base image has no installed ADX directory')
+    manifest = json.loads((current / 'manifest.json').read_text())
+    commit = manifest.get('commit', '')
+    if not re.fullmatch('[a-f0-9]{40}', commit):
+        raise ValueError('the base package has no full source identity')
+    legacy = prefix / 'akernel-base' / commit
+    if legacy.exists() or legacy.is_symlink():
+        raise ValueError('the retained base package already exists')
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    current.rename(legacy)
+    current.symlink_to(Path('akernel-base') / commit, target_is_directory=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', type=Path, required=True)
@@ -55,6 +79,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='adx-control-release-') as temporary:
         directory = Path(temporary)
         unpack(args.archive, args.sha256, args.commit, directory)
+        preserve_flattened_base(Path('/opt/adx'))
         subprocess.run(['bash', str(directory / 'install.sh'), '--prefix', '/opt/adx',
                         '--bin-dir', '/usr/local/bin'], check=True)
     if digest(runtime) != original:
