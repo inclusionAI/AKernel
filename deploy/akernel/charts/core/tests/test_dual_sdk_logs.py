@@ -62,6 +62,22 @@ class DualSDKLogsTests(unittest.TestCase):
         values = json.loads(json.dumps(E2B));values['adx']['e2b']['envdSha256'] = ''
         with self.assertRaises(ValueError):render(values)
 
+    def test_rollback_can_preserve_log_data_without_changing_old_guest_mount_layout(self):
+        values = {'adx': {'tls': {'existingSecret': 'tls'}}, 'node': {
+            'applicationLogs': {'enabled': True, 'mountInSandbox': False}}}
+        objects = render(values)
+        oci = json.loads(objects['ConfigMap', 'akernel-node-config']['data']['config.json'])
+        self.assertFalse(any(x['destination'] == '/app/logs' for x in oci.get('mounts', [])))
+        main = objects['DaemonSet', 'akernel-node']['spec']['template']['spec']['containers'][0]
+        self.assertIn('/app/logs', {x['mountPath'] for x in main['volumeMounts']})
+
+    def test_live_registry_credentials_are_preserved_by_default(self):
+        values = yaml.safe_load((CHART/'values.yaml').read_text())
+        self.assertTrue(values['node']['secret']['preserveExisting'])
+        template = (CHART/'templates/node/secrets.yaml').read_text()
+        self.assertIn('lookup "v1" "Secret" .Release.Namespace "akernel-secrets"', template)
+        self.assertIn('$existing.data', template)
+
     def test_default_native_does_not_mount_logs_or_activate_envd(self):
         objects = render({'adx': {'tls': {'existingSecret': 'existing-tls'}}})
         self.assertNotIn('ADX_ENVD_PATH', objects['ConfigMap', 'akernel-adx-config']['data']['node.yaml'])

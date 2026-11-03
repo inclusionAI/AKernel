@@ -171,6 +171,8 @@ node:
   # Version-independent application logs; dataDiskRoot must be a real host XFS mount.
   applicationLogs:
     enabled: false
+    # Keep false only when restoring an older native mount layout.
+    mountInSandbox: true
     dataDiskRoot: /home/akernel
     relativePath: shared/app-logs
     uid: 0

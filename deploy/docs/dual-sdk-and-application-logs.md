@@ -79,7 +79,9 @@ inspection of that receipt before proceeding; normal Pod startup never migrates.
 source. External native callers must change their HostPath source to `/app/logs`.
 Remove the alias only after callers have cut over and the agreed rollback
 window has passed; verify it references the canonical data before unlinking it.
-Runtime rollback retains the canonical log binding and initializer: restore
+Runtime rollback retains the canonical log binding and initializer. If old
+checkpoints predate the OCI log mount, set `mountInSandbox=false` and retain
+the original OCI baseline while native callers mount `/app/logs` explicitly. Restore
 old runtime/profile/checkpoint identity, not the old version-dependent data layout.
 A reversal of the physical migration requires another fully drained window.
 
