@@ -1,6 +1,7 @@
 """Deployment contracts for one shared native/E2B pool and durable application logs."""
 import json
 import copy
+import hashlib
 from pathlib import Path
 import subprocess
 import unittest
@@ -61,6 +62,19 @@ class DualSDKLogsTests(unittest.TestCase):
                          yaml.safe_load(after['ingress-api.yaml'])['runtime_profile'])
         self.assertNotEqual(baseline['Deployment', 'akernel-adx-ingress-api']['spec']['template'],
                             enabled['Deployment', 'akernel-adx-ingress-api']['spec']['template'])
+
+    def test_explicit_legacy_pin_fails_closed_when_role_configuration_changes(self):
+        values = copy.deepcopy(E2B)
+        config = render(values)['ConfigMap', 'akernel-adx-config']['data']['node.yaml']
+        values['adx']['configChecksumMigration'] = {'node': {
+            'configSha256': hashlib.sha256(config.encode()).hexdigest(),
+            'legacyChecksum': 'b' * 64}}
+        node = render(values)['DaemonSet', 'akernel-node']
+        self.assertEqual(node['spec']['template']['metadata']['annotations']['checksum/adx-config'], 'b' * 64)
+        values['adx']['node'] = {'reportIntervalSeconds': 10}
+        with self.assertRaises(ValueError):render(values)
+        del values['adx']['configChecksumMigration']
+        self.assertNotEqual(render(values)['DaemonSet', 'akernel-node']['spec']['template']['metadata']['annotations']['checksum/adx-config'], 'b' * 64)
 
     def test_http_requires_e2b_and_boolean_configuration(self):
         for value in [True, 'false', 'true']:

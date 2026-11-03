@@ -58,6 +58,9 @@ adx:
     # Optional placement shared by execution nodes and Coordinator. Managed
     # JuiceFS sets this to its client selector so both roles have a host mount.
     nodeSelector: {}
+  # Optional first-migration pins: role -> {configSha256, legacyChecksum}.
+  # A role config edit fails until its pin is removed for a planned rollout.
+  configChecksumMigration: {}
   # Both protocols share the same Coordinator, API, Ingress and node pool.
   e2b:
     enabled: false

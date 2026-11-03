@@ -123,10 +123,14 @@ application port. A `get_host()` string needs separate wildcard DNS (and a
 matching certificate when using TLS); configuring an IP origin does not provision it.
 For a transport-only change, use the [control image build](../../builder/README.md#apiingress-only-maintenance-image)
 and `adx.ingressApi.image` override. Per-role ADX config checksums avoid unrelated
-worker/Coordinator rollouts. On the first upgrade, a server-side Helm render
-retains a live legacy checksum when that role's YAML is unchanged. Offline
-rendering cannot prove a no-rollout migration: compare server-rendered Pod
-templates and image digests before maintenance, then verify live Pod UIDs.
+worker/Coordinator rollouts. For the first migration from the old whole-ConfigMap checksum, explicitly set
+`adx.configChecksumMigration.<role>.configSha256` to the SHA256 of that role YAML
+and `legacyChecksum` to its existing Pod annotation. Changed role YAML fails
+rendering until the pin is removed for a planned rollout. This does not infer
+active Pod configuration from a potentially partially updated live ConfigMap.
+Compare server-rendered/effective Pod templates and image digests before
+maintenance, then verify live Pod UIDs. Remove each migration pin during that
+role's next planned, drained upgrade.
 
 For E2B processes that must survive long snapshots, explicitly use
 `commands.run(..., background=True, timeout=0)`. The published SDK's default
