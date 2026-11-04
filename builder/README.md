@@ -61,8 +61,8 @@ service_overrides:
 
 This fragment applies to profile-based standalone deployments. Explicit-service
 deployments put the same API configuration and Ingress environment in their
-existing service objects; the Helm chart does not yet expose dedicated E2B
-values. Configure matching trusted profiles on API Server and workers. Select
+existing service objects. Helm exposes `adx.e2b` for the shared native/E2B
+control plane and worker pool; see [dual SDK and persistent logs](../deploy/docs/dual-sdk-and-application-logs.md). Configure matching trusted profiles on API Server and workers. Select
 runsc, Firecracker or firecracker-pvm according to the ADX release's supported
 backends and the actual node capability. Firecracker `fromImage` uses OCI
 directory roots: enable `virtiofs_enabled = true` under
@@ -85,6 +85,38 @@ instances and snapshots; building a new image does not migrate them.
 inconsistent artifacts, and byte-preserving assembly without compiling ADX or
 running a sandbox. A full image build and E2B/native SDK lifecycle tests against
 the resulting image remain separate acceptance steps.
+
+## API/Ingress-only maintenance image
+
+For a transport-only fix on an already qualified shared E2B/native deployment,
+`deploy/scripts/build-control-image.py` accepts a digest-pinned all-in-one base
+and a complete, clean amd64 ADX release archive with matching Execd/rootfs/envd
+provenance. Build the archive from a fixed source commit with ADX's normal
+`make platform-release`, `ADX_ENVD_SOURCE` set to its pinned upstream checkout,
+and the Redis 7.2.5 binary pair. Verify the normal release manifest first.
+Archive the directory contents, so `manifest.json` is at the archive root.
+
+```bash
+python3 deploy/scripts/build-control-image.py \
+  --base "$BASE_IMAGE_DIGEST" --archive "$ADX_RELEASE_ARCHIVE" \
+  --sha256 "$ADX_RELEASE_SHA256" --commit "$ADX_SOURCE_COMMIT" \
+  --tag "$CONTROL_IMAGE_TAG"
+```
+
+The helper sends only the explicit archive and installer into Docker's build
+context. Installation verifies the archive checksum, clean source identity,
+architecture and package's complete file manifest, then uses ADX's installer.
+It installs the full release under its new commit; it does not replace selected
+binaries under an old manifest. The qualified execution rootfs at
+`/opt/akernel/runtime/akernel-runtime-rootfs.img` must remain byte-identical.
+This image is for API/Ingress only. It is not a newly qualified worker image.
+
+Set `adx.ingressApi.image.repository/digest` to its verified image digest;
+keep `coordinator.image` and `node.image` unchanged. The default ingress image
+still inherits `coordinator.image`, then the global image. Qualify that exact
+mixed-role combination in isolation before changing the cluster, including old
+Snapshots. The roles must share the unchanged runtime profile and state services.
+Do not use this path to mix unrelated protocol or execution-runtime changes.
 
 ## Package repositories
 

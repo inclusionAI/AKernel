@@ -153,3 +153,33 @@ all-in-one image, while each component can still override repository/tag/policy.
 {{- printf "%s:%s" (include "core.image.repository" .) (include "core.image.tag" .) -}}
 {{- end }}
 {{- end }}
+
+
+{{/* Preserve the existing coordinator override when no dedicated ingress image is set. */}}
+{{- define "core.ingressImageSettings" -}}
+{{- mergeOverwrite (deepCopy .Values.coordinator.image) (.Values.adx.ingressApi.image | default dict) | toYaml -}}
+{{- end -}}
+
+{{/*
+Hash only the role's configuration. An explicit migration pin can preserve a
+legacy Pod checksum for a control-only upgrade, but only for byte-identical
+role YAML. Configuration edits fail until the pin is removed for a planned
+rollout. Do not infer active Pod configuration from a live ConfigMap: a failed
+Helm upgrade can update that map before updating the controller.
+*/}}
+{{- define "core.adxRoleChecksum" -}}
+{{- $root := .root -}}
+{{- $rendered := include (print $root.Template.BasePath "/adx/configmap.yaml") $root | fromYaml -}}
+{{- $checksum := index $rendered.data .key | sha256sum -}}
+{{- $pins := $root.Values.adx.configChecksumMigration | default dict -}}
+{{- $role := trimSuffix ".yaml" .key -}}
+{{- $pin := index $pins $role | default dict -}}
+{{- if $pin -}}
+{{- if or (not (regexMatch "^[a-f0-9]{64}$" ($pin.legacyChecksum | default ""))) (ne ($pin.configSha256 | default "") $checksum) -}}
+{{- fail (printf "adx.configChecksumMigration.%s requires matching role configSha256 and legacyChecksum; remove it for a planned role rollout" $role) -}}
+{{- end -}}
+{{- $pin.legacyChecksum -}}
+{{- else -}}
+{{- $checksum -}}
+{{- end -}}
+{{- end -}}
