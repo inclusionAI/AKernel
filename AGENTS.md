@@ -147,7 +147,7 @@ Keep official build-download sources as the default and mirror/proxy selection e
 
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all
-four adjacent `gvisor-bin/` helpers in the final image. The manifest SHA-512
+adjacent `gvisor-bin/` helpers in the final image. The manifest SHA-512
 covers the archive, not a bare runsc binary. Keep CI's final-image payload
 checks synchronized; do not mix helper versions or fetch them at runtime.
 
