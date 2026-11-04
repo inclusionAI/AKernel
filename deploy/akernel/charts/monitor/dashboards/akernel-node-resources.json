@@ -118,7 +118,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Memory summed over selected nodes. host_used preserves legacy root-cgroup usage, which may not reflect whole-host usage; schedulable_capacity is scheduling capacity. akernel_current and akernel_max read /akernel memory.current and memory.max. Current includes descendant and cache charges and can remain nonzero without sandboxes. Capacity and max may overlap; parent-memory scaling uses current/max per pool, while All may include multiple pools.",
+      "description": "Cluster-wide memory bytes in use vs aggregate node schedulable memory. akernel_current and akernel_max sum /akernel memory.current and memory.max for the same selected nodes. Current includes cache charges and can remain nonzero without sandboxes. The limit and akernel_max curves may overlap; parent-memory scaling uses current/max per pool.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -140,7 +140,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "schedulable_capacity"
+              "options": "limit"
             },
             "properties": [
               {
@@ -205,7 +205,7 @@
           },
           "editorMode": "code",
           "expr": "sum(node_memory_usage_bytes{akernel_env=~\"$akernel_env\", host_name=~\"$host_name\"})",
-          "legendFormat": "host_used",
+          "legendFormat": "used",
           "range": true,
           "refId": "A"
         },
@@ -216,7 +216,7 @@
           },
           "editorMode": "code",
           "expr": "sum(node_memory_total_bytes{akernel_env=~\"$akernel_env\", host_name=~\"$host_name\"})",
-          "legendFormat": "schedulable_capacity",
+          "legendFormat": "limit",
           "range": true,
           "refId": "B"
         },
