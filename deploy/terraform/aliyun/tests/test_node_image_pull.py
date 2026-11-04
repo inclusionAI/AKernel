@@ -23,6 +23,8 @@ spec.loader.exec_module(bootstrap)
 API_METHOD = bootstrap.Bootstrap.api
 REGISTRY = 'registry.example.aliyuncs.com'
 DOMAIN = 'dragonfly-seed-client.dragonfly-system.svc.cluster.local'
+RESTART = ['systemctl','restart','kubelet','--job-mode=fail']
+JOB = ['systemctl','show','kubelet','--property=Job','--all']
 
 
 class BootstrapTest(unittest.TestCase):
@@ -50,6 +52,7 @@ class BootstrapTest(unittest.TestCase):
             bootstrap.PROFILE_LABEL:bootstrap.PROFILE, bootstrap.READY_LABEL:'false', bootstrap.POOL_LABEL:'default'}),
             spec=dict(providerID='test-region.i-new'), status=dict(conditions=[dict(type='Ready',status='True')]))
         self.dns, self.options, self.ignore = '', '', 'no'
+        self.job = 'Job='
         self.commands, self.patches, self.dry_runs = [], [], []
         self.cri = dict(main_path='/etc/containerd/config.toml', main_sha256='b'*64,
                         effective_sha256='c'*64, roots=[str(self.root / 'hosts')])
@@ -79,13 +82,16 @@ class BootstrapTest(unittest.TestCase):
 
     def command(self, args, timeout=30):
         self.commands.append(args)
+        if args == JOB:
+            if isinstance(self.job, Exception): raise self.job
+            return self.job
         if args == ['systemctl','is-active','NetworkManager']: return 'active'
         if args[:4] == ['ip','-j','route','show']: return '[{"dev":"eth0"}]'
         if args[:3] == ['nmcli','-g','GENERAL.CON-UUID']: return '11111111-1111-1111-1111-111111111111'
         if args[:3] == ['nmcli','-g','ipv4.dns']: return self.dns
         if args[:3] == ['nmcli','-g','ipv4.ignore-auto-dns']: return self.ignore
         if args[:5] == ['nmcli','--escape','no','-g','ipv4.dns-options']: return self.options
-        if args == ['systemctl','restart','kubelet']:
+        if args == RESTART:
             self.arguments.append('--resolv-conf=' + str(bootstrap.UPSTREAM))
         elif args[:3] == ['nmcli','connection','modify']:
             self.dns = args[args.index('ipv4.dns')+1]; self.ignore = 'yes'
@@ -157,35 +163,51 @@ class BootstrapTest(unittest.TestCase):
     def test_partial_configuration_resumes_and_foreign_changes_fail_closed(self):
         original = self.command; attempts=[]
         def failed_restart(args,timeout=30):
-            if args==['systemctl','restart','kubelet']:
+            if args==RESTART:
                 self.commands.append(args)
                 raise bootstrap.Pending('job cancelled')
             return original(args,timeout)
         with mock.patch.object(bootstrap,'run',side_effect=failed_restart):
             with self.assertRaises(bootstrap.Pending): bootstrap.Bootstrap(self.profile).start()
-        self.assertFalse((self.base/'kubelet-restart.json').exists())
         def timed_out_restart(args,timeout=30):
-            if args==['systemctl','restart','kubelet']:
+            if args==RESTART:
                 self.commands.append(args)
+                self.job='Job=42'
                 raise subprocess.TimeoutExpired(args,timeout)
             return original(args,timeout)
         with mock.patch.object(bootstrap,'run',side_effect=timed_out_restart):
             with self.assertRaises(subprocess.TimeoutExpired): bootstrap.Bootstrap(self.profile).start()
-        self.assertTrue((self.base/'kubelet-restart.json').exists())
-        with self.assertRaises(bootstrap.Pending): bootstrap.Bootstrap(self.profile).start()
-        self.assertEqual(sum(x==['systemctl','restart','kubelet'] for x in self.commands),2)
-        self.arguments.append('--resolv-conf='+str(bootstrap.UPSTREAM))
+        for _ in range(3):
+            with self.assertRaises(bootstrap.Pending): bootstrap.Bootstrap(self.profile).start()
+        self.assertEqual(self.commands.count(RESTART),2)
+        self.job='Job='
         def interrupted(args,timeout=30):
+            if args==JOB: self.arguments.append('--resolv-conf='+str(bootstrap.UPSTREAM))
             if args[:3]==['nmcli','device','reapply'] and not attempts:
                 attempts.append(1); raise bootstrap.Pending('apply pending')
             return original(args,timeout)
         with mock.patch.object(bootstrap,'run',side_effect=interrupted):
             with self.assertRaises(bootstrap.Pending): bootstrap.Bootstrap(self.profile).start()
             bootstrap.Bootstrap(self.profile).start()
-        self.assertEqual(sum(x==['systemctl','restart','kubelet'] for x in self.commands),2)
+        self.assertEqual(self.commands.count(RESTART),2)
         mirror=self.root/'hosts'/REGISTRY/'hosts.toml'; mirror.write_bytes(b'operator change')
         with self.assertRaises(RuntimeError): bootstrap.Bootstrap(self.profile).start()
         self.assertEqual(mirror.read_bytes(),b'operator change')
+
+    def test_orphan_restart_marker_recovers_after_job_finishes(self):
+        # State left by interruption after the old intent write but before restart.
+        (self.base/'kubelet-restart.json').write_bytes(bootstrap.canonical(dict(custom_sha256='old')))
+        for job in ('Job=37', '', 'unrecognized', bootstrap.Pending('query failed')):
+            self.job=job
+            for _ in range(3):
+                with self.assertRaises(bootstrap.Pending): bootstrap.Bootstrap(self.profile).start()
+            self.assertEqual(self.commands.count(RESTART),0)
+            self.assertEqual(bootstrap.HOST_RESOLV.read_text(),self.original)
+            self.assertFalse(any(x[:3]==['nmcli','connection','modify'] for x in self.commands))
+        self.job='Job=0'
+        bootstrap.Bootstrap(self.profile).start()
+        self.assertEqual(self.commands.count(RESTART),1)
+        self.assertEqual(self.node['metadata']['labels'][bootstrap.READY_LABEL],'true')
 
     def test_label_race_readback_and_retry_are_bounded(self):
         original = self.api

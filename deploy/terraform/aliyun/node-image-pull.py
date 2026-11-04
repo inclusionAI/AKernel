@@ -443,14 +443,10 @@ class Bootstrap:
         owned_write(CUSTOM, custom, b['custom'].encode() if b['custom'] is not None else None)
         os.chmod(str(CUSTOM), b['custom_mode'])
         if argument(kubelet_arguments(), '--resolv-conf') != str(UPSTREAM):
-            intent = BASE / 'kubelet-restart.json'
-            if not intent.exists():
-                atomic_write(intent, canonical(dict(custom_sha256=sha(custom))))
-                try:
-                    run(['systemctl', 'restart', 'kubelet'], timeout=60)
-                except Pending:
-                    intent.unlink()
-                    raise
+            available(run(['systemctl', 'show', 'kubelet', '--property=Job', '--all']) in ('Job=', 'Job=0'), 'kubelet job pending')
+            # A prior job may have completed while querying systemd.
+            if argument(kubelet_arguments(), '--resolv-conf') != str(UPSTREAM):
+                run(['systemctl', 'restart', 'kubelet', '--job-mode=fail'], timeout=60)
             available(argument(kubelet_arguments(), '--resolv-conf') == str(UPSTREAM), 'resolver restart pending')
         self.guard()
         if (dns, ignore, current_options) != (wanted, 'yes', options):
