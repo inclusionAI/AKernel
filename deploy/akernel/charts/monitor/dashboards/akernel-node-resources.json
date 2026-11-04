@@ -118,7 +118,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Cluster-wide memory bytes in use vs aggregate node schedulable memory.",
+      "description": "Memory summed over selected nodes. host_used preserves legacy root-cgroup usage, which may not reflect whole-host usage; schedulable_capacity is scheduling capacity. akernel_current and akernel_max read /akernel memory.current and memory.max. Current includes descendant and cache charges and can remain nonzero without sandboxes. Capacity and max may overlap; parent-memory scaling uses current/max per pool, while All may include multiple pools.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -140,13 +140,32 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "limit"
+              "options": "schedulable_capacity"
             },
             "properties": [
               {
                 "id": "custom.lineStyle",
                 "value": {
                   "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "akernel_max"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [2, 6],
                   "fill": "dash"
                 }
               },
@@ -186,7 +205,7 @@
           },
           "editorMode": "code",
           "expr": "sum(node_memory_usage_bytes{akernel_env=~\"$akernel_env\", host_name=~\"$host_name\"})",
-          "legendFormat": "usage",
+          "legendFormat": "host_used",
           "range": true,
           "refId": "A"
         },
@@ -197,9 +216,31 @@
           },
           "editorMode": "code",
           "expr": "sum(node_memory_total_bytes{akernel_env=~\"$akernel_env\", host_name=~\"$host_name\"})",
-          "legendFormat": "limit",
+          "legendFormat": "schedulable_capacity",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(sandbox_parent_memory_current_bytes{akernel_env=~\"$akernel_env\", host_name=~\"$host_name\", cgroup_path=\"/akernel\"})",
+          "legendFormat": "akernel_current",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(sandbox_parent_memory_max_bytes{akernel_env=~\"$akernel_env\", host_name=~\"$host_name\", cgroup_path=\"/akernel\"})",
+          "legendFormat": "akernel_max",
+          "range": true,
+          "refId": "D"
         }
       ],
       "title": "Memory — cluster total (bytes)",
