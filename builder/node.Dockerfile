@@ -74,7 +74,7 @@ RUN set -eux; \
       "${GVISOR_SHA512}" /gvisor; \
     for binary in runsc containerd-shim-runsc-v1 \
       gvisor-bin/checkpointgofer gvisor-bin/gvisor-sentry-prewarmer \
-      gvisor-bin/gvisor_sentry gvisor-bin/runsc-metric-server; do \
+      gvisor-bin/gvisor_sentry gvisor-bin/runsc-fd-parking gvisor-bin/runsc-metric-server; do \
       sh /usr/local/libexec/verify-elf-arch.sh "/gvisor/${binary}" "${TARGETARCH}"; \
     done; \
     /gvisor/runsc --version
