@@ -1,0 +1,5 @@
+apiVersion: v2
+name: akernel-juicefs
+version: 0.1.0
+appVersion: "1.4.1"
+description: JuiceFS with PostgreSQL metadata and Rook Ceph RGW checkpoint storage

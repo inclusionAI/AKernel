@@ -1,0 +1,973 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "ADX Ingress HTTP requests include control-plane routes. Latency ends when the response is returned, not when a streaming body finishes. All queries are isolated by adx_env.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Ingress Requests (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_ingress_http_requests_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "requests",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "HTTP requests observed by the shared Ingress during the selected range, including API and workload traffic. increase() estimates sampled counter deltas; fractional counts are possible.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Ingress Responses by Class (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Responses",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by(cluster,adx_env,class)(increase(data_plane_ingress_http_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "{{class}}",
+          "refId": "A",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "description": "Estimated response counts in the selected range, grouped by cluster/environment and HTTP status class. 1xx includes successful 101 WebSocket upgrades. SSE HTTP 200 does not imply final Environment creation success. Older producers counted 101 as other; upgrades do not rewrite historical samples.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "cluster": "Cluster",
+              "adx_env": "ADX Env",
+              "class": "HTTP class",
+              "Value": "Responses"
+            }
+          }
+        }
+      ],
+      "maxDataPoints": 1
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Ingress 4xx / 5xx Ratio (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_ingress_http_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",class=\"4xx\"}[$__range])) / (sum(increase(data_plane_ingress_http_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range])) > 0)",
+          "legendFormat": "4xx",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_ingress_http_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",class=\"5xx\"}[$__range])) / (sum(increase(data_plane_ingress_http_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range])) > 0)",
+          "legendFormat": "5xx",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "Selected-range 4xx or 5xx response count divided by all observed HTTP responses. No responses means no defined ratio. 101 is successful upgrade; SSE final business failures require lifecycle metrics.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Ingress Response Header Latency P50 / P95 / P99",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
+          "legendFormat": "P50",
+          "refId": "A",
+          "instant": false,
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
+          "legendFormat": "P95",
+          "refId": "B",
+          "instant": false,
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
+          "legendFormat": "P99",
+          "refId": "C",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "description": "Time until Ingress obtains response headers. For SSE this can be much shorter than business completion or stream lifetime. Idle windows with no observations have no meaningful percentile.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Ingress Requests In Flight",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 30
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(data_plane_ingress_http_requests_in_flight{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
+          "legendFormat": "requests",
+          "refId": "A",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "description": "Ingress HTTP requests currently being handled according to its request lifecycle; use session/relay panels for streaming connections.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Ingress Backend Pool Idle Connections",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 30
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(data_plane_ingress_backend_http_idle_connections{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
+          "legendFormat": "idle",
+          "refId": "A",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "description": "Currently reusable idle upstream connections. Zero can mean no warm pooled connections; it does not by itself mean backend failure.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Ingress Backend Pool Events (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_ingress_backend_http_opened_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "opened",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_ingress_backend_http_reused_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "reused",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_ingress_backend_http_discarded_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "discarded",
+          "refId": "C",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_ingress_backend_http_acquire_timeouts_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "acquire_timeouts",
+          "refId": "D",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "Connection-pool actions such as connection creation, reuse and removal, distinct from user-request outcomes. Counts cover the selected dashboard range; sampled counter deltas can be fractional.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Relay Active Streams (cluster total)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, adx_env) (data_plane_relay_active_streams{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "refId": "A",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "description": "Cluster-wide active Relay streams, aggregated into one history per cluster and deployment. Use a node-filtered Explore query for node-level stream diagnostics.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Relay Connections / Errors (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_relay_connect_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "connections",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_relay_connect_errors{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "errors",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "Relay connection activity and connection failures. Values describe transport, not final create results. Counts cover the selected dashboard range; sampled counter deltas can be fractional.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Relay Rejections / Route Errors (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 46
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_relay_overload_rejections_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "overload_rejections_total",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_relay_forbidden_target_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "forbidden_target_total",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(data_plane_relay_route_mismatch_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range]))",
+          "legendFormat": "route_mismatch_total",
+          "refId": "C",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "Relay rejects and routing lookup failures, such as missing or unusable targets. Inspect the reason labels before interpreting them as runtime failures. Counts cover the selected dashboard range; sampled counter deltas can be fractional.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Ingress Sessions / Physical Connections",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 54
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(data_plane_ingress_active_sessions{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
+          "legendFormat": "sessions",
+          "refId": "A",
+          "instant": false,
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(data_plane_ingress_h2_physical_connections{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
+          "legendFormat": "physical connections",
+          "refId": "B",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "description": "Logical Ingress sessions compared with physical HTTP/2 connections. Multiplexing allows multiple sessions to share one physical connection.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Ingress Requests over 100 ms (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 54
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(increase(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\",le=\"+Inf\"}[$__range])) - sum(increase(data_plane_ingress_http_request_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\",le=\"0.100\"}[$__range]))) / (sum(increase(data_plane_ingress_http_request_duration_seconds_count{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range])) > 0)",
+          "legendFormat": "over 100 ms",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "Fraction of Ingress response-header observations above the 100 ms histogram boundary. This is not the fraction of Environment creates taking over 100 ms.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Ingress Traffic (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(data_plane_ingress_frontend_bytes_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",direction=\"received\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "received"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B",
+          "expr": "sum(increase(data_plane_ingress_frontend_bytes_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",direction=\"sent\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "sent"
+        }
+      ],
+      "description": "Bytes received/sent on public Ingress connections after TLS, including HTTP headers/framing and upgraded streams. Selected-range sampled counter increase, displayed as B/KiB/MiB/GiB. Ingress and Relay measure different hops; do not add them together. TLS records and IP/link overhead are excluded. Counter resets are handled per producer before summation.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Relay Traffic (selected range)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(data_plane_relay_transfer_bytes_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",direction=\"to_runtime\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "to_runtime"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B",
+          "expr": "sum(increase(data_plane_relay_transfer_bytes_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",direction=\"from_runtime\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "from_runtime"
+        }
+      ],
+      "description": "Relay payload bytes to/from runtime, including active streams and protocol framing. Selected-range sampled counter increase, displayed as B/KiB/MiB/GiB. Ingress and Relay measure different hops; do not add them together. TLS records and IP/link overhead are excluded. Counter resets are handled per producer before summation.",
+      "maxDataPoints": 1
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "adx",
+    "data-plane",
+    "observability"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis, cluster)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(data_plane_ingress_http_requests_total{cluster=~\"$cluster\"}, adx_env)",
+        "includeAll": true,
+        "label": "adx_env",
+        "name": "adx_env",
+        "options": [],
+        "query": {
+          "query": "label_values(data_plane_ingress_http_requests_total{cluster=~\"$cluster\"}, adx_env)",
+          "refId": "Prometheus-adx-env-Variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "ADX Data Plane",
+  "uid": "adx-data-plane",
+  "version": 1,
+  "links": [
+    {
+      "title": "Schedule",
+      "type": "link",
+      "url": "/d/adx-schedule",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Data Plane",
+      "type": "link",
+      "url": "/d/adx-data-plane",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Process Resources",
+      "type": "link",
+      "url": "/d/adx-process-resources",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Environment Logs",
+      "type": "link",
+      "url": "/d/adx-environment-logs",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false,
+      "tooltip": "Open on-demand log search, initially the last 15 minutes."
+    },
+    {
+      "title": "Environments",
+      "type": "link",
+      "url": "/d/adx-environments",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    },
+    {
+      "title": "Sandbox Lifecycle",
+      "type": "link",
+      "url": "/d/adx-sandbox-lifecycle",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}

@@ -1,0 +1,383 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "On-demand Environment stdout/stderr and HTTP trace search. Enter a runtime ID and/or case-sensitive text. No automatic refresh.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Schedule",
+      "type": "link",
+      "url": "/d/adx-schedule",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Data Plane",
+      "type": "link",
+      "url": "/d/adx-data-plane",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Process Resources",
+      "type": "link",
+      "url": "/d/adx-process-resources",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Explore Requests",
+      "type": "link",
+      "url": "/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B+%28resource.cluster+%3D+%5C%22${cluster:percentencode}%5C%22+%7C%7C+%5C%22${cluster:percentencode}%5C%22+%3D+%5C%22..%2A%5C%22%29+%26%26+resource.adx_env+%3D~+%5C%22${adx_env:percentencode}%5C%22+%26%26+resource.service.name+%3D+%5C%22adx-apiserver%5C%22+%26%26+name+%3D+%5C%22environment.create%5C%22+%7D+%7C+select%28span.environment.id%2C+span.environment.create.outcome%2C+resource.service.name%29%22%2C%22tableType%22%3A%22spans%22%2C%22limit%22%3A20%2C%22spss%22%3A20%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-15m%22%2C%22to%22%3A%22now%22%7D%7D%7D",
+      "includeVars": false,
+      "keepTime": false,
+      "targetBlank": false,
+      "tooltip": "Search up to 20 sampled environment.create business spans in the last 15 minutes. Expand the time range when needed."
+    },
+    {
+      "title": "Environment Logs",
+      "type": "link",
+      "url": "/d/adx-environment-logs",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false,
+      "tooltip": "Open on-demand log search, initially the last 15 minutes."
+    },
+    {
+      "title": "Environments",
+      "type": "link",
+      "url": "/d/adx-environments",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    },
+    {
+      "title": "Sandbox Lifecycle",
+      "type": "link",
+      "url": "/d/adx-sandbox-lifecycle",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "id": 21,
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{cluster=~\"$cluster\",adx_env=~\"$adx_env\",component_name=\"adx-runtime\"} | runtime_id =~ `${runtime_id:raw}` | label_format adx_keyword_match=`{{ contains (urldecode \"${log_search:percentencode}\") (__line__) }}` | adx_keyword_match=\"true\" | drop adx_keyword_match",
+          "refId": "A",
+          "maxLines": 200
+        }
+      ],
+      "title": "Environment Logs",
+      "type": "logs",
+      "description": "Main-process stdout/stderr. Runtime ID contains Environment ID and generation. Runtime filter is a regex; .* matches all, .*environment-id.* selects its generations. Log text is literal and case-sensitive. At most 200 lines per query. SDK command responses are separate."
+    },
+    {
+      "id": 23,
+      "type": "table",
+      "title": "Environment Create Completion Traces",
+      "description": "One environment.create business span per sampled create call, ending at its final result after scheduling and runtime startup. Duration excludes the earlier HTTP authentication/spec preparation. Success includes successful reuse; use the successful-new-create metric to exclude replay/reuse. Unknown means an uncertain result, not confirmed failure. Sampling means this table is not a complete request ledger.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 24,
+        "h": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Trace ID"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": false
+              },
+              {
+                "id": "custom.width",
+                "value": 290
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "View Trace",
+                    "url": "",
+                    "internal": {
+                      "datasourceUid": "tempo",
+                      "datasourceName": "Tempo",
+                      "query": {
+                        "query": "${__value.raw}",
+                        "queryType": "traceql"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Start Time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 225
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Component"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Create Completion Time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 155
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Outcome"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "tableType": "spans",
+          "query": "{ (resource.cluster = \"${cluster:raw}\" || \"${cluster:raw}\" = \"..*\") && resource.adx_env =~ \"$adx_env\" && resource.service.name = \"adx-apiserver\" && name = \"environment.create\" } | select(span.environment.id, span.environment.create.outcome, resource.service.name)",
+          "limit": 20,
+          "spss": 20,
+          "filters": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "traceService": true,
+              "traceName": true,
+              "spanID": true,
+              "nested": true,
+              "adx_env": true,
+              "cluster": true
+            },
+            "indexByName": {
+              "duration": 0,
+              "Duration": 0,
+              "environment.create.outcome": 1,
+              "environment.id": 2,
+              "name": 3,
+              "Name": 3,
+              "time": 4,
+              "Start time": 4,
+              "service.name": 5,
+              "traceIdHidden": 6
+            },
+            "renameByName": {
+              "time": "Start Time",
+              "name": "Operation",
+              "environment.id": "Environment ID",
+              "environment.create.outcome": "Outcome",
+              "service.name": "Component",
+              "duration": "Create Completion Time",
+              "traceIdHidden": "Trace ID",
+              "Start time": "Start Time",
+              "Name": "Operation",
+              "Duration": "Create Completion Time"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "",
+  "schemaVersion": 42,
+  "tags": [
+    "adx",
+    "schedule",
+    "instances",
+    "metrics",
+    "monitoring"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis, cluster)",
+        "refresh": 2,
+        "multi": false,
+        "includeAll": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(adx_coordinator_node_capacity_cpu_millis{cluster=~\"$cluster\"}, adx_env)",
+        "includeAll": true,
+        "label": "adx_env",
+        "name": "adx_env",
+        "options": [],
+        "query": {
+          "query": "label_values(adx_coordinator_node_capacity_cpu_millis{cluster=~\"$cluster\"}, adx_env)",
+          "refId": "Prometheus-adx-env-Variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "name": "runtime_id",
+        "label": "Runtime ID regex",
+        "description": "RE2 regex. Use \\x60 to match a backtick.",
+        "type": "textbox",
+        "query": ".*",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0
+      },
+      {
+        "name": "log_search",
+        "label": "Log text contains",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "hide": 0,
+        "description": "Case-sensitive literal text. Enter backslashes and quotes directly; leave empty to match all lines."
+      }
+    ]
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ADX Environment Logs",
+  "uid": "adx-environment-logs",
+  "version": 3,
+  "weekStart": ""
+}

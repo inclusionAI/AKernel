@@ -2,9 +2,9 @@
 
 This Terraform module creates a Huawei Cloud CCE cluster and installs the
 AKernel core and optional monitor charts. It follows the same deployment
-contract as the Aliyun module: one all-in-one AKernel image, a generated IAM
-seed, dual-entrypoint Traefik, optional public Grafana, and local state under
-`.akernel/<env>/`.
+contract as the Aliyun module: one all-in-one AKernel image, an Agent DX
+identity Secret, managed Redis, a direct ADX public Service, optional public
+Grafana, and local state under `.akernel/<env>/`.
 
 ## Pod PID budget
 
@@ -44,13 +44,14 @@ Run the repository-level workflow from the AKernel root:
 make config VENDOR=huaweicloud
 make plan VENDOR=huaweicloud
 make deploy VENDOR=huaweicloud
-make token VENDOR=huaweicloud TTL=24h
+make token VENDOR=huaweicloud
 make print-env VENDOR=huaweicloud
 ```
 
-The generated profile contains Terraform variables, state, kubeconfig, IAM
-seed, and Grafana administrator password under `.akernel/default/`. Use
-`ENV=<name>` for an independent deployment profile.
+The generated profile contains Terraform variables, state, kubeconfig, and the
+Grafana administrator password under `.akernel/default/`. After deployment,
+`make print-env` stores mode-0600 SDK credential files there. Use `ENV=<name>`
+for an independent deployment profile.
 
 For non-interactive agent usage, provide all values explicitly:
 
@@ -73,16 +74,23 @@ login is required. The two settings are mutually exclusive.
 
 The generated profile enables the public CCE API endpoint and node-subnet SNAT
 so Terraform can reach the cluster and worker nodes can pull public images.
-Traefik is exposed through a public ELB with two entrypoints:
+ADX is exposed directly through a public ELB with two ports:
 
-- `websecure:443` serves the authenticated frontend API and exec websocket.
-- `web:80` serves sandbox port-forwarding traffic.
+- HTTPS 443 forwards API, command/file and PTY traffic to ADX control port 8443.
+- HTTP 80 forwards sandbox-port traffic to ADX data port 8080.
 
-The SDK therefore needs only the Traefik ELB address:
+The generated ADX Secret provides the HTTPS certificate and API key.
+`adx_public_service_enabled` controls public Service creation;
+`adx_public_access` controls public ELB auto-provisioning. Configure an existing
+load balancer with `adx_service_annotations` / `adx_load_balancer_ip` when required.
+`adx_control_port` and `adx_data_port` select distinct external ports.
 
 ```bash
-export AKERNEL_SERVER_ADDRESS=<traefik-elb-address>
+export AKERNEL_SERVER_ADDRESS=<adx-elb-address>
 ```
+
+For custom ports, `make print-env VENDOR=huaweicloud` discovers the Service
+ports and writes the corresponding gateway override.
 
 Grafana uses a separate public ELB when monitoring and public Grafana access
 are enabled. Its generated administrator password is stored at
@@ -90,9 +98,9 @@ are enabled. Its generated administrator password is stored at
 
 ## Images
 
-Master, frontend, and node use the same configured AKernel all-in-one image.
-etcd, Traefik, Grafana, Prometheus, Loki, Tempo, and BusyBox use pinned official
-public images by default. Use the component image variables or
+ADX control and node workloads use the same configured AKernel all-in-one
+image. Managed Redis, Grafana, Prometheus, Loki, Tempo, and BusyBox
+use pinned public images by default. Use the component image variables or
 `monitor_image_registry` only when the cluster requires private mirrors.
 
 ## Optional components
@@ -118,7 +126,7 @@ add their own Kruise-based overrides.
 
 The Makefile workflow is preferred because it keeps generated files outside
 the module directory. Advanced users can instead copy
-`terraform.tfvars.example`, set a unique `iam_litebus_data_key`, and provide an
+`terraform.tfvars.example` and provide an
 external state path explicitly:
 
 ```bash
@@ -143,3 +151,18 @@ make destroy VENDOR=huaweicloud
 The monitor namespace defaults to `akernel-monitor`. If CCE is still
 initializing during the first apply, wait for the cluster and node pool to
 become ready, then rerun `make deploy VENDOR=huaweicloud`.
+
+## Shared checkpoint storage
+
+The `checkpoint_storage` object connects an existing AFS/JuiceFS host mount or
+RWX claim to both execution nodes and Coordinator. Defaults retain local
+checkpoints. Alternatively, `juicefs.enabled=true` deploys PostgreSQL,
+PVC-backed Rook/Ceph RGW, a bucket, the format Job and FUSE mount clients, then
+selects that shared filesystem for ADX. Specify `ceph_storage_class` with raw
+Block support and `postgres_storage_class` with filesystem support.
+
+The guided entry point is `make config JUICEFS_ENABLED=true
+JUICEFS_STORAGE_CLASS=YOUR_STORAGE_CLASS`; use the generated `terraform.tfvars`
+for placement, capacity and separate classes. Review `make plan` before
+deploying. See [the complete storage guide](../../shared-storage/README.md) for
+HA limits, retained data, mount lifecycle, external storage and acceptance.

@@ -34,6 +34,7 @@ Sections:
     9. Fail-closed pre-check without a sandbox
 """
 
+import os
 import tarfile
 import tempfile
 from pathlib import Path
@@ -44,6 +45,14 @@ from akernel_sdk import (
     Sandbox,
     check_direct_launch,
 )
+
+
+def _dockerfile(source: str) -> str:
+    """Render the example with a registry-reachable base image when configured."""
+    image = os.environ.get("AKERNEL_TEST_DOCKERFILE_IMAGE", "ubuntu:22.04").strip()
+    if not image:
+        raise ValueError("AKERNEL_TEST_DOCKERFILE_IMAGE must not be empty")
+    return source.replace("FROM ubuntu:22.04", f"FROM {image}")
 
 
 def _precheck(context: LocalDockerContext) -> None:
@@ -70,7 +79,7 @@ def section_core_path() -> None:
         (docs / "private.txt").write_text("hidden\n", encoding="utf-8")
         (context_dir / "app.sh").write_text(
             "#!/bin/sh\n"
-            "printf 'whoami=%s cwd=%s' \"$WHOAMI\" \"$(pwd)\" > /tmp/app.started\n",
+            'printf \'whoami=%s cwd=%s\' "$WHOAMI" "$(pwd)" > /tmp/app.started\n',
             encoding="utf-8",
         )
         executable = context_dir / "entrypoint.sh"
@@ -87,7 +96,7 @@ def section_core_path() -> None:
         nested_empty.chmod(0o750)
         dockerfile = build / "custom.Dockerfile"
         dockerfile.write_text(
-            """FROM ubuntu:22.04
+            _dockerfile("""FROM ubuntu:22.04
 RUN useradd -m app
 ENV WHOAMI=app
 WORKDIR /srv
@@ -102,7 +111,7 @@ COPY wild/* /srv/wild/
 COPY docs /srv/reincluded-literal/
 COPY doc* /srv/reincluded-wildcard/
 CMD ["/bin/sh", "/srv/core/app.sh"]
-""",
+"""),
             encoding="utf-8",
         )
         (build / "custom.Dockerfile.dockerignore").write_text(
@@ -163,12 +172,12 @@ def section_entrypoint_cmd_merge() -> None:
     print("\n=== Section 2: ENTRYPOINT + CMD ===")
     with tempfile.TemporaryDirectory() as directory:
         context_dir = Path(directory)
-        dockerfile = """\
+        dockerfile = _dockerfile("""\
 FROM ubuntu:22.04
 RUN test "$(pwd)" = /
 ENTRYPOINT ["/bin/sh", "-c", "printf %s \\\"$1\\\" > /tmp/ep.out; pwd > /tmp/cwd.out"]
 CMD ["ignored-argv-zero", "entrypoint+cmd merged"]
-"""
+""")
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
         _precheck(context)
 
@@ -194,9 +203,11 @@ def section_entrypoint_only() -> None:
     print("\n=== Section 3: ENTRYPOINT only ===")
     with tempfile.TemporaryDirectory() as directory:
         context = LocalDockerContext(
-            "FROM ubuntu:22.04\n"
-            'ENTRYPOINT ["/bin/sh", "-c", '
-            '"printf entrypoint-only > /tmp/entrypoint-only.out"]\n',
+            _dockerfile(
+                "FROM ubuntu:22.04\n"
+                'ENTRYPOINT ["/bin/sh", "-c", '
+                '"printf entrypoint-only > /tmp/entrypoint-only.out"]\n'
+            ),
             context_dir=directory,
         )
         _precheck(context)
@@ -217,7 +228,9 @@ def section_shell_cmd() -> None:
     print("\n=== Section 4: shell-form CMD ===")
     with tempfile.TemporaryDirectory() as directory:
         context = LocalDockerContext(
-            "FROM ubuntu:22.04\nWORKDIR /tmp\nCMD pwd > /tmp/shell-cmd.out\n",
+            _dockerfile(
+                "FROM ubuntu:22.04\nWORKDIR /tmp\nCMD pwd > /tmp/shell-cmd.out\n"
+            ),
             context_dir=directory,
         )
         _precheck(context)
@@ -238,10 +251,12 @@ def section_shell_entrypoint_ignores_cmd() -> None:
     print("\n=== Section 5: shell ENTRYPOINT ignores CMD ===")
     with tempfile.TemporaryDirectory() as directory:
         context = LocalDockerContext(
-            "FROM ubuntu:22.04\n"
-            "ENTRYPOINT printf shell-entrypoint > /tmp/shell-entrypoint.out\n"
-            'CMD ["/bin/sh", "-c", '
-            '"printf unexpected > /tmp/cmd-should-not-run.out"]\n',
+            _dockerfile(
+                "FROM ubuntu:22.04\n"
+                "ENTRYPOINT printf shell-entrypoint > /tmp/shell-entrypoint.out\n"
+                'CMD ["/bin/sh", "-c", '
+                '"printf unexpected > /tmp/cmd-should-not-run.out"]\n'
+            ),
             context_dir=directory,
         )
         _precheck(context)
@@ -264,9 +279,11 @@ def section_auto_start_disabled() -> None:
     print("\n=== Section 6: auto startup disabled ===")
     with tempfile.TemporaryDirectory() as directory:
         context = LocalDockerContext(
-            "FROM ubuntu:22.04\n"
-            'CMD ["/bin/sh", "-c", '
-            '"printf unexpected > /tmp/disabled-start.out"]\n',
+            _dockerfile(
+                "FROM ubuntu:22.04\n"
+                'CMD ["/bin/sh", "-c", '
+                '"printf unexpected > /tmp/disabled-start.out"]\n'
+            ),
             context_dir=directory,
         )
         _precheck(context)
@@ -286,11 +303,11 @@ def section_copy_chown() -> None:
     with tempfile.TemporaryDirectory() as directory:
         context_dir = Path(directory)
         (context_dir / "payload.txt").write_text("owned\n", encoding="utf-8")
-        dockerfile = """\
+        dockerfile = _dockerfile("""\
 FROM ubuntu:22.04
 RUN useradd -m myuser
 COPY --chown=myuser:myuser payload.txt /data/payload.txt
-"""
+""")
         context = LocalDockerContext(dockerfile, context_dir=context_dir)
         _precheck(context)
 
@@ -318,10 +335,12 @@ def section_add_tar() -> None:
             tar.add(nested, arcname="nested")
 
         context = LocalDockerContext(
-            "FROM ubuntu:22.04\n"
-            "RUN useradd -m app\n"
-            "USER app\n"
-            "ADD app.tar.gz /opt/app/\n",
+            _dockerfile(
+                "FROM ubuntu:22.04\n"
+                "RUN useradd -m app\n"
+                "USER app\n"
+                "ADD app.tar.gz /opt/app/\n"
+            ),
             context_dir=context_dir,
         )
         _precheck(context)
@@ -339,11 +358,13 @@ def section_fail_closed_precheck() -> None:
     print("\n=== Section 9: fail-closed precheck ===")
     cases = (
         (
-            "FROM ubuntu:22.04\nADD https://example.test/app.tar /opt/app/\n",
+            _dockerfile(
+                "FROM ubuntu:22.04\nADD https://example.test/app.tar /opt/app/\n"
+            ),
             "remote_add",
         ),
-        ("FROM ubuntu:22.04\nUSER app:staff\n", "unsupported_syntax"),
-        ("FROM ubuntu:22.04\nUSER 1000:1001\n", "unsupported_syntax"),
+        (_dockerfile("FROM ubuntu:22.04\nUSER app:staff\n"), "unsupported_syntax"),
+        (_dockerfile("FROM ubuntu:22.04\nUSER 1000:1001\n"), "unsupported_syntax"),
     )
     with tempfile.TemporaryDirectory() as directory:
         for dockerfile, reason in cases:

@@ -44,6 +44,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import socket
 import subprocess
@@ -51,11 +52,17 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from akernel_sdk import HttpReverseTunnel, Sandbox
+from benchmarks.harness.errors import safe_error
+from benchmarks.harness.load import run_open_loop
+from benchmarks.harness.stats import LatencyHistogram
 
 # Empty => don't configure an image; the cluster default image is used.
 DEFAULT_IMAGE = os.environ.get("AKERNEL_PRESSURE_IMAGE", "")
@@ -69,19 +76,30 @@ DEFAULT_CMD = "/bin/true"
 TUNNEL_URL_PLACEHOLDER = "{TUNNEL_URL}"
 
 TUNNEL_CMD_TEMPLATE = (
-    'python3 -c "import urllib.request,sys;'
-    "r=urllib.request.urlopen('" + TUNNEL_URL_PLACEHOLDER + "/health',timeout=10);"
-    "body=r.read().decode();"
-    "print(r.status,body);"
-    "sys.exit(0 if r.status==200 and 'OK' in body else 1)\""
+    "sh -c 'test \"$(wget -qO- " + TUNNEL_URL_PLACEHOLDER + "/health)\" = OK'"
 )
 
 
-def _safe_kill(sb):
-    try:
-        sb.kill()
-    except Exception:
-        pass
+def _new_stats():
+    return {
+        "total": 0,
+        "success": 0,
+        "failed": 0,
+        "errors_by_phase": {"create": 0, "command": 0, "cleanup": 0},
+        "latencies": LatencyHistogram(),
+        "create_latencies": LatencyHistogram(),
+        "command_latencies": LatencyHistogram(),
+        "cleanup_latencies": LatencyHistogram(),
+        "failure_latencies": LatencyHistogram(),
+        "errors": [],
+        "arrival": {
+            "scheduled": 0,
+            "submitted": 0,
+            "rejected_inflight": 0,
+            "missed_deadline": 0,
+        },
+        "lock": threading.Lock(),
+    }
 
 
 def _build_sandbox_kwargs(
@@ -121,13 +139,13 @@ def _build_sandbox_kwargs(
     return kwargs
 
 
-def run_single_request(stats, term_pool, sb_kwargs, cmd, cmd_timeout, tunnel_mode):
-    t0 = time.time()
+def run_single_request(stats, _term_pool, sb_kwargs, cmd, cmd_timeout, tunnel_mode):
+    t0 = time.perf_counter()
     sb = None
-    cleanup_future = None
+    phase = "create"
     try:
         sb = Sandbox(**sb_kwargs)
-        t_created = time.time()
+        t_created = time.perf_counter()
 
         if tunnel_mode:
             tunnel_url = sb.reverse_tunnel.url
@@ -135,40 +153,51 @@ def run_single_request(stats, term_pool, sb_kwargs, cmd, cmd_timeout, tunnel_mod
         else:
             real_cmd = cmd
 
+        phase = "command"
         result = sb.commands.run(real_cmd, timeout=cmd_timeout)
+        t_command_done = time.perf_counter()
         if result.exit_code != 0:
             raise RuntimeError(
                 f"exit_code={result.exit_code} "
                 f"stdout={result.stdout!r} stderr={result.stderr!r}"
             )
 
-        elapsed = time.time() - t0
+        # A complete transaction includes deletion. An asynchronous delete
+        # cannot be counted as success before its result is known.
+        phase = "cleanup"
+        sb.kill()
+        sb = None
+        elapsed = time.perf_counter() - t0
         with stats["lock"]:
             stats["success"] += 1
-            stats["latencies"].append(elapsed)
-            stats["create_latencies"].append(t_created - t0)
-
-        if sb_kwargs.get("xpu"):
-            _safe_kill(sb)
-        else:
-            cleanup_future = term_pool.submit(_safe_kill, sb)
-        sb = None
+            stats["latencies"].observe(elapsed)
+            stats["create_latencies"].observe(t_created - t0)
+            stats["command_latencies"].observe(t_command_done - t_created)
+            stats["cleanup_latencies"].observe(elapsed - (t_command_done - t0))
     except Exception as e:
+        cleanup_error = None
+        if sb is not None:
+            try:
+                sb.kill()
+            except Exception as error:
+                cleanup_error = error
         with stats["lock"]:
             stats["failed"] += 1
-            stats["errors"].append(repr(e)[:300])
-        if sb is not None:
-            cleanup_future = term_pool.submit(_safe_kill, sb)
+            stats["errors_by_phase"][phase] += 1
+            stats["failure_latencies"].observe(time.perf_counter() - t0)
+            if len(stats["errors"]) < 10:
+                message = safe_error(e)
+                if cleanup_error is not None:
+                    message += f"; cleanup also failed: {safe_error(cleanup_error)}"
+                stats["errors"].append(message[:300])
     finally:
         with stats["lock"]:
             stats["total"] += 1
-    return cleanup_future
 
 
 def thread_loop(stats, term_pool, end_time, sb_kwargs, cmd, cmd_timeout, tunnel_mode):
-    pending_cleanup = None
-    while time.time() < end_time:
-        next_cleanup = run_single_request(
+    while time.perf_counter() < end_time:
+        run_single_request(
             stats,
             term_pool,
             sb_kwargs,
@@ -176,13 +205,6 @@ def thread_loop(stats, term_pool, end_time, sb_kwargs, cmd, cmd_timeout, tunnel_
             cmd_timeout,
             tunnel_mode,
         )
-        # Overlap the current lifecycle with the previous deletion while
-        # keeping cleanup work bounded to one pending task per load thread.
-        if pending_cleanup is not None:
-            pending_cleanup.result()
-        pending_cleanup = next_cleanup
-    if pending_cleanup is not None:
-        pending_cleanup.result()
 
 
 def worker_process(
@@ -203,16 +225,9 @@ def worker_process(
     cmd,
     cmd_timeout,
     tunnel_mode,
+    target_rps=0.0,
 ):
-    stats = {
-        "total": 0,
-        "success": 0,
-        "failed": 0,
-        "latencies": [],
-        "create_latencies": [],
-        "errors": [],
-        "lock": threading.Lock(),
-    }
+    stats = _new_stats()
     sb_kwargs = _build_sandbox_kwargs(
         image,
         runtime,
@@ -227,26 +242,38 @@ def worker_process(
         reverse_port,
         listen_port,
     )
-    term_pool = ThreadPoolExecutor(max_workers=max(4, threads_per_proc))
-    end_time = time.time() + duration
+    end_time = time.perf_counter() + duration
 
-    with ThreadPoolExecutor(max_workers=threads_per_proc) as worker_pool:
-        futs = [
-            worker_pool.submit(
-                thread_loop,
-                stats,
-                term_pool,
-                end_time,
-                sb_kwargs,
-                cmd,
-                cmd_timeout,
-                tunnel_mode,
-            )
-            for _ in range(threads_per_proc)
-        ]
-        wait(futs)
+    if target_rps:
+        arrivals = run_open_loop(
+            duration=duration,
+            target_rps=target_rps,
+            max_inflight=threads_per_proc,
+            operation=lambda: run_single_request(
+                stats, None, sb_kwargs, cmd, cmd_timeout, tunnel_mode
+            ),
+        )
+        stats["arrival"] = vars(arrivals)
+    else:
+        with ThreadPoolExecutor(max_workers=threads_per_proc) as worker_pool:
+            futs = [
+                worker_pool.submit(
+                    thread_loop,
+                    stats,
+                    None,
+                    end_time,
+                    sb_kwargs,
+                    cmd,
+                    cmd_timeout,
+                    tunnel_mode,
+                )
+                for _ in range(threads_per_proc)
+            ]
+            for future in futs:
+                future.result()
+        stats["arrival"]["scheduled"] = stats["total"]
+        stats["arrival"]["submitted"] = stats["total"]
 
-    term_pool.shutdown(wait=True)
     stats.pop("lock", None)
     return stats
 
@@ -279,7 +306,25 @@ def start_local_http_server(port: int):
     raise RuntimeError(f"failed to start local http server on port {port}")
 
 
+def _write_result(output: Path | None, report: dict) -> None:
+    if output is None:
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + ".tmp")
+    temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(output)
+
+
 def main(args):
+    if (
+        args.processes < 1
+        or args.threads < 1
+        or args.duration < 1
+        or args.target_rps < 0
+    ):
+        raise ValueError("processes, threads and duration must be positive")
+    run_id = args.run_id or uuid4().hex
+    started_at = datetime.now(timezone.utc).isoformat()
     if args.tunnel and not args.upstream:
         args.upstream = f"127.0.0.1:{args.tunnel_port}"
         args.cmd = TUNNEL_CMD_TEMPLATE
@@ -292,6 +337,7 @@ def main(args):
         f"   processes      : {args.processes}\n"
         f"   threads/proc   : {args.threads}\n"
         f"   total parallel : {args.processes * args.threads}\n"
+        f"   target RPS     : {args.target_rps or '<closed loop>'}\n"
         f"   duration       : {args.duration}s\n"
         f"   runtime        : {args.runtime}\n"
         f"   image (rootfs) : {args.image or '<cluster default>'}\n"
@@ -310,54 +356,109 @@ def main(args):
     )
 
     try:
-        pool = ProcessPoolExecutor(max_workers=args.processes)
-        futs = [
-            pool.submit(
-                worker_process,
-                args.threads,
-                args.duration,
-                args.image,
-                args.runtime,
-                args.cpu,
-                args.memory,
-                args.cpu_limit,
-                args.mem_limit,
-                args.idle_timeout,
-                args.xpu,
-                args.storage_mb,
-                args.upstream,
-                args.reverse_port,
-                args.listen_port,
-                args.cmd,
-                args.cmd_timeout,
-                bool(args.upstream),
+        t_start = time.perf_counter()
+        try:
+            with ProcessPoolExecutor(max_workers=args.processes) as pool:
+                futs = [
+                    pool.submit(
+                        worker_process,
+                        args.threads,
+                        args.duration,
+                        args.image,
+                        args.runtime,
+                        args.cpu,
+                        args.memory,
+                        args.cpu_limit,
+                        args.mem_limit,
+                        args.idle_timeout,
+                        args.xpu,
+                        args.storage_mb,
+                        args.upstream,
+                        args.reverse_port,
+                        args.listen_port,
+                        args.cmd,
+                        args.cmd_timeout,
+                        bool(args.upstream),
+                        args.target_rps / args.processes if args.target_rps else 0.0,
+                    )
+                    for _ in range(args.processes)
+                ]
+                results = [future.result() for future in futs]
+        except Exception as error:
+            _write_result(
+                args.output,
+                {
+                    "schema_version": 1,
+                    "run_id": run_id,
+                    "started_at": started_at,
+                    "status": "driver_error",
+                    "error": safe_error(error),
+                },
             )
-            for _ in range(args.processes)
-        ]
+            raise
+        t_end = time.perf_counter()
 
-        t_start = time.time()
-        done = wait(futs)
-        t_end = time.time()
-
-        merged = {
-            "total": 0,
-            "success": 0,
-            "failed": 0,
-            "latencies": [],
-            "create_latencies": [],
-            "errors": [],
-        }
-        for fut in done.done:
-            s = fut.result()
+        merged = _new_stats()
+        for s in results:
             merged["total"] += s["total"]
             merged["success"] += s["success"]
             merged["failed"] += s["failed"]
-            merged["latencies"].extend(s["latencies"])
-            merged["create_latencies"].extend(s["create_latencies"])
-            merged["errors"].extend(s["errors"])
+            for phase, count in s["errors_by_phase"].items():
+                merged["errors_by_phase"][phase] += count
+            for name, count in s["arrival"].items():
+                merged["arrival"][name] += count
+            for metric in (
+                "latencies",
+                "create_latencies",
+                "command_latencies",
+                "cleanup_latencies",
+                "failure_latencies",
+            ):
+                merged[metric].merge(s[metric])
+            merged["errors"].extend(s["errors"][: max(0, 10 - len(merged["errors"]))])
 
         total_time = t_end - t_start
-        rps = merged["total"] / total_time if total_time > 0 else 0
+        attempted_rps = merged["total"] / total_time if total_time > 0 else 0
+        successful_rps = merged["success"] / total_time if total_time > 0 else 0
+
+        report = {
+            "schema_version": 1,
+            "run_id": run_id,
+            "started_at": started_at,
+            "status": "passed" if merged["failed"] == 0 else "failed",
+            "mode": "open_loop" if args.target_rps else "closed_loop",
+            "config": {
+                "processes": args.processes,
+                "threads_per_process": args.threads,
+                "duration_requested_seconds": args.duration,
+                "runtime": args.runtime,
+                "image": args.image or None,
+                "cpu_request_millicores": args.cpu,
+                "memory_request_mib": args.memory,
+                "tunnel": bool(args.upstream),
+                "target_rps": args.target_rps or None,
+            },
+            "duration_seconds": total_time,
+            "attempted": merged["total"],
+            "succeeded": merged["success"],
+            "failed": merged["failed"],
+            "attempted_rps": attempted_rps,
+            "successful_rps": successful_rps,
+            "arrival": merged["arrival"],
+            "errors_by_phase": merged["errors_by_phase"],
+            "error_samples": merged["errors"],
+            "latency_ms": {
+                metric: merged[metric].summary()
+                for metric in (
+                    "latencies",
+                    "create_latencies",
+                    "command_latencies",
+                    "cleanup_latencies",
+                    "failure_latencies",
+                )
+            },
+        }
+        _write_result(args.output, report)
 
         print("\n" + "=" * 60)
         print("📊 SANDBOX PRESSURE TEST RESULT")
@@ -366,30 +467,33 @@ def main(args):
         print(f"🔁 Total Requests : {merged['total']}")
         print(f"✅ Success        : {merged['success']}")
         print(f"❌ Failed         : {merged['failed']}")
-        print(f"⚡ RPS            : {rps:.2f}")
+        print(f"⚡ Attempted RPS  : {attempted_rps:.2f}")
+        print(f"⚡ Successful RPS : {successful_rps:.2f}")
+        print(f"📥 Arrival slots  : {merged['arrival']}")
 
-        def _percentiles(label, samples_s):
-            if not samples_s:
+        def _percentiles(label, histogram):
+            if not histogram.count:
                 return
-            ms = sorted(x * 1000 for x in samples_s)
-            n = len(ms)
-            p50 = ms[n // 2]
-            p90 = ms[min(int(0.9 * n), n - 1)]
-            p99 = ms[min(int(0.99 * n), n - 1)]
+            summary = histogram.summary()
             print(
-                f"📉 {label:<20}: P50={p50:.1f}ms P90={p90:.1f}ms "
-                f"P99={p99:.1f}ms (n={n})"
+                f"📉 {label:<20}: P50≤{summary['p50_upper_ms']:.1f}ms "
+                f"P90≤{summary['p90_upper_ms']:.1f}ms "
+                f"P99≤{summary['p99_upper_ms']:.1f}ms "
+                f"(n={summary['count']}; bucket upper bounds)"
             )
 
-        _percentiles("create+run latency", merged["latencies"])
+        _percentiles("full lifecycle", merged["latencies"])
         _percentiles("create-only latency", merged["create_latencies"])
+        _percentiles("command latency", merged["command_latencies"])
+        _percentiles("delete latency", merged["cleanup_latencies"])
+        _percentiles("failed lifecycle", merged["failure_latencies"])
+        print(f"   Errors by phase: {merged['errors_by_phase']}")
 
         if merged["errors"]:
             print("\n— sample failures (up to 5) —")
             for err in merged["errors"][:5]:
                 print(f"  • {err}")
 
-        pool.shutdown(wait=True)
         if merged["failed"]:
             raise SystemExit(1)
     finally:
@@ -412,6 +516,18 @@ if __name__ == "__main__":
     parser.add_argument("--processes", type=int, default=2)
     parser.add_argument("--threads", type=int, default=4, help="threads per process")
     parser.add_argument("--duration", type=int, default=60, help="seconds")
+    parser.add_argument(
+        "--target-rps",
+        type=float,
+        default=0.0,
+        help="fixed total arrival rate; 0 uses the existing closed-loop mode",
+    )
+    parser.add_argument(
+        "--run-id", default="", help="identifier for result correlation"
+    )
+    parser.add_argument(
+        "--output", type=Path, help="write a structured JSON result to this path"
+    )
     parser.add_argument(
         "--image",
         default=DEFAULT_IMAGE,

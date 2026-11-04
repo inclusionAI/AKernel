@@ -8,13 +8,6 @@ VENDOR ?= aliyun
 ENV ?= default
 IMAGE_TAG ?=
 IMAGE_REPOSITORY ?=
-OPEN_YR_CORE_WHEEL_URL ?=
-OPEN_YR_CORE_WHEEL_SHA256 ?=
-RRT_RUNTIME_URL ?=
-RRT_RUNTIME_SHA256 ?=
-TOKEN_TTL ?= $(if $(TTL),$(TTL),24h)
-TENANT ?= default
-ROLE ?= developer
 FORCE ?= 0
 NON_INTERACTIVE ?= 0
 REGION ?=
@@ -32,11 +25,17 @@ MONITOR_STORAGE_CLASS ?=
 INSTALL_MONITOR ?=
 INSTALL_DRAGONFLY ?=
 CHUNK_DB_SIZE ?=
+JUICEFS_ENABLED ?= false
+JUICEFS_STORAGE_CLASS ?=
+JUICEFS_CACHE_MIB ?= 4096
+JUICEFS_CACHE_HOST_PATH ?=
+JUICEFS_CACHE_LARGE_WRITE ?= true
+CHECKPOINT_STORAGE_HOST_PATH ?=
+CHECKPOINT_STORAGE_EXISTING_CLAIM ?=
 ENABLE_RUNC ?=
 SCHEDULE_PLACEMENT_POLICY ?=
 GRAFANA_PUBLIC_ACCESS ?=
 GRAFANA_ADMIN_PASSWORD ?=
-IAM_SEED_HEX ?=
 
 .PHONY: help
 help:
@@ -51,22 +50,22 @@ help:
 	@echo "  make config NON_INTERACTIVE=1 ...  Generate config from Make variables"
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
 	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
+	@echo "  make config JUICEFS_ENABLED=true JUICEFS_STORAGE_CLASS=... Deploy JuiceFS/PostgreSQL/Ceph"
+	@echo "  make config CHECKPOINT_STORAGE_HOST_PATH=/srv/shared Use an existing AFS/JuiceFS mount"
 	@echo "  make config SCHEDULE_PLACEMENT_POLICY=binpack Use compact scheduling"
 	@echo "  make build IMAGE_TAG=<tag>          Build the all-in-one image"
 	@echo "  make standalone                    Build current source and start local runsc"
 	@echo "  make standalone-status             Show local source profile health"
 	@echo "  make standalone-stop               Stop a drained local source profile"
-	@echo "  make build RUNTIME_PROFILE=python   Include optional Python runtimes"
 	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
 	@echo "  make build AKERNEL_ENABLE_FIRECRACKER=false Exclude Firecracker"
 	@echo "  make build AKERNEL_ENABLE_RUNC=true Include the optional runc payload"
 	@echo "  make build AKERNEL_TARGETARCH=arm64 AKERNEL_ENABLE_KATA=false AKERNEL_ENABLE_FIRECRACKER=false AKERNEL_ENABLE_RUNC=true Build native arm64 runc image"
-	@echo "  make build RRT_RUNTIME_URL=... RRT_RUNTIME_SHA256=... Override RRT artifact"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
 	@echo "  make plan                          Terraform plan"
 	@echo "  make deploy                        Terraform apply"
-	@echo "  make token TTL=24h                 Generate a local JWT token"
+	@echo "  make token                         Read the deployed ADX administrator API key"
 	@echo "  make print-env                     Print SDK environment exports"
 	@echo "  make sdk-check                     Lint, type-check, and test the Python SDK"
 	@echo "  make deploy-script-check           Check deployment script syntax"
@@ -102,11 +101,16 @@ config:
 	if [[ -n "$(INSTALL_MONITOR)" ]]; then args+=(--install-monitor "$(INSTALL_MONITOR)"); fi; \
 	if [[ -n "$(INSTALL_DRAGONFLY)" ]]; then args+=(--install-dragonfly "$(INSTALL_DRAGONFLY)"); fi; \
 	if [[ -n "$(CHUNK_DB_SIZE)" ]]; then args+=(--chunk-db-size "$(CHUNK_DB_SIZE)"); fi; \
+	args+=(--juicefs-enabled "$(JUICEFS_ENABLED)"); \
+	args+=(--juicefs-cache-mib "$(JUICEFS_CACHE_MIB)" --juicefs-cache-large-write "$(JUICEFS_CACHE_LARGE_WRITE)"); \
+	if [[ -n "$(JUICEFS_CACHE_HOST_PATH)" ]]; then args+=(--juicefs-cache-host-path "$(JUICEFS_CACHE_HOST_PATH)"); fi; \
+	if [[ -n "$(JUICEFS_STORAGE_CLASS)" ]]; then args+=(--juicefs-storage-class "$(JUICEFS_STORAGE_CLASS)"); fi; \
+	if [[ -n "$(CHECKPOINT_STORAGE_HOST_PATH)" ]]; then args+=(--checkpoint-storage-host-path "$(CHECKPOINT_STORAGE_HOST_PATH)"); fi; \
+	if [[ -n "$(CHECKPOINT_STORAGE_EXISTING_CLAIM)" ]]; then args+=(--checkpoint-storage-existing-claim "$(CHECKPOINT_STORAGE_EXISTING_CLAIM)"); fi; \
 	if [[ -n "$(ENABLE_RUNC)" ]]; then args+=(--enable-runc "$(ENABLE_RUNC)"); fi; \
 	if [[ -n "$(SCHEDULE_PLACEMENT_POLICY)" ]]; then args+=(--schedule-placement-policy "$(SCHEDULE_PLACEMENT_POLICY)"); fi; \
 	if [[ -n "$(GRAFANA_PUBLIC_ACCESS)" ]]; then args+=(--grafana-public-access "$(GRAFANA_PUBLIC_ACCESS)"); fi; \
 	if [[ -n "$(GRAFANA_ADMIN_PASSWORD)" ]]; then args+=(--grafana-admin-password "$(GRAFANA_ADMIN_PASSWORD)"); fi; \
-	if [[ -n "$(IAM_SEED_HEX)" ]]; then args+=(--iam-seed-hex "$(IAM_SEED_HEX)"); fi; \
 	./deploy/scripts/configure.sh "$${args[@]}"
 
 .PHONY: build
@@ -114,11 +118,6 @@ build:
 	@args=(--env "$(ENV)"); \
 	if [[ -n "$(IMAGE_REPOSITORY)" ]]; then args+=(--repository "$(IMAGE_REPOSITORY)"); fi; \
 	if [[ -n "$(IMAGE_TAG)" ]]; then args+=(--tag "$(IMAGE_TAG)"); fi; \
-	if [[ -n "$(RUNTIME_PROFILE)" ]]; then args+=(--runtime-profile "$(RUNTIME_PROFILE)"); fi; \
-	if [[ -n "$(OPEN_YR_CORE_WHEEL_URL)" ]]; then args+=(--open-yr-core-wheel-url "$(OPEN_YR_CORE_WHEEL_URL)"); fi; \
-	if [[ -n "$(OPEN_YR_CORE_WHEEL_SHA256)" ]]; then args+=(--open-yr-core-wheel-sha256 "$(OPEN_YR_CORE_WHEEL_SHA256)"); fi; \
-	if [[ -n "$(RRT_RUNTIME_URL)" ]]; then args+=(--rrt-runtime-url "$(RRT_RUNTIME_URL)"); fi; \
-	if [[ -n "$(RRT_RUNTIME_SHA256)" ]]; then args+=(--rrt-runtime-sha256 "$(RRT_RUNTIME_SHA256)"); fi; \
 	./deploy/scripts/build-image.sh "$${args[@]}"
 
 .PHONY: versions
@@ -149,11 +148,9 @@ deploy:
 
 .PHONY: token
 token:
-	@./deploy/scripts/generate-token.py \
+	@./deploy/scripts/get-adx-admin-key.sh \
+		--vendor "$(VENDOR)" \
 		--env "$(ENV)" \
-		--tenant "$(TENANT)" \
-		--role "$(ROLE)" \
-		--ttl "$(TOKEN_TTL)" \
 		--print-export \
 		--write-file ".akernel/$(ENV)/token"
 
@@ -169,12 +166,14 @@ e2e:
 sdk-test:
 	@PYTHONPATH=sdk/python python3 -m unittest discover \
 		-s sdk/python/tests/unit -t sdk/python -v
+	@PYTHONPATH=sdk/python python3 -m unittest discover \
+		-s sdk/python/benchmarks/tests -v
 
 .PHONY: sdk-check
 sdk-check: sdk-test
 	@set -e; \
 	cd sdk/python; \
-	python3 -m ruff check akernel_sdk tests; \
+	python3 -m ruff check akernel_sdk tests benchmarks; \
 	python3 -m mypy akernel_sdk
 
 .PHONY: deploy-script-check
@@ -205,7 +204,9 @@ deploy-standalone-test:
 .PHONY: build-helper-test
 build-helper-test:
 	@python3 builder/scripts/test-build-image.py
+	@python3 builder/scripts/test_e2b_runtime.py
 	@python3 builder/scripts/test-apt-mirror.py
+	@python3 builder/scripts/test-apt-get-update.py
 	@python3 builder/scripts/test-elf-arch.py
 
 .PHONY: standalone-source-test

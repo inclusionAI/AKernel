@@ -20,7 +20,7 @@ SPEC.loader.exec_module(manage)
 
 REVISION = "1" * 40
 COMPONENT_REVISION = "2" * 40
-CONTAINER_IDS = {"akernel-node": "a" * 64, "akernel-traefik": "b" * 64}
+CONTAINER_IDS = {"akernel-node": "a" * 64}
 IMAGE_ID = "sha256:" + "c" * 64
 EMPTY_SANDBOX_LIST = "ID STATUS RUNTIME AGE CREATED"
 
@@ -47,11 +47,12 @@ class LocalBackend:
         self.image_revision = None
         self.sandbox_listing = EMPTY_SANDBOX_LIST
         self.sandbox_listing_failure = False
+        self.curl_input = None
 
     def record(self, kind, args):
         self.events.append({"kind": kind, "args": args, "env": dict(self.manager.env)})
 
-    def capture(self, *args):
+    def capture(self, *args, input_text=None):
         self.record("capture", args)
         if args[:3] == ("docker", "context", "show"):
             return "fixture-local"
@@ -91,6 +92,7 @@ class LocalBackend:
         if args == ("git", "status", "--porcelain=v1"):
             return self.root_dirty
         if args[0] == "curl":
+            self.curl_input = input_text
             return "ok"
         raise AssertionError(f"unexpected external read: {args}")
 
@@ -104,7 +106,8 @@ class LocalBackend:
             self.add_container("akernel-node")
             if self.start_failure:
                 raise manage.Failure("fixture start failed after node creation")
-            self.add_container("akernel-traefik")
+            sdk = self.manager.data / "sdk.env"
+            sdk.write_text("export AKERNEL_SERVER_ADDRESS=127.0.0.1\n")
             return
         if Path(args[1]).name == "stop.sh":
             if self.stop_failure:
@@ -292,7 +295,7 @@ class ManageTest(unittest.TestCase):
         for runtime in ("KATA", "FIRECRACKER", "RUNC", "GPU"):
             self.assertEqual(build["env"][f"AKERNEL_ENABLE_{runtime}"], "false")
         self.assertEqual(build["env"]["AKERNEL_TARGETARCH"], "amd64")
-        self.assertEqual(build["args"][build["args"].index("--runtime-profile") + 1], "rrt")
+        self.assertNotIn("--runtime-profile", build["args"])
         self.assertNotIn("fixture-private-registry", " ".join(build["args"]))
         self.assertEqual(cloud.read_text(), content)
         self.assertEqual(self.saved_state()["status"], "ready")
@@ -369,11 +372,10 @@ class ManageTest(unittest.TestCase):
         with self.assertRaises(manage.Failure):
             self.manager.status()
         self.assertIn("akernel-node: running", self.stdout.getvalue())
-        self.assertIn("akernel-traefik: stopped or absent", self.stdout.getvalue())
+        self.assertNotIn("akernel-traefik", self.stdout.getvalue())
         self.manager.stop()
         stop = self.backend.runs("stop.sh")[0]
         self.assertEqual(stop["env"]["AKERNEL_EXPECTED_NODE_ID"], CONTAINER_IDS["akernel-node"])
-        self.assertEqual(stop["env"]["AKERNEL_EXPECTED_TRAEFIK_ID"], "absent")
         self.assertEqual(self.saved_state()["status"], "stopped")
         self.backend.start_failure = False
         self.manager.up()
@@ -434,13 +436,11 @@ class ManageTest(unittest.TestCase):
                               if event["args"] == ("docker", "inspect", container_id))
             self.assertLess(inspection, stop_position)
         self.assertEqual(stop["env"]["AKERNEL_EXPECTED_NODE_ID"], CONTAINER_IDS["akernel-node"])
-        self.assertEqual(stop["env"]["AKERNEL_EXPECTED_TRAEFIK_ID"], CONTAINER_IDS["akernel-traefik"])
         self.assertEqual(self.saved_state()["status"], "stopped")
         self.assertEqual(token.read_text(), "fixture-private-token\n")
         self.manager.stop()
         repeated = self.backend.runs("stop.sh")[-1]
         self.assertEqual(repeated["env"]["AKERNEL_EXPECTED_NODE_ID"], "absent")
-        self.assertEqual(repeated["env"]["AKERNEL_EXPECTED_TRAEFIK_ID"], "absent")
 
     def test_stop_failure_does_not_report_stopped_and_can_be_retried(self):
         self.create_profile()
@@ -457,10 +457,32 @@ class ManageTest(unittest.TestCase):
         self.manager.sdk_environment("192.0.2.44")
         sdk = self.manager.data / "sdk-env.sh"
         self.assertIn(str(token), sdk.read_text())
-        self.assertIn("192.0.2.44", sdk.read_text())
+        self.assertIn(str(self.manager.data / "sdk.env"), sdk.read_text())
+        self.assertIn("AKERNEL_BACKEND=adx", sdk.read_text())
         self.assertEqual(sdk.stat().st_mode & 0o777, 0o600)
         self.assertNotIn("fixture-private-token", sdk.read_text() + self.manager.state_file.read_text()
                          + self.stdout.getvalue() + self.stderr.getvalue())
+
+    def test_status_authenticates_probe_without_putting_key_in_arguments(self):
+        token = self.create_profile()
+        self.manager.state["address"] = "127.0.0.1:24443"
+        self.manager.save()
+        self.manager.status()
+        self.assertEqual(self.backend.curl_input, "X-Auth: fixture-private-token\n")
+        curl = next(event for event in self.backend.events if event["args"][0] == "curl")
+        self.assertIn("@-", curl["args"])
+        self.assertIn("https://127.0.0.1:24443/api/environment/v1/resources", curl["args"])
+        self.assertNotIn(token.read_text().strip(), " ".join(curl["args"]))
+        self.assertNotIn(token.read_text().strip(), self.stdout.getvalue() + self.stderr.getvalue())
+
+    def test_status_rejects_multiline_key_before_curl(self):
+        token = self.create_profile()
+        self.manager.state["address"] = "127.0.0.1:24443"
+        self.manager.save()
+        token.write_text("fixture-private-token\nX-Injected: true")
+        with self.assertRaisesRegex(manage.Failure, "invalid deployment token"):
+            self.manager.status()
+        self.assertFalse(any(event["args"][0] == "curl" for event in self.backend.events))
 
     def test_competing_operation_cannot_read_backend_or_change_profile_metadata(self):
         token = self.create_profile()

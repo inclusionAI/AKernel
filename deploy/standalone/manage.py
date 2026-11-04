@@ -20,7 +20,7 @@ import tempfile
 import uuid
 
 
-NAMES = ("akernel-node", "akernel-traefik")
+NAMES = ("akernel-node",)
 
 
 class Failure(Exception):
@@ -53,9 +53,9 @@ class Manager:
         finally:
             os.close(descriptor)
 
-    def capture(self, *args):
+    def capture(self, *args, input_text=None):
         result = subprocess.run(args, cwd=self.root, env=self.env, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                input=input_text, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode:
             raise Failure(f"{args[0]} {args[1] if len(args) > 1 else ''} failed; check local prerequisites")
         return result.stdout.strip()
@@ -123,8 +123,8 @@ class Manager:
                 raise Failure(f"{key} must be true or false")
         if arch == "arm64" and any(self.env[f"AKERNEL_ENABLE_{name}"] != "false" for name in ("KATA", "FIRECRACKER", "GPU")):
             raise Failure("ARM64 requires Kata, Firecracker and GPU disabled")
-        if self.env.get("RUNTIME_PROFILE", "rrt") != "rrt":
-            raise Failure("source standalone uses RUNTIME_PROFILE=rrt; use make build for other profiles")
+        if self.env.get("RUNTIME_PROFILE", "execd") != "execd":
+            raise Failure("source standalone uses the Execd runtime profile")
         # Keep pulls and launches native as well as the source image build.
         self.env.update(AKERNEL_TARGETARCH=arch, DOCKER_DEFAULT_PLATFORM=f"linux/{arch}",
                         AKERNEL_STANDALONE_DATA_DIR=str(self.data))
@@ -161,7 +161,7 @@ class Manager:
             if expected and expected != container_id:
                 raise Failure(f"{name} was replaced; refusing to manage another container")
             obj = json.loads(self.capture("docker", "inspect", container_id))[0]
-            source, destination = (str(self.data), "/home/akernel") if name == NAMES[0] else (str(self.data / "traefik/dynamic.yml"), "/etc/traefik/dynamic.yml")
+            source, destination = str(self.data), "/home/akernel"
             if not any(m.get("Type") == "bind" and m.get("Source") == source and m.get("Destination") == destination for m in obj["Mounts"]):
                 raise Failure(f"{name} belongs to another data directory")
             if name == NAMES[0] and obj["Image"] != self.state.get("image_id"):
@@ -171,8 +171,8 @@ class Manager:
 
     def sdk_environment(self, address):
         script = "# Local standalone: read credentials at use time, without printing them.\nset +x\n"
-        script += "export AKERNEL_BACKEND=openyuanrong-sandbox\n"
-        script += f"export AKERNEL_SERVER_ADDRESS={shlex.quote(address)}\n"
+        script += "export AKERNEL_BACKEND=adx\n"
+        script += f"source {shlex.quote(str(self.data / 'sdk.env'))}\n"
         script += f"export AKERNEL_TOKEN=\"$(cat {shlex.quote(str(self.data / 'token'))})\"\n"
         script += 'export NO_PROXY="${NO_PROXY:+${NO_PROXY},}${AKERNEL_SERVER_ADDRESS}"\n'
         script += 'export no_proxy="${no_proxy:+${no_proxy},}${AKERNEL_SERVER_ADDRESS}"\n'
@@ -200,7 +200,7 @@ class Manager:
         self.save()
         try:
             # Do not load the default cloud deployment profile.
-            self.run("bash", str(self.root / "deploy/scripts/build-image.sh"), "--repository", image.rsplit(":", 1)[0], "--tag", image.rsplit(":", 1)[1], "--runtime-profile", "rrt")
+            self.run("bash", str(self.root / "deploy/scripts/build-image.sh"), "--repository", image.rsplit(":", 1)[0], "--tag", image.rsplit(":", 1)[1])
             obj = json.loads(self.capture("docker", "image", "inspect", image))[0]
             if f"{obj['Os']}/{obj['Architecture']}" != f"linux/{arch}" or obj["Config"]["Labels"].get("org.opencontainers.image.revision") != revision:
                 raise Failure("built image platform or source revision does not match")
@@ -211,12 +211,12 @@ class Manager:
             containers = self.inventory()
             owned = self.inspect_owned(containers)
             if set(owned) != set(NAMES) or not all(obj["State"]["Running"] for obj in owned.values()):
-                raise Failure("standalone did not start both containers")
+                raise Failure("standalone node did not start")
             self.state.update(containers=containers, status="ready")
-            networks = owned[NAMES[1]]["NetworkSettings"]["Networks"]
-            address = next(iter(networks.values()))["IPAddress"]
-            if not address:
-                raise Failure("gateway has no reachable address")
+            address = self.env.get("AKERNEL_ENDPOINT_HOST", "127.0.0.1")
+            control_port = self.env.get("AKERNEL_CONTROL_PORT", "443")
+            if control_port != "443":
+                address += f":{control_port}"
             self.state["address"] = address
             self.save()
             self.sdk_environment(address)
@@ -238,7 +238,12 @@ class Manager:
             print(f"{name}: {'running' if owned.get(name, {}).get('State', {}).get('Running') else 'stopped or absent'}")
         address = self.state.get("address")
         if set(owned) == set(NAMES) and all(obj["State"]["Running"] for obj in owned.values()) and address:
-            self.capture("curl", "--noproxy", "*", "-fkSs", "--max-time", "5", f"https://{address}/healthz")
+            token = (self.data / "token").read_text().strip()
+            if not token or "\n" in token or "\r" in token:
+                raise Failure("invalid deployment token; status was not probed")
+            self.capture("curl", "--noproxy", "*", "-fkSs", "--max-time", "5",
+                         "--header", "@-", f"https://{address}/api/environment/v1/resources",
+                         input_text=f"X-Auth: {token}\n")
             print(f"Gateway: https://{address} (healthy)\nSDK environment: {self.data / 'sdk-env.sh'}")
         elif owned:
             raise Failure("standalone is not fully running; inspect Docker logs")
@@ -256,7 +261,7 @@ class Manager:
             listing = self.capture("docker", "exec", containers[NAMES[0]], "sbox", "--address", "/run/sandboxd/sandboxd.sock", "list").splitlines()
             if len(listing) != 1 or listing[0].split() != ["ID", "STATUS", "RUNTIME", "AGE", "CREATED"]:
                 raise Failure("release all sandboxes before stopping; if sandboxd is unavailable, inspect the node manually")
-        for name, key in ((NAMES[0], "AKERNEL_EXPECTED_NODE_ID"), (NAMES[1], "AKERNEL_EXPECTED_TRAEFIK_ID")):
+        for name, key in ((NAMES[0], "AKERNEL_EXPECTED_NODE_ID"),):
             self.env[key] = containers.get(name, "absent")
         self.run("bash", str(self.directory / "stop.sh"))
         self.state["status"] = "stopped"

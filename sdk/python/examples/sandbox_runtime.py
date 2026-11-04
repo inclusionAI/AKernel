@@ -16,8 +16,8 @@
 
 The Kata and Firecracker cases require at least one cluster node that
 advertises the respective KVM-backed runtime. The Firecracker case uses the
-deployment's default EROFS root; OCI/Nydus directory images are not supported
-by that runtime.
+deployment's default EROFS root. OCI/Nydus directory roots require an
+operator-enabled compatible virtio-fs profile; see the SDK README.
 Set AKERNEL_EXAMPLE_RUNC=true to include the optional runc runtime.
 """
 

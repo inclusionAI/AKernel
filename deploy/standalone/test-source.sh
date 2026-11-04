@@ -11,7 +11,7 @@ case "$(docker info --format '{{.OSType}}/{{.Architecture}}')" in
     linux/arm64|linux/aarch64) native_platform=linux/arm64; client_platform=linux/amd64 ;;
     *) echo 'Source integration test requires a Linux amd64 or arm64 Docker daemon' >&2; exit 1 ;;
 esac
-if [[ -n "$(docker ps -a --filter name='^/akernel-node$' --filter name='^/akernel-traefik$' --format '{{.ID}}')" ]]; then
+if [[ -n "$(docker ps -a --filter name='^/akernel-node$' --format '{{.ID}}')" ]]; then
     echo 'Standalone names are occupied; integration test did not start' >&2
     exit 1
 fi
@@ -33,7 +33,7 @@ cleanup() {
 trap cleanup EXIT
 # Source startup must override a conflicting client platform for both images.
 make standalone DOCKER_DEFAULT_PLATFORM="${client_platform}"
-for container in akernel-node akernel-traefik; do
+for container in akernel-node; do
     image_id="$(docker inspect --format '{{.Image}}' "${container}")"
     image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${image_id}")"
     if [[ "${image_platform}" != "${native_platform}" ]]; then

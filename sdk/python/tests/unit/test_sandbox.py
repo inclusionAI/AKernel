@@ -42,6 +42,7 @@ class SandboxTest(unittest.TestCase):
         self.session.id = "physical-id"
         self.session.commands = MagicMock()
         self.session.files = MagicMock()
+        self.session.pty = MagicMock()
         self.session.is_running.return_value = True
         self.session.get_info.return_value = SandboxInfo(
             id="physical-id",
@@ -70,6 +71,7 @@ class SandboxTest(unittest.TestCase):
         self.assertIsNone(sandbox.get_info().xpu)
         self.assertIsNone(sandbox.get_info().storage_mb)
         self.assertIsNone(sandbox.startup_command)
+        self.assertIs(sandbox.pty._driver, self.session.pty)
 
         spec = self.backend.create.call_args.args[0]
         self.assertEqual(spec.cpu, 2000)
@@ -263,10 +265,12 @@ class SandboxTest(unittest.TestCase):
         self.backend.create.assert_not_called()
 
     def test_runtime_identifier_is_normalized_and_passed_to_backend(self):
-        sandbox = Sandbox(runtime=" gvisor-next ")
-        spec = self.backend.create.call_args.args[0]
-        self.assertEqual(spec.runtime, "gvisor-next")
-        sandbox.kill()
+        for runtime in ("gvisor-next", "firecracker-pvm"):
+            with self.subTest(runtime=runtime):
+                sandbox = Sandbox(runtime=f" {runtime} ")
+                spec = self.backend.create.call_args.args[0]
+                self.assertEqual(spec.runtime, runtime)
+                sandbox.kill()
 
     def test_runtime_identifier_validation(self):
         for value in (None, 1):
@@ -568,11 +572,13 @@ class SandboxTest(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "pty"),
         ):
             Sandbox(detached=True)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
     def test_partial_facade_cleanup_preserves_initialization_error(self):
-        self.session.terminate.side_effect = RuntimeError("remote delete failed")
+        self.session.rollback_creation.side_effect = RuntimeError(
+            "remote delete failed"
+        )
         self.session.close.side_effect = RuntimeError("client close failed")
         initialization_error = RuntimeError("PTY initialization failed")
         with (
@@ -590,7 +596,7 @@ class SandboxTest(unittest.TestCase):
             Sandbox(name="worker", detached=True)
 
         self.assertIs(raised.exception, initialization_error)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
     def test_dockerfile_signature_and_mutual_exclusion(self):
@@ -713,7 +719,7 @@ class SandboxTest(unittest.TestCase):
                 self.assertIsNone(sandbox.startup_command)
                 sandbox.kill()
 
-    def test_dockerfile_startup_dispatch_failure_terminates_and_closes_session(self):
+    def test_dockerfile_startup_dispatch_failure_rolls_back_and_closes_session(self):
         startup_error = DockerfileBuildError(
             "Failed to dispatch startup command",
             instruction="CMD",
@@ -731,10 +737,10 @@ class SandboxTest(unittest.TestCase):
                 )
 
         self.assertIs(raised.exception, startup_error)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
-    def test_dockerfile_build_failure_terminates_and_closes_detached_session(self):
+    def test_dockerfile_build_failure_rolls_back_and_closes_detached_session(self):
         build_error = DockerfileBuildError("RUN failed")
         with patch(
             "akernel_sdk._dockerfile_runner.apply_dockerfile",
@@ -749,7 +755,7 @@ class SandboxTest(unittest.TestCase):
                 )
 
         self.assertIs(raised.exception, build_error)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
     def test_get_port_url(self):
@@ -761,6 +767,10 @@ class SandboxTest(unittest.TestCase):
             sandbox = Sandbox(port_forwardings=[8080])
             self.assertEqual(
                 sandbox.get_port_url(8080),
+                "http://gateway.example.com/physical-id/8080",
+            )
+            self.assertEqual(
+                sandbox.get_port_url(8080, internal=True),
                 "http://gateway.example.com/physical-id/8080",
             )
             with self.assertRaisesRegex(ValueError, "not in port_forwardings"):

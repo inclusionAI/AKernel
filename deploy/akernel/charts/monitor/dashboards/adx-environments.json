@@ -1,0 +1,265 @@
+{
+  "uid": "adx-environments",
+  "title": "ADX Environments",
+  "id": null,
+  "version": 2,
+  "schemaVersion": 40,
+  "editable": true,
+  "refresh": "",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "description": "Select an Environment ID or narrow RE2 pattern for current inventory and fresh runtime usage. Detail queries are manual and start with no Environment selected.",
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis, cluster)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "adx_env",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis{cluster=~\"$cluster\"}, adx_env)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "state",
+        "type": "custom",
+        "query": "Running,Paused",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": "Running|Paused"
+      },
+      {
+        "name": "environment_id",
+        "label": "Environment ID regex (required)",
+        "description": "Enter an Environment ID or narrow RE2 pattern. Use \\x60 to match a backtick. Broad patterns explicitly request all matching instances.",
+        "type": "textbox",
+        "query": "__select_environment__",
+        "current": {
+          "text": "__select_environment__",
+          "value": "__select_environment__"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Environment Inventory",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (cluster, adx_env, environment_id, node_id, state) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
+          "instant": true,
+          "format": "table",
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            },
+            "indexByName": {
+              "adx_env": 1,
+              "environment_id": 2,
+              "node_id": 3,
+              "state": 4,
+              "cluster": 0
+            },
+            "renameByName": {
+              "adx_env": "Deployment",
+              "environment_id": "Environment",
+              "node_id": "Node",
+              "state": "State",
+              "cluster": "Cluster"
+            }
+          }
+        }
+      ],
+      "description": "Select an Environment ID or narrow pattern first. Current Running/Paused logical inventory joined to fresh runtime samples. It is not a historical list of every created Environment. With all test Environments deleted, an empty inventory is expected; check scrape health to distinguish missing collection.",
+      "maxDataPoints": 1
+    },
+    {
+      "id": 2,
+      "title": "Environment CPU Usage",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(adx_environment_cpu_usage_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`}[$__rate_interval]) and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
+          "instant": false,
+          "format": "time_series",
+          "legendFormat": "{{environment_id}} / {{runtime_id}}",
+          "range": true
+        }
+      ],
+      "description": "Select an Environment ID or narrow pattern first. Measured per-Environment CPU usage from fresh Running inventory and runtime observations. Requires at least two counter scrapes for a rate. No active Environment, no samples or stale observations produce no series.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 3,
+      "title": "Environment Memory Usage",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_environment_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
+          "instant": false,
+          "format": "time_series",
+          "legendFormat": "{{environment_id}} / {{runtime_id}}",
+          "range": true
+        }
+      ],
+      "description": "Select an Environment ID or narrow pattern first. Measured memory for fresh Running Environments. Paused or deleted Environments do not display an old runtime sample as current memory. No active/fresh sample produces no series.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    }
+  ],
+  "links": [
+    {
+      "title": "Schedule",
+      "type": "link",
+      "url": "/d/adx-schedule",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Data Plane",
+      "type": "link",
+      "url": "/d/adx-data-plane",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Process Resources",
+      "type": "link",
+      "url": "/d/adx-process-resources",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Environment Logs",
+      "type": "link",
+      "url": "/d/adx-environment-logs",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false,
+      "tooltip": "Open on-demand log search, initially the last 15 minutes."
+    },
+    {
+      "title": "Environments",
+      "type": "link",
+      "url": "/d/adx-environments",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    },
+    {
+      "title": "Sandbox Lifecycle",
+      "type": "link",
+      "url": "/d/adx-sandbox-lifecycle",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}

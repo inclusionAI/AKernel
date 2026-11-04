@@ -378,65 +378,16 @@ variable "core_namespace" {
   default     = "akernel"
 }
 
-variable "iam_litebus_data_key" {
-  type        = string
-  description = "Hex-encoded IAM JWT signing seed passed to the core chart as auth.litebusDataKey. Leave empty to let the chart generate or reuse a seed."
-  default     = ""
-  sensitive   = true
-}
-
-variable "etcd_image_repository" {
-  type        = string
-  description = "Image repository for etcd."
-  default     = ""
-}
-
-variable "etcd_image_tag" {
-  type        = string
-  description = "Image tag for etcd."
-  default     = "3.6.8"
-}
-
 variable "master_image_repository" {
   type        = string
-  description = "All-in-one image repository for akernel-master. Defaults to '<acr_registry>/all-in-one'."
+  description = "All-in-one image repository for the control-plane service. Defaults to '<acr_registry>/all-in-one'."
   default     = ""
 }
 
 variable "master_image_tag" {
   type        = string
-  description = "Image tag for akernel-master."
+  description = "Image tag for the control-plane service."
   default     = ""
-}
-
-variable "master_replicas" {
-  type        = number
-  description = "Number of master replicas (for HA when frontend is enabled)."
-  default     = 1
-}
-
-variable "frontend_enabled" {
-  type        = bool
-  description = "Whether to enable frontend Deployment (splits from master for independent scaling)."
-  default     = true
-}
-
-variable "frontend_replicas" {
-  type        = number
-  description = "Number of frontend replicas."
-  default     = 1
-}
-
-variable "frontend_cpu" {
-  type        = string
-  description = "CPU request/limit for frontend pods."
-  default     = "1"
-}
-
-variable "frontend_memory" {
-  type        = string
-  description = "Memory request/limit for frontend pods."
-  default     = "2Gi"
 }
 
 variable "node_image_repository" {
@@ -449,18 +400,6 @@ variable "node_image_tag" {
   type        = string
   description = "Image tag for akernel-node."
   default     = ""
-}
-
-variable "traefik_image_repository" {
-  type        = string
-  description = "Image repository for Traefik. Empty uses the official traefik image."
-  default     = ""
-}
-
-variable "traefik_image_tag" {
-  type        = string
-  description = "Image tag for Traefik."
-  default     = "v3.6.8"
 }
 
 variable "monitor_image_registry" {
@@ -511,110 +450,6 @@ variable "dragonfly_dfinit_image_tag" {
   default     = ""
 }
 
-variable "master_service_type" {
-  type        = string
-  description = "Service type for akernel-master. Use 'LoadBalancer' for public access (ACK auto-creates SLB)."
-  default     = "LoadBalancer"
-}
-
-variable "master_public_access_8888" {
-  type        = bool
-  description = "Whether to expose akernel-master port 8888 publicly. Ignored (forced ClusterIP) when traefik_enabled=true."
-  default     = false
-}
-
-
-variable "traefik_enabled" {
-  type        = bool
-  description = "Whether to deploy Traefik as the cluster ingress. When true, akernel-master is kept ClusterIP and Traefik exposes port 8888 via LoadBalancer."
-  default     = true
-}
-
-variable "install_traefik" {
-  type        = bool
-  description = "Whether to enable Traefik ingress controller in the core chart."
-  default     = true
-}
-
-variable "traefik_replicas" {
-  type        = number
-  description = "Number of Traefik replicas."
-  default     = 1
-}
-
-variable "traefik_tcp_port" {
-  type        = number
-  description = "TCP port for Traefik websecure entrypoint (legacy single-entrypoint mode; ignored when traefik_enable_web_entrypoint=true)."
-  default     = 8888
-}
-
-variable "traefik_enable_web_entrypoint" {
-  type        = bool
-  description = "Enable dual entrypoints: 'websecure' (TLS, frontend API) on traefik_websecure_port and 'web' (plain HTTP, port forwarding) on traefik_web_port. When false, falls back to legacy single-entrypoint mode using traefik_tcp_port."
-  default     = true
-}
-
-variable "traefik_web_port" {
-  type        = number
-  description = "Port for Traefik 'web' (plain HTTP) entrypoint. Only used when traefik_enable_web_entrypoint=true."
-  default     = 80
-}
-
-variable "traefik_websecure_port" {
-  type        = number
-  description = "Port for Traefik 'websecure' (TLS) entrypoint. Only used when traefik_enable_web_entrypoint=true."
-  default     = 443
-}
-
-variable "traefik_service_type" {
-  type        = string
-  description = "Service type for Traefik. Use 'LoadBalancer' for cloud deployments."
-  default     = "LoadBalancer"
-}
-
-variable "traefik_tls_enabled" {
-  type        = bool
-  description = "Whether to mount a custom default certificate for Traefik. The websecure router still serves TLS when this is false."
-  default     = false
-}
-
-variable "traefik_tls_cert" {
-  type        = string
-  description = "TLS certificate content (PEM) for Traefik. Only used when traefik_tls_enabled=true and traefik_tls_create_secret=true."
-  default     = ""
-  sensitive   = true
-}
-
-variable "traefik_tls_key" {
-  type        = string
-  description = "TLS private key content (PEM) for Traefik. Only used when traefik_tls_enabled=true and traefik_tls_create_secret=true."
-  default     = ""
-  sensitive   = true
-}
-
-variable "traefik_tls_create_secret" {
-  type        = bool
-  description = "Whether to create TLS secret from traefik_tls_cert/traefik_tls_key."
-  default     = false
-}
-
-variable "traefik_service_annotations" {
-  type        = map(string)
-  description = "Extra annotations for Traefik LoadBalancer Service."
-  default     = {}
-}
-
-variable "traefik_internal_stats_enabled" {
-  type        = bool
-  description = "Whether to enable the /internal-stats endpoint on Traefik."
-  default     = true
-}
-
-variable "traefik_internal_stats_image" {
-  type        = string
-  description = "Optional BusyBox image for the Traefik /internal-stats sidecar. Empty uses the deployment ACR VPC endpoint."
-  default     = ""
-}
 
 variable "monitor_namespace" {
   type        = string
@@ -895,7 +730,7 @@ variable "registry_auths" {
 # --- Component resource specifications ---
 
 variable "etcd_resources" {
-  description = "Resource requests/limits and PVC size for etcd."
+  description = "Resource requests/limits and PVC size for managed Redis (retained input name)."
   type = object({
     cpu               = optional(string, "1")
     memory            = optional(string, "2Gi")
@@ -906,7 +741,7 @@ variable "etcd_resources" {
 }
 
 variable "master_resources" {
-  description = "Resource requests/limits for akernel-master."
+  description = "Resource requests/limits for the control-plane service."
   type = object({
     cpu               = optional(string, "1")
     memory            = optional(string, "2Gi")
@@ -975,4 +810,175 @@ variable "chunk_db_size" {
     condition     = var.chunk_db_size == "" || can(regex("^[0-9]+(B|KiB|MiB|GiB|TiB)?$", var.chunk_db_size))
     error_message = "chunk_db_size must be empty, whole bytes, or an integer with B/KiB/MiB/GiB/TiB."
   }
+}
+
+variable "adx_public_service_enabled" {
+  type        = bool
+  description = "Expose ADX control and data listeners directly through a Kubernetes Service."
+  default     = true
+}
+
+variable "adx_service_type" {
+  type        = string
+  description = "Type of the ADX public Service."
+  default     = "LoadBalancer"
+  validation {
+    condition     = contains(["LoadBalancer", "NodePort", "ClusterIP"], var.adx_service_type)
+    error_message = "ADX service type must be LoadBalancer, NodePort or ClusterIP."
+  }
+}
+
+variable "adx_service_annotations" {
+  type        = map(string)
+  description = "Cloud load-balancer annotations for the ADX public Service."
+  default     = {}
+}
+
+variable "adx_load_balancer_ip" {
+  type        = string
+  description = "Optional address of an existing ADX load balancer."
+  default     = ""
+}
+
+variable "adx_control_port" {
+  type        = number
+  description = "ADX public HTTPS control and PTY port."
+  default     = 443
+  validation {
+    condition     = var.adx_control_port >= 1 && var.adx_control_port <= 65535 && floor(var.adx_control_port) == var.adx_control_port
+    error_message = "ADX control port must be an integer between 1 and 65535."
+  }
+}
+
+variable "adx_data_port" {
+  type        = number
+  description = "ADX public HTTP sandbox data port."
+  default     = 80
+  validation {
+    condition     = var.adx_data_port >= 1 && var.adx_data_port <= 65535 && floor(var.adx_data_port) == var.adx_data_port
+    error_message = "ADX data port must be an integer between 1 and 65535."
+  }
+}
+
+# Shared checkpoints can use a pre-mounted filesystem, an existing RWX claim,
+# or the optional managed JuiceFS/PostgreSQL/Ceph stack below.
+variable "checkpoint_storage" {
+  type = object({
+    kind           = optional(string, "local")
+    alias          = optional(string, "akernel-checkpoints")
+    mount_path     = optional(string, "/mnt/akernel-shared")
+    host_path      = optional(string, "")
+    existing_claim = optional(string, "")
+    prefix         = optional(string, "akernel/checkpoints")
+    s3 = optional(object({
+      bucket             = optional(string, "")
+      region             = optional(string, "")
+      endpoint           = optional(string, "")
+      allow_http         = optional(bool, false)
+      credentials_secret = optional(string, "")
+      cache_root         = optional(string, "/home/akernel/adx/checkpoint-s3-cache")
+      cache_budget_bytes = optional(number, 53687091200)
+      cache_max_entries  = optional(number, 500)
+    }), {})
+  })
+  default     = {}
+  nullable    = false
+  description = "ADX checkpoint storage; shared storage is reclaimed by Coordinator."
+  validation {
+    condition = (
+      contains(["local", "distributed_fs", "s3"], var.checkpoint_storage.kind) &&
+      (var.checkpoint_storage.kind == "local" || (
+        var.checkpoint_storage.alias != "local" &&
+        can(regex("^[A-Za-z0-9-]+$", var.checkpoint_storage.alias))
+      )) &&
+      can(regex("^(/[A-Za-z0-9_-]+)+$", var.checkpoint_storage.mount_path)) &&
+      can(regex("^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$", var.checkpoint_storage.prefix)) &&
+      alltrue([for path in ["/home/akernel", "/opt/adx", "/etc", "/run", "/var/run", "/proc", "/sys", "/dev"] :
+        var.checkpoint_storage.mount_path != path &&
+        !startswith(var.checkpoint_storage.mount_path, "${path}/") &&
+        !startswith(path, "${var.checkpoint_storage.mount_path}/")
+      ]) &&
+      (var.checkpoint_storage.host_path == "" ||
+        (startswith(var.checkpoint_storage.host_path, "/") && var.checkpoint_storage.host_path != "/" &&
+      !contains(split("/", var.checkpoint_storage.host_path), "..")))
+    )
+    error_message = "Use local, distributed_fs or s3 with a safe alias, relative prefix, dedicated absolute mount_path and absolute host_path."
+  }
+  validation {
+    condition = var.checkpoint_storage.kind != "s3" || (
+      var.checkpoint_storage.s3.bucket != "" && var.checkpoint_storage.s3.region != "" &&
+      var.checkpoint_storage.s3.credentials_secret != "" &&
+      (var.checkpoint_storage.s3.endpoint == "" || can(regex("^https?://[^/?#@]+/?$", var.checkpoint_storage.s3.endpoint))) &&
+      (!startswith(var.checkpoint_storage.s3.endpoint, "http://") || var.checkpoint_storage.s3.allow_http) &&
+      can(regex("^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$", var.checkpoint_storage.s3.cache_root)) &&
+      alltrue([for path in ["/home/akernel/adx/run", "/home/akernel/adx/logs", "/home/akernel/adx/degraded"] :
+      var.checkpoint_storage.s3.cache_root != path && !startswith(var.checkpoint_storage.s3.cache_root, "${path}/")]) &&
+      var.checkpoint_storage.s3.cache_budget_bytes > 0 && floor(var.checkpoint_storage.s3.cache_budget_bytes) == var.checkpoint_storage.s3.cache_budget_bytes &&
+      var.checkpoint_storage.s3.cache_max_entries > 0 && floor(var.checkpoint_storage.s3.cache_max_entries) == var.checkpoint_storage.s3.cache_max_entries
+    )
+    error_message = "S3 checkpoints require bucket, region, credentials_secret, a safe local cache and explicit allow_http for HTTP endpoints."
+  }
+}
+
+variable "juicefs" {
+  type = object({
+    enabled                = optional(bool, false)
+    namespace              = optional(string, "akernel-storage")
+    create_namespace       = optional(bool, true)
+    install_rook           = optional(bool, true)
+    host_mount_path        = optional(string, "/srv/akernel-shared")
+    cache_mib              = optional(number, 4096)
+    cache_host_path        = optional(string, "")
+    cache_large_write      = optional(bool, true)
+    gateway_tcp_nodelay    = optional(bool, true)
+    ceph_storage_class     = optional(string, "")
+    postgres_storage_class = optional(string, "")
+    osd_count              = optional(number, 3)
+    osd_size               = optional(string, "100Gi")
+    mon_count              = optional(number, 3)
+    replicas               = optional(number, 3)
+    postgres_size          = optional(string, "10Gi")
+    storage_node_selector  = optional(map(string), {})
+    client_node_selector   = optional(map(string), {})
+    values_files           = optional(list(string), [])
+    rook_values_files      = optional(list(string), [])
+  })
+  default     = {}
+  nullable    = false
+  description = "Optional managed JuiceFS, PostgreSQL and PVC-backed Rook Ceph RGW deployment; enabling it selects distributed_fs checkpoints."
+  validation {
+    condition = (
+      can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", var.juicefs.namespace)) &&
+      length(var.juicefs.namespace) <= 40 &&
+      can(regex("^(/[A-Za-z0-9_-]+)+$", var.juicefs.host_mount_path)) &&
+      alltrue([for path in ["/home/akernel", "/etc", "/run", "/var", "/proc", "/sys", "/dev"] :
+        var.juicefs.host_mount_path != path &&
+        !startswith(var.juicefs.host_mount_path, "${path}/") &&
+        !startswith(path, "${var.juicefs.host_mount_path}/")
+      ]) &&
+      var.juicefs.cache_mib >= 0 && floor(var.juicefs.cache_mib) == var.juicefs.cache_mib &&
+      (var.juicefs.cache_host_path == "" || can(regex("^(/[A-Za-z0-9_-]+)+$", var.juicefs.cache_host_path))) &&
+      var.juicefs.osd_count >= var.juicefs.replicas &&
+      floor(var.juicefs.osd_count) == var.juicefs.osd_count &&
+      var.juicefs.replicas >= 1 && floor(var.juicefs.replicas) == var.juicefs.replicas &&
+      contains([1, 3, 5], var.juicefs.mon_count)
+    )
+    error_message = "JuiceFS requires a safe namespace and host mount path, non-negative integer cache_mib, integer osd_count >= replicas >= 1, and mon_count of 1, 3, or 5."
+  }
+}
+
+variable "runsc_checkpoint_mode" {
+  description = "Native gVisor checkpoint mode; reflink requires node-local checkpoint inputs and native_filestore."
+  type        = string
+  default     = "full"
+  validation {
+    condition     = contains(["full", "reflink"], var.runsc_checkpoint_mode)
+    error_message = "runsc_checkpoint_mode must be full or reflink."
+  }
+}
+
+variable "native_filestore" {
+  description = "Keep runtime filestore on the node filesystem instead of a loop device."
+  type        = bool
+  default     = false
 }

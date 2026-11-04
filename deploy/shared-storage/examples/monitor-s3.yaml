@@ -1,0 +1,7 @@
+prometheusServer:
+  config:
+    sharedStorage:
+      enabled: true
+      namespace: akernel-storage
+      redisName: akernel-redis
+      postgresEnabled: false

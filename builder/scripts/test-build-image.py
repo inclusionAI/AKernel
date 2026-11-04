@@ -36,12 +36,31 @@ AMBIENT_BUILD_NAMES = (
     "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
 )
 AMBIENT_BUILD_PREFIXES = (
-    "AKERNEL_", "RRT_RUNTIME_", "OPEN_YR_CORE_", "GVISOR_", "RUNC_",
+    "AKERNEL_", "ADX_EXECD_", "OPEN_YR_CORE_", "ADX_", "GVISOR_", "RUNC_",
     "FIRECRACKER_", "DISTILL_FS_", "BASH_FUNC_",
 )
 
 
 class BuildImageTests(unittest.TestCase):
+    def test_e2b_selects_existing_adx_runtime_only_when_requested(self):
+        for enabled, target in (("false", "runtime-execd"), ("true", "runtime-e2b")):
+            with self.subTest(enabled=enabled):
+                result = self.run_helper(AKERNEL_ENABLE_E2B=enabled)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                runtime = self.docker_calls()[-2]
+                self.assertEqual(runtime[runtime.index("--target") + 1], target)
+                self.assertEqual(self.build_arguments(runtime)["ADX_EXECD_SHA256"], "4" * 64)
+
+    def test_e2b_requires_explicit_release_pairs_and_valid_switch(self):
+        for changes in ({"AKERNEL_ENABLE_E2B": "yes"},
+                        {"AKERNEL_ENABLE_E2B": "true", "ADX_EXECD_URL": None,
+                         "ADX_EXECD_SHA256": None},
+                        {"AKERNEL_ENABLE_E2B": "true", "ADX_RELEASE_URL": None,
+                         "ADX_RELEASE_SHA256": None}):
+            with self.subTest(changes=changes):
+                self.assertNotEqual(self.run_helper(**changes).returncode, 0)
+                self.assertFalse(self.docker_calls())
+
     def test_gvisor_download_keeps_http11_and_archive_verification(self):
         dockerfile = (ROOT / "builder/node.Dockerfile").read_text()
         gvisor = dockerfile.split("AS gvisor-runtime", 1)[1].split("\nFROM ", 1)[0]
@@ -72,6 +91,16 @@ class BuildImageTests(unittest.TestCase):
             "FIRECRACKER_RELEASE=test-firecracker\n"
             "FIRECRACKER_AMD64_URL=https://example.test/firecracker.tgz\n"
             f"FIRECRACKER_AMD64_SHA256={'e' * 64}\n"
+        )
+        # Candidate transport/provenance validation has its own sandboxd tests.
+        # This fixture exposes distinct pinned PVM fields to check build wiring.
+        helper = self.manifest.with_name("prepare-firecracker-pvm.py")
+        helper.write_text(
+            "import sys\n"
+            "if '--fields' in sys.argv:\n"
+            " print('v1.16.1-akernel.4')\n"
+            f" print('{ '4' * 64 }')\n"
+            " print('github-actions://akernel-dev/firecracker/123/firecracker.tgz')\n"
         )
         version = self.root / "src/sandboxd/version/VERSION"
         version.parent.mkdir()
@@ -127,6 +156,10 @@ class BuildImageTests(unittest.TestCase):
             AKERNEL_ENABLE_KATA="false",
             AKERNEL_ENABLE_FIRECRACKER="false",
             AKERNEL_ENABLE_RUNC="true",
+            ADX_RELEASE_URL="https://example.test/adx-release.tar.gz",
+            ADX_RELEASE_SHA256="3" * 64,
+            ADX_EXECD_URL="https://example.test/adx-execd.tar.gz",
+            ADX_EXECD_SHA256="4" * 64,
         )
 
     def run_helper(self, *arguments, **environment):
@@ -171,8 +204,8 @@ class BuildImageTests(unittest.TestCase):
             "BASH_ENV": str(startup), "ENV": str(startup),
             "DOCKER_DEFAULT_PLATFORM": "PRIVATE_INVALID_VALUE", "DOCKER_BUILDKIT": "0",
             "AKERNEL_TARGETARCH": "PRIVATE_INVALID_VALUE", "RUNTIME_PROFILE": "python",
-            "RRT_RUNTIME_URL": "https://private-override.invalid/rrt",
-            "OPEN_YR_CORE_WHEEL_URL": "https://private-override.invalid/core",
+            "ADX_EXECD_URL": "https://private-override.invalid/execd",
+            "ADX_RELEASE_URL": "https://private-override.invalid/release",
             "GVISOR_UNSELECTED_PIN": "PRIVATE_INVALID_VALUE",
             "RUNC_UNSELECTED_PIN": "PRIVATE_INVALID_VALUE",
             "FIRECRACKER_UNSELECTED_PIN": "PRIVATE_INVALID_VALUE",
@@ -190,7 +223,9 @@ class BuildImageTests(unittest.TestCase):
         with mock.patch.dict(os.environ, leaked):
             fixture.setUp()
         for name in leaked:
-            if name != "AKERNEL_TARGETARCH":
+            if name in ("AKERNEL_TARGETARCH", "ADX_RELEASE_URL", "ADX_EXECD_URL"):
+                self.assertNotEqual(fixture.environment[name], leaked[name])
+            else:
                 self.assertNotIn(name, fixture.environment)
         result = fixture.run_helper()
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -204,7 +239,7 @@ class BuildImageTests(unittest.TestCase):
         runtime, node = self.docker_calls()
         for call in (runtime, node):
             self.assertEqual(call[:3], ["build", "--platform", "linux/arm64"])
-        self.assertIn("runtime-rrt", runtime)
+        self.assertIn("runtime-execd", runtime)
         self.assertIn("RUNC_VERSION=9.8.7", node)
         self.assertIn("RUNC_RELEASE_BASE_URL=https://example.test/runc", node)
         self.assertIn(f"RUNC_SHA256={'d' * 64}", node)
@@ -228,6 +263,35 @@ class BuildImageTests(unittest.TestCase):
         self.assertIn(f"DISTILL_FS_SHA256={'1' * 64}", node)
         self.assertIn("AKERNEL_ENABLE_KATA=true", node)
         self.assertIn("AKERNEL_ENABLE_FIRECRACKER=true", node)
+
+    def test_pvm_guest_profile_uses_manifest_pins(self):
+        result = self.run_helper(
+            AKERNEL_TARGETARCH="amd64", AKERNEL_ENABLE_FIRECRACKER="true",
+            FIRECRACKER_KERNEL_PROFILE="pvm",
+            FIRECRACKER_RELEASE="PRIVATE_INVALID_VALUE",
+            FIRECRACKER_AMD64_URL="https://private-override.invalid/firecracker",
+            FIRECRACKER_AMD64_SHA256="f" * 64,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        node = self.docker_calls()[1]
+        self.assertIn("FIRECRACKER_KERNEL_PROFILE=pvm", node)
+        self.assertIn("FIRECRACKER_RELEASE=v1.16.1-akernel.4", node)
+        self.assertIn("FIRECRACKER_AMD64_URL=github-actions://akernel-dev/firecracker/123/firecracker.tgz", node)
+        self.assertIn(f"FIRECRACKER_AMD64_SHA256={'4' * 64}", node)
+        self.assertNotIn("PRIVATE_INVALID_VALUE", json.dumps(node))
+        self.assertNotIn("private-override.invalid", json.dumps(node))
+
+    def test_invalid_guest_profile_fails_before_build(self):
+        result = self.run_helper(FIRECRACKER_KERNEL_PROFILE="invalid")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FIRECRACKER_KERNEL_PROFILE must be kvm or pvm", result.stdout)
+        self.assertEqual(self.docker_calls(), [])
+
+    def test_arm64_rejects_pvm_guest_profile_before_build(self):
+        result = self.run_helper(FIRECRACKER_KERNEL_PROFILE="pvm")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PVM guest profile requires linux/amd64", result.stdout)
+        self.assertEqual(self.docker_calls(), [])
 
     def test_target_precedence_and_stable_amd64_default(self):
         cases = (
@@ -338,31 +402,48 @@ class BuildImageTests(unittest.TestCase):
                         self.assertNotIn("PRIVATE_INVALID_VALUE", result.stdout)
                         self.assertEqual(self.docker_calls(), [])
 
-    def test_rrt_override_reaches_runtime_build(self):
+    def test_arm64_requires_both_native_adx_archives_before_build(self):
+        for prefix in ("ADX_RELEASE", "ADX_EXECD"):
+            with self.subTest(prefix=prefix):
+                result = self.run_helper(**{f"{prefix}_URL": None, f"{prefix}_SHA256": None})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("architecture-matched ADX_RELEASE and ADX_EXECD", result.stdout)
+                self.assertEqual(self.docker_calls(), [])
+
+    def test_amd64_uses_dockerfile_adx_pins_without_overrides(self):
+        result = self.run_helper(AKERNEL_TARGETARCH="amd64", ADX_RELEASE_URL=None,
+                                 ADX_RELEASE_SHA256=None, ADX_EXECD_URL=None,
+                                 ADX_EXECD_SHA256=None)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        runtime, node = map(self.build_arguments, self.docker_calls())
+        self.assertNotIn("ADX_EXECD_URL", runtime)
+        self.assertNotIn("ADX_RELEASE_URL", node)
+
+    def test_execd_override_reaches_runtime_build(self):
         result = self.run_helper(
-            "--rrt-runtime-url", "https://example.test/rrt", "--rrt-runtime-sha256", "f" * 64,
+            "--adx-execd-url", "https://example.test/execd.tar.gz", "--adx-execd-sha256", "f" * 64,
         )
         self.assertEqual(result.returncode, 0, result.stdout)
         runtime = self.docker_calls()[0]
-        self.assertIn("RRT_RUNTIME_URL=https://example.test/rrt", runtime)
-        self.assertIn(f"RRT_RUNTIME_SHA256={'f' * 64}", runtime)
+        self.assertIn("ADX_EXECD_URL=https://example.test/execd.tar.gz", runtime)
+        self.assertIn(f"ADX_EXECD_SHA256={'f' * 64}", runtime)
 
-    def test_core_override_and_cli_precedence_reach_builds(self):
+    def test_adx_override_and_cli_precedence_reach_builds(self):
         result = self.run_helper(
-            "--rrt-runtime-url", "https://example.test/cli-rrt",
-            "--rrt-runtime-sha256", "A" * 64,
-            "--open-yr-core-wheel-url", "https://example.test/cli-core.whl",
-            "--open-yr-core-wheel-sha256", "F" * 64,
-            RRT_RUNTIME_URL="https://example.test/env-rrt", RRT_RUNTIME_SHA256="b" * 64,
-            OPEN_YR_CORE_WHEEL_URL="https://example.test/env-core.whl",
-            OPEN_YR_CORE_WHEEL_SHA256="c" * 64,
+            "--adx-execd-url", "https://example.test/cli-execd.tar.gz",
+            "--adx-execd-sha256", "A" * 64,
+            "--adx-release-url", "https://example.test/cli-release.tar.gz",
+            "--adx-release-sha256", "F" * 64,
+            ADX_EXECD_URL="https://example.test/env-execd.tar.gz", ADX_EXECD_SHA256="b" * 64,
+            ADX_RELEASE_URL="https://example.test/env-release.tar.gz",
+            ADX_RELEASE_SHA256="c" * 64,
         )
         self.assertEqual(result.returncode, 0, result.stdout)
         runtime, node = self.docker_calls()
-        self.assertIn("RRT_RUNTIME_URL=https://example.test/cli-rrt", runtime)
-        self.assertIn(f"RRT_RUNTIME_SHA256={'A' * 64}", runtime)
-        self.assertIn("OPEN_YR_CORE_WHEEL_URL=https://example.test/cli-core.whl", node)
-        self.assertIn(f"OPEN_YR_CORE_WHEEL_SHA256={'F' * 64}", node)
+        self.assertIn("ADX_EXECD_URL=https://example.test/cli-execd.tar.gz", runtime)
+        self.assertIn(f"ADX_EXECD_SHA256={'A' * 64}", runtime)
+        self.assertIn("ADX_RELEASE_URL=https://example.test/cli-release.tar.gz", node)
+        self.assertIn(f"ADX_RELEASE_SHA256={'F' * 64}", node)
 
     def test_default_official_sources_do_not_override_mirrors_or_release_pins(self):
         for option in ({}, {"AKERNEL_BUILD_MIRROR": "official"}):
@@ -400,8 +481,8 @@ class BuildImageTests(unittest.TestCase):
                     self.assertEqual(call[call.index("--platform") + 1], f"linux/{architecture}")
                     self.assertNotIn("GOPROXY", arguments)
 
-    def test_aliyun_pypi_applies_to_python_profile_without_changing_node_pins(self):
-        result = self.run_helper("--runtime-profile", "python",
+    def test_aliyun_preset_preserves_node_pins(self):
+        result = self.run_helper(
                                  AKERNEL_TARGETARCH="amd64", AKERNEL_BUILD_MIRROR="aliyun")
         self.assertEqual(result.returncode, 0, result.stdout)
         runtime, node = map(self.build_arguments, self.docker_calls())
@@ -414,7 +495,7 @@ class BuildImageTests(unittest.TestCase):
         custom = {name: f"https://mirror.example.test/{index}"
                   for index, name in enumerate(APT_MIRROR_NAMES)}
         custom.update(PIP_INDEX_URL="https://mirror.example.test/simple", GOPROXY="https://mirror.example.test/go,direct")
-        result = self.run_helper("--runtime-profile", "python", AKERNEL_TARGETARCH="amd64",
+        result = self.run_helper(AKERNEL_TARGETARCH="amd64",
                                  AKERNEL_BUILD_MIRROR="aliyun", **custom)
         self.assertEqual(result.returncode, 0, result.stdout)
         runtime, node = map(self.build_arguments, self.docker_calls())
@@ -461,7 +542,7 @@ class BuildImageTests(unittest.TestCase):
         for name in (*APT_MIRROR_NAMES, "PIP_INDEX_URL"):
             for value in values:
                 with self.subTest(name=name, value=value):
-                    result = self.run_helper("--runtime-profile", "python", AKERNEL_TARGETARCH="amd64", **{name: value})
+                    result = self.run_helper(AKERNEL_TARGETARCH="amd64", **{name: value})
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn(name, result.stdout)
                     self.assertNotIn("PRIVATE_INVALID_VALUE", result.stdout)
@@ -565,14 +646,14 @@ class BuildImageTests(unittest.TestCase):
             (private_url, "z" * 64, "64-character hexadecimal digest"),
         )
         for prefix, cli_prefix in (
-            ("RRT_RUNTIME", "rrt-runtime"), ("OPEN_YR_CORE_WHEEL", "open-yr-core-wheel"),
+            ("ADX_EXECD", "adx-execd"), ("ADX_RELEASE", "adx-release"),
             ("OTELCOL_CONTRIB", "otelcol-contrib"),
         ):
             for source in ("caller", "cli"):
                 for url, sha256, expected in cases:
                     with self.subTest(prefix=prefix, source=source, url=url, sha256=sha256):
                         values = {"url": url, "sha256": sha256}
-                        environment, arguments = {}, []
+                        environment, arguments = {f"{prefix}_URL": None, f"{prefix}_SHA256": None}, []
                         for key, value in values.items():
                             if value is None:
                                 continue
@@ -589,9 +670,9 @@ class BuildImageTests(unittest.TestCase):
 
     def test_missing_cli_values_fail_before_build(self):
         for option in (
-            "--env", "--repository", "--tag", "--runtime-image", "--runtime-profile",
-            "--open-yr-core-wheel-url", "--open-yr-core-wheel-sha256",
-            "--rrt-runtime-url", "--rrt-runtime-sha256",
+            "--env", "--repository", "--tag", "--runtime-image",
+            "--adx-release-url", "--adx-release-sha256",
+            "--adx-execd-url", "--adx-execd-sha256",
             "--otelcol-contrib-url", "--otelcol-contrib-sha256",
         ):
             with self.subTest(option=option):
@@ -605,7 +686,6 @@ class BuildImageTests(unittest.TestCase):
             ({"AKERNEL_ENABLE_KATA": "true"}, "VM payloads are unsupported"),
             ({"AKERNEL_ENABLE_FIRECRACKER": "true"}, "VM payloads are unsupported"),
             ({"AKERNEL_ENABLE_GPU": "true"}, "NVIDIA GPU payload"),
-            ({"RUNTIME_PROFILE": "python"}, "requires the rrt runtime profile"),
         )
         for environment, expected in cases:
             with self.subTest(environment=environment):

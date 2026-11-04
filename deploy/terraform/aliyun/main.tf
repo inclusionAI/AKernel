@@ -105,7 +105,7 @@ locals {
   slb_security_group_annotations = length(var.security_group_id) > 0 ? {
     "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-security-group-ids" = var.security_group_id
   } : {}
-  effective_traefik_service_annotations = merge(local.slb_security_group_annotations, var.traefik_service_annotations)
+  effective_adx_service_annotations = merge(local.slb_security_group_annotations, var.adx_service_annotations)
 
   effective_storage_class           = var.storage_class
   effective_monitor_storage_class   = length(var.monitor_storage_class) > 0 ? var.monitor_storage_class : local.effective_storage_class
@@ -131,34 +131,34 @@ locals {
     auths = { for host, cred in var.registry_auths : host => { auth = base64encode("${cred.username}:${cred.password}") } }
   }
 
-  etcd_image_repo              = length(var.etcd_image_repository) > 0 ? var.etcd_image_repository : "public.ecr.aws/bitnami/etcd"
-  master_image_repo            = length(var.master_image_repository) > 0 ? var.master_image_repository : "${local.acr_registry}/all-in-one"
-  node_image_repo              = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
-  traefik_image_repo           = length(var.traefik_image_repository) > 0 ? var.traefik_image_repository : "traefik"
-  traefik_internal_stats_image = length(var.traefik_internal_stats_image) > 0 ? var.traefik_internal_stats_image : "${local.acr_registry}/busybox:1.37.0-musl"
+  master_image_repo = length(var.master_image_repository) > 0 ? var.master_image_repository : "${local.acr_registry}/all-in-one"
+  node_image_repo   = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
+    cluster_name                = var.cluster_name
+    adx_public_service_enabled  = var.adx_public_service_enabled
+    adx_service_type            = var.adx_service_type
+    adx_control_port            = var.adx_control_port
+    adx_data_port               = var.adx_data_port
+    adx_service_annotations     = local.effective_adx_service_annotations
+    adx_load_balancer_ip        = var.adx_load_balancer_ip
+    checkpoint_storage          = module.shared_storage.helm_values
     acr_registry                = local.acr_registry
     acr_secret_enabled          = local.acr_secret_enabled
     acr_host                    = local.acr_host
     acr_username                = var.acr_username
     acr_password                = var.acr_password
-    etcd_image_repository       = local.etcd_image_repo
-    etcd_image_tag              = var.etcd_image_tag
     master_image_repository     = local.master_image_repo
     master_image_tag            = var.master_image_tag
     schedule_placement_policy   = var.schedule_placement_policy
     node_image_repository       = local.node_image_repo
     node_image_tag              = var.node_image_tag
-    traefik_image_repository    = local.traefik_image_repo
-    traefik_image_tag           = var.traefik_image_tag
-    iam_litebus_data_key        = var.iam_litebus_data_key
     enable_kruise               = var.install_prereqs
-    master_service_type         = (var.master_public_access_8888 && !var.traefik_enabled) ? var.master_service_type : "ClusterIP"
-    traefik_enabled             = var.traefik_enabled
     sandboxd_nat_backend        = var.sandboxd_nat_backend
     chunk_db_size               = var.chunk_db_size
     enable_runc                 = var.enable_runc
+    runsc_checkpoint_mode       = var.runsc_checkpoint_mode
+    native_filestore            = var.native_filestore
     node_secret_create          = var.node_secret_create
     node_home_use_csi_ephemeral = var.node_home_use_csi_ephemeral
     node_home_csi_storage_class = local.effective_node_home_csi_sc
@@ -170,7 +170,6 @@ locals {
     etcd_storage_class = local.effective_storage_class
     etcd_cpu           = var.etcd_resources.cpu
     etcd_memory        = var.etcd_resources.memory
-    etcd_ephemeral     = var.etcd_resources.ephemeral_storage
     etcd_pvc_size      = var.etcd_resources.pvc_size
     master_cpu         = var.master_resources.cpu
     master_memory      = var.master_resources.memory
@@ -188,34 +187,12 @@ locals {
     monitor_namespace = var.monitor_namespace
     akernel_env       = length(var.akernel_env) > 0 ? var.akernel_env : var.cluster_name
 
-    master_replicas   = var.master_replicas
-    frontend_enabled  = var.frontend_enabled
-    frontend_replicas = var.frontend_replicas
-    frontend_cpu      = var.frontend_cpu
-    frontend_memory   = var.frontend_memory
-
-    install_traefik               = var.install_traefik
-    traefik_replicas              = var.traefik_replicas
-    traefik_tcp_port              = var.traefik_tcp_port
-    traefik_enable_web_entrypoint = var.traefik_enable_web_entrypoint
-    traefik_web_port              = var.traefik_web_port
-    traefik_websecure_port        = var.traefik_websecure_port
-    traefik_service_type          = var.traefik_service_type
-    traefik_service_annotations   = local.effective_traefik_service_annotations
-    traefik_tls_enabled           = var.traefik_tls_enabled
-    traefik_tls_create_secret     = var.traefik_tls_create_secret
-    traefik_tls_cert              = var.traefik_tls_cert
-    traefik_tls_key               = var.traefik_tls_key
-    traefik_internal_stats        = var.traefik_internal_stats_enabled
-    traefik_internal_stats_image  = local.traefik_internal_stats_image
-    traefik_grafana_enabled       = var.install_monitor
-    traefik_grafana_url           = var.install_monitor ? "http://grafana.${var.monitor_namespace}.svc:3000" : ""
-
   })
 
   monitor_image_registry = var.monitor_image_registry
 
   monitor_values = templatefile("${path.module}/values-monitor.yaml.tmpl", {
+    cluster_name           = var.cluster_name
     image_registry         = local.monitor_image_registry
     acr_secret_enabled     = local.acr_secret_enabled
     acr_host               = local.acr_host
@@ -314,8 +291,6 @@ locals {
     server_taint_value         = var.dragonfly_server_node_pool.taint_value
     server_taint_effect        = var.dragonfly_server_node_pool.taint_effect
   }) : ""
-
-
 
 }
 
@@ -771,6 +746,25 @@ resource "null_resource" "ensure_monitor_namespace" {
   depends_on = [data.alicloud_cs_cluster_credential.ack, alicloud_cs_kubernetes_node_pool.default_with_key, alicloud_cs_kubernetes_node_pool.default_with_password]
 }
 
+resource "null_resource" "ensure_adx_secret" {
+  triggers = {
+    always = timestamp()
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      "${path.module}/../../scripts/ensure-adx-secret.sh" \
+        --namespace "${var.core_namespace}" \
+        --name akernel-adx-tls \
+        --kubeconfig "${local.kubeconfig_path}"
+    EOT
+  }
+
+  depends_on = [null_resource.ensure_core_namespace]
+}
+
 resource "helm_release" "prereq_openkruise" {
   count = var.install_prereqs ? 1 : 0
 
@@ -789,6 +783,15 @@ resource "helm_release" "prereq_openkruise" {
   depends_on = [data.alicloud_cs_cluster_credential.ack, alicloud_cs_kubernetes_node_pool.default_with_key, alicloud_cs_kubernetes_node_pool.default_with_password, null_resource.ensure_prereq_namespace]
 }
 
+
+module "shared_storage" {
+  source               = "../shared-storage"
+  management_namespace = var.core_namespace
+  checkpoint_storage   = var.checkpoint_storage
+  juicefs              = var.juicefs
+  depends_on           = [null_resource.ensure_core_namespace]
+}
+
 resource "helm_release" "akernel_core" {
   name                       = "akernel-core"
   chart                      = "${path.module}/../../akernel/charts/core"
@@ -805,7 +808,7 @@ resource "helm_release" "akernel_core" {
     value = sha256(join("", [for f in fileset("${path.module}/../../akernel/charts/core", "**") : filesha256("${path.module}/../../akernel/charts/core/${f}")]))
   }
 
-  depends_on = [data.alicloud_cs_cluster_credential.ack, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.create_storage_class]
+  depends_on = [module.shared_storage, data.alicloud_cs_cluster_credential.ack, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.create_storage_class]
 }
 
 resource "helm_release" "akernel_monitor" {

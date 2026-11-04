@@ -19,6 +19,8 @@ spec:
       component: loki
   template:
     metadata:
+      annotations:
+        checksum/loki-config: {{ include (print $.Template.BasePath "/loki/configmap.yaml") . | sha256sum }}
       labels:
         {{- include "monitor.labels" . | nindent 8 }}
         component: loki

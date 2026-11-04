@@ -112,14 +112,13 @@ exec "$@"
         result = self.run_stop()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.owned_calls(), [
-            ["stop", GATEWAY_ID], ["rm", GATEWAY_ID],
             ["stop", NODE_ID], ["rm", NODE_ID],
         ])
         self.assertIn(["docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}} {{.Names}}"], self.recorded_calls())
         self.assertIn("stopped successfully", result.stdout)
 
     def test_missing_containers_are_idempotent(self):
-        for missing in ("akernel-traefik", "akernel-traefik akernel-node"):
+        for missing in ("akernel-node",):
             with self.subTest(missing=missing):
                 self.calls.unlink(missing_ok=True)
                 result = self.run_stop(MOCK_MISSING=missing)
@@ -133,11 +132,9 @@ exec "$@"
 
     def test_failures_are_accumulated_and_second_container_is_still_attempted(self):
         cases = (
-            {"MOCK_STOP_FAILURE": "akernel-traefik"},
-            {"MOCK_RM_FAILURE": "akernel-traefik"},
             {"MOCK_STOP_FAILURE": "akernel-node"},
             {"MOCK_RM_FAILURE": "akernel-node"},
-            {"MOCK_STOP_FAILURE": "akernel-traefik akernel-node", "MOCK_RM_FAILURE": "akernel-traefik akernel-node"},
+            {"MOCK_STOP_FAILURE": "akernel-node", "MOCK_RM_FAILURE": "akernel-node"},
         )
         for overrides in cases:
             with self.subTest(overrides=overrides):
@@ -147,7 +144,7 @@ exec "$@"
                 self.assertIn("shutdown incomplete", result.stdout)
                 self.assertNotIn("stopped successfully", result.stdout)
                 self.assertIn(["rm", NODE_ID], self.owned_calls())
-                self.assertEqual(len(self.owned_calls()), 4)
+                self.assertEqual(len(self.owned_calls()), 2)
                 for container in overrides.get("MOCK_RM_FAILURE", "").split():
                     self.assertNotIn(f"Container removed: {container}", result.stdout)
                     self.assertIn(f"Failed to remove container: {container}", result.stdout)
@@ -163,8 +160,8 @@ exec "$@"
     def test_passwordless_sudo_fallback_is_supported(self):
         result = self.run_stop(MOCK_INFO_FAILURE="true", MOCK_SUDO_AVAILABLE="true")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(self.owned_calls()), 4)
-        self.assertEqual(sum(call[0] == "sudo" for call in self.recorded_calls()), 6)
+        self.assertEqual(len(self.owned_calls()), 2)
+        self.assertEqual(sum(call[0] == "sudo" for call in self.recorded_calls()), 4)
 
     def test_inventory_failure_or_invalid_owned_ids_cannot_report_success(self):
         for override in ("MOCK_INVENTORY_FAILURE", "MOCK_INVENTORY_INVALID"):
@@ -185,7 +182,6 @@ exec "$@"
     def test_expected_inventory_is_checked_before_either_container_stops(self):
         for overrides in (
             {"AKERNEL_EXPECTED_NODE_ID": "c" * 64},
-            {"AKERNEL_EXPECTED_TRAEFIK_ID": "absent"},
             {"AKERNEL_EXPECTED_NODE_ID": NODE_ID, "MOCK_MISSING": "akernel-node"},
         ):
             with self.subTest(overrides=overrides):
@@ -199,7 +195,7 @@ exec "$@"
         result = self.run_stop(AKERNEL_EXPECTED_NODE_ID=NODE_ID,
                                AKERNEL_EXPECTED_TRAEFIK_ID=GATEWAY_ID)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.owned_calls()[0], ["stop", GATEWAY_ID])
+        self.assertEqual(self.owned_calls()[0], ["stop", NODE_ID])
 
     def test_missing_runtime_fails_without_host_fallback(self):
         (self.bin / "docker").unlink()

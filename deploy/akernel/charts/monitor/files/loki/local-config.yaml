@@ -32,6 +32,9 @@ limits_config:
             - component.name
             - process.name
             - akernel_env
+            - cluster
+            - adx_env
+            - component_name
 
 schema_config:
   configs:

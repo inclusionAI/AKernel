@@ -15,7 +15,8 @@ grafanaServer:
   prometheus:
     name: Prometheus
     url: http://prometheus:9090
-    timeInterval: "10s"
+    # Match business scrapes so $__rate_interval overlaps adjacent evaluations.
+    timeInterval: "15s"
     httpMethod: "POST"
     isDefault: true
     uid: prometheus
@@ -192,15 +193,15 @@ prometheusServer:
     accessMode: ReadWriteOnce
 
   config:
-    clusterName: 'yuanrong-frontend'
+    clusterName: 'akernel'
     environment: 'kubernetes'
-    retentionTime: '30d'
+    retentionTime: '7d'
     controlPlanePods:
       enabled: true
       namespaces:
         - "akernel"
       labelSelector: ""
-      targetContainerRegex: "akernel-master|akernel-frontend|etcd|traefik|manager|scheduler|seed-client|mysql|redis"
+      targetContainerRegex: "akernel-master|akernel-frontend|etcd|manager|scheduler|seed-client|mysql|redis"
       targetPortNameRegex: "http|client|dashboard|mysql|redis"
       targetPortNumberRegex: "8000|4002|3306|6379"
       kubelet:
@@ -235,3 +236,18 @@ prometheusServer:
       - "akernel"
       - "akernel-monitor"
     pushgateways: []
+    sharedStorage:
+      enabled: false
+      namespace: akernel-storage
+      postgresCluster: juicefs-metadata
+      postgresEnabled: true
+      redisName: akernel-redis
+      cephManagerService: rook-ceph-mgr
+
+# Optional native Environment inventory and resource scrapes into Prometheus.
+environmentDetails:
+  enabled: false
+  namespaces: [akernel]
+  environment: default
+  # Match the runtime sampler so short-lived workloads can produce multiple scrapes.
+  scrapeInterval: 15s

@@ -15,18 +15,21 @@
 """Trigger an internal local checkpoint and roll back the same sandbox."""
 
 import os
+import shlex
 
 from akernel_sdk import Sandbox
 
-
 _INSTALL_CURL_COMMAND = (
-    "apt-get update && "
-    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl"
+    "command -v curl >/dev/null || (apt-get update && "
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl)"
 )
 
+_CHECKPOINT_SOCKET = shlex.quote(
+    os.environ.get("AKERNEL_TEST_CHECKPOINT_SOCKET", "/run/akernel/execd.sock")
+)
 _CHECKPOINT_COMMAND = (
     "curl --fail-with-body --silent --show-error "
-    "--unix-socket /run/akernel/rrt.sock "
+    f"--unix-socket {_CHECKPOINT_SOCKET} "
     "--request POST http://localhost/checkpoint"
 )
 
@@ -39,6 +42,9 @@ def main() -> None:
         memory=4096,
         storage_mb=1024,
         failover=True,
+        # Retained for subsequent reload/failover. The omitted creation budget
+        # becomes schedule_timeout + init_timeout + 30 = 180 seconds.
+        init_timeout=120,
     ) as sandbox:
         install_curl = sandbox.commands.run(_INSTALL_CURL_COMMAND, timeout=300)
         assert install_curl.exit_code == 0, install_curl.stderr

@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""Contract tests for the RRT-only AKernel runtime package."""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import unittest
+from pathlib import Path
+
+import tomllib
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class RuntimeContractTest(unittest.TestCase):
+    def assert_artifact_pin(self, dockerfile: str, component: str) -> str:
+        prefix = "ADX_RELEASE" if component == "release" else "ADX_EXECD"
+        urls = re.findall(rf"^ARG {prefix}_URL=(.+)$", dockerfile, re.MULTILINE)
+        versions = re.findall(r"^ARG ADX_VERSION=(.+)$", dockerfile, re.MULTILINE)
+        checksums = re.findall(
+            rf"^ARG {prefix}_SHA256=(.+)$", dockerfile, re.MULTILINE
+        )
+        self.assertEqual(len(urls), 1, f"missing or duplicate {prefix}_URL pin")
+        self.assertEqual(len(versions), 1, "missing or duplicate ADX_VERSION pin")
+        self.assertRegex(versions[0], r"^v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?$")
+        self.assertEqual(len(checksums), 1, f"missing or duplicate {prefix}_SHA256 pin")
+        self.assertRegex(
+            urls[0],
+            rf"^https://agent-dx\.obs\.cn-southwest-2\.myhuaweicloud\.com/"
+            rf"adx/(?:daily/[0-9]{{14}}-[0-9a-f]{{12}}|"
+            rf"release/{re.escape(versions[0].removeprefix('v'))})/"
+            rf"linux/amd64/adx-{component}\.tar\.gz$",
+        )
+        self.assertRegex(checksums[0], r"^[0-9a-f]{64}$")
+        self.assertIn(
+            f'"${{{prefix}_URL}}" -o /tmp/adx-{component}.tar.gz', dockerfile
+        )
+        self.assertIn(
+            f'echo "${{{prefix}_SHA256}}  /tmp/adx-{component}.tar.gz" '
+            "| sha256sum -c -;",
+            dockerfile,
+        )
+        return versions[0] + " " + urls[0].rsplit("/", 1)[0]
+
+    def assert_matching_artifact_pins(self, node: str, runtime: str) -> None:
+        self.assertEqual(
+            self.assert_artifact_pin(node, "release"),
+            self.assert_artifact_pin(runtime, "execd"),
+            "Node and Execd archives must come from the same ADX build",
+        )
+
+    def test_node_service_inherits_deployment_configuration(self) -> None:
+        unit = (ROOT / "builder/systemd_services/adx.service").read_text()
+        inherited = {
+            name
+            for line in unit.splitlines()
+            if line.startswith("PassEnvironment=")
+            for name in line.split("=", 1)[1].split()
+        }
+        required = {
+            "AKERNEL_ADX_CONFIG",
+            "AKERNEL_ADX_MANAGED_CREDENTIALS",
+            "AKERNEL_ADX_STATE_DIR",
+            "ADX_REDIS_URL",
+            "NODE_NAME",
+            "INSTANCE_IP",
+        }
+        self.assertFalse(required - inherited, required - inherited)
+
+    def test_sdk_metadata_has_no_actor_runtime_dependency(self) -> None:
+        metadata = tomllib.loads(
+            (ROOT / "sdk/python/pyproject.toml").read_text(encoding="utf-8")
+        )
+        requirements = list(metadata["project"]["dependencies"])
+        for values in metadata["project"]["optional-dependencies"].values():
+            requirements.extend(values)
+        normalized = {item.split("=", 1)[0].lower() for item in requirements}
+        self.assertNotIn("openyuanrong-sdk", normalized)
+
+    def test_sdk_uses_the_environment_rc3_dependency(self) -> None:
+        metadata = tomllib.loads((ROOT / "sdk/python/pyproject.toml").read_text())
+        self.assertIn("adx-environment==0.1.0rc3", metadata["project"]["dependencies"])
+
+    def test_actor_backend_sources_are_absent(self) -> None:
+        backend = ROOT / "sdk/python/akernel_sdk/_backends"
+        self.assertFalse(list(backend.glob("openyuanrong_sdk*.py")))
+
+    def test_image_does_not_install_retired_control_plane(self) -> None:
+        dockerfile = (ROOT / "builder/node.Dockerfile").read_text()
+        self.assertNotIn("OPEN_YR", dockerfile)
+        self.assertNotIn("yuanrong.service", dockerfile)
+        self.assertFalse((ROOT / "builder/systemd_services/yuanrong.service").exists())
+
+    def test_default_sdk_config_keeps_the_existing_address_contract(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertNotIn("export AKERNEL_GATEWAY_ADDRESS=", workflow)
+
+    def test_ci_reads_the_standalone_sdk_endpoints(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertNotIn('export AKERNEL_SERVER_ADDRESS="127.0.0.1"', workflow)
+        self.assertEqual(workflow.count("source deploy/standalone/data/sdk.env"), 2)
+
+    def test_ci_and_publication_use_declared_index_dependencies(self) -> None:
+        for filename in ("ci.yml", "release-python.yml"):
+            with self.subTest(workflow=filename):
+                workflow = (ROOT / ".github/workflows" / filename).read_text()
+                self.assertNotIn("adx-sdk.lock.json", workflow)
+                self.assertNotIn("prepare_adx_dependency.py", workflow)
+                self.assertNotIn("adx-dependency-source", workflow)
+                self.assertIn("python -m pip install -e './sdk/python[", workflow)
+        action = (ROOT / ".github/actions/python-distributions/action.yml").read_text()
+        self.assertNotIn("prepare_adx_dependency", action)
+        self.assertNotIn("ADX_DEPENDENCY_WHEEL", action)
+        self.assertNotIn("adx-dependency-source", action)
+        self.assertIn('"${test_env}/bin/python" -m pip install "${artifact}"', action)
+        self.assertIn('"${test_env}/bin/python" -m pip check', action)
+        self.assertFalse((ROOT / "sdk/python/adx-sdk.lock.json").exists())
+        self.assertFalse(
+            (ROOT / "sdk/python/scripts/prepare_adx_dependency.py").exists()
+        )
+
+    def test_release_versions_are_named_build_arguments(self) -> None:
+        for component in ("node", "runtime"):
+            dockerfile = (ROOT / f"builder/{component}.Dockerfile").read_text()
+            self.assertRegex(dockerfile, r"(?m)^ARG ADX_VERSION=v[0-9]")
+            version = re.search(r"(?m)^ARG ADX_VERSION=(.+)$", dockerfile)
+            self.assertIsNotNone(version)
+            self.assertEqual(dockerfile.count(version[1]), 1)
+            self.assertRegex(dockerfile, r"/adx/(?:daily|release)/")
+
+    def test_actor_runtime_entrypoint_is_absent(self) -> None:
+        self.assertFalse((ROOT / "builder/scripts/entryfile.sh").exists())
+
+    def test_image_build_exposes_only_the_execd_profile(self) -> None:
+        runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
+        build = (ROOT / "deploy/scripts/build-image.sh").read_text(encoding="utf-8")
+        self.assertNotIn("openyuanrong_sdk", runtime)
+        self.assertNotIn("runtime-python", runtime)
+        self.assertIn("false) runtime_target=runtime-execd", build)
+        self.assertNotIn("--runtime-profile", build)
+
+    def test_dockerfiles_install_the_pinned_release_build(self) -> None:
+        node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
+        runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
+        self.assert_matching_artifact_pins(node, runtime)
+        self.assertIn("install.sh", node)
+        self.assertNotIn("adx-release.tar.gz", runtime)
+        self.assertNotIn("install.sh", runtime)
+
+        self.assertFalse((ROOT / "builder/adx-release.lock.json").exists())
+        self.assertFalse((ROOT / "builder/scripts/fetch_adx_release.py").exists())
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertNotIn("ADX_RELEASE_ARCHIVE", makefile)
+
+    def test_daily_artifact_pin_matches_the_source_gitlink(self) -> None:
+        node = (ROOT / "builder/node.Dockerfile").read_text()
+        match = re.search(r"^ARG ADX_RELEASE_URL=.+/daily/[0-9]{14}-([0-9a-f]{12})/", node, re.MULTILINE)
+        self.assertIsNotNone(match, "daily artifact URL must identify its source revision")
+        entry = subprocess.check_output(
+            ["git", "ls-files", "--stage", "--", "src/agent-dx"], cwd=ROOT, text=True
+        ).split()
+        self.assertEqual(entry[0], "160000", "ADX source reference must remain a gitlink")
+        self.assertTrue(entry[1].startswith(match.group(1)), "ADX archive and source revisions differ")
+
+    def test_artifact_contract_rejects_unpinned_or_mismatched_builds(self) -> None:
+        node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
+        runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
+        mutations = {
+            "mutable URL": re.sub(
+                r"/(daily|release)/[^/]+/", r"/\1/latest/", node
+            ),
+            "missing version": re.sub(
+                r"^ARG ADX_VERSION=.+\n", "", node, flags=re.MULTILINE
+            ),
+            "missing checksum": re.sub(
+                r"^ARG ADX_RELEASE_SHA256=.+\n", "", node, flags=re.MULTILINE
+            ),
+            "invalid checksum": re.sub(
+                r"^ARG ADX_RELEASE_SHA256=.+$",
+                "ARG ADX_RELEASE_SHA256=invalid",
+                node,
+                flags=re.MULTILINE,
+            ),
+            "mismatched build": re.sub(
+                r"v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?",
+                "v0.0.0rc1",
+                node,
+            ),
+            "unchecked checksum": node.replace("| sha256sum -c -;", "| cat;"),
+        }
+        for name, mutated_node in mutations.items():
+            with self.subTest(name=name), self.assertRaises(AssertionError):
+                self.assert_matching_artifact_pins(mutated_node, runtime)
+
+    def test_collector_archive_is_checksum_pinned_before_extraction(self) -> None:
+        node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
+        for architecture in ("AMD64", "ARM64"):
+            self.assertRegex(
+                node, rf"(?m)^ARG OTELCOL_CONTRIB_{architecture}_SHA256=[0-9a-f]{{64}}$"
+            )
+        self.assertIn('"${archive_url}" -o "${archive}"', node)
+        self.assertIn('"${archive_sha}" "${archive}" | sha256sum -c -;', node)
+        collector = node.split("\nARG OTELCOL_CONTRIB_VERSION\n", 1)[1]
+        self.assertLess(
+            collector.index('"${archive_sha}" "${archive}" | sha256sum'),
+            collector.index('tar -xzf "${archive}"'),
+        )
+        self.assertIn('verify-elf-arch.sh "${temp_dir}/otelcol-contrib" "${TARGETARCH}"', node)
+
+    def test_node_image_copies_from_the_verified_install_tree(self) -> None:
+        node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
+        self.assertNotIn("/adx-package", node)
+        self.assertIn(
+            "COPY --from=adx-release /opt/adx/current/bin/ "
+            "/opt/adx/current/bin/",
+            node,
+        )
+        self.assertIn(
+            "COPY --from=adx-release /opt/adx/current/runtime/adx-execd ",
+            node,
+        )
+
+    def test_runtime_rootfs_has_only_the_adx_layout(self) -> None:
+        runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
+        self.assertNotIn("/adx-package", runtime)
+        self.assertNotIn("/var/task/code", runtime)
+        self.assertNotIn("/__yuanrong", runtime)
+        self.assertIn("mkdir -p /var/task /__adx", runtime)
+        self.assertIn(
+            "COPY --from=adx-execd /opt/adx-execd/adx-execd ",
+            runtime,
+        )
+
+    def test_build_targets_the_release_architecture(self) -> None:
+        build = (ROOT / "deploy/scripts/build-image.sh").read_text(encoding="utf-8")
+        self.assertIn('AKERNEL_TARGETARCH', build)
+        self.assertIn('DOCKER_DEFAULT_PLATFORM', build)
+        self.assertEqual(build.count('--platform "linux/${target_arch}"'), 2)
+        self.assertIn('architecture-matched ADX_RELEASE and ADX_EXECD', build)
+
+    def test_image_uses_current_adx_component_names(self) -> None:
+        node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
+        runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
+        for component in ("adx-coordinator", "adxlet", "adx-apiserver"):
+            self.assertIn(component, node)
+        self.assertIn("adx-execd", runtime)
+        for retired in ("adx-master", "adx-node-manager", "adx-api-server"):
+            self.assertNotIn(retired, node)
+        self.assertNotIn("rrt-runtime", runtime)
+
+
+if __name__ == "__main__":
+    unittest.main()

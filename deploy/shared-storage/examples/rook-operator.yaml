@@ -1,0 +1,17 @@
+# Qualified with rook-ceph chart 1.21.0; install the six bundled CSI API CRDs.
+currentNamespaceOnly: true
+enableDiscoveryDaemon: false
+csi:
+  installCsiOperator: false
+  createCsiOperatorResources: false
+image:
+  repository: docker.io/rook/ceph
+  tag: v1.21.0@sha256:c9aa5d70c5bf220869d098b7bdc68d992739fa02df9f02a03947d665330ad93f
+nodeSelector: {node-role: akernel-control-plane}
+tolerations:
+  - {key: dedicated, operator: Equal, value: akernel-control-plane, effect: NoSchedule}
+  - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+  - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+resources:
+  requests: {cpu: 500m, memory: 512Mi}
+  limits: {memory: 1Gi}

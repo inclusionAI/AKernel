@@ -113,7 +113,151 @@ class CliTest(unittest.TestCase):
         self.assertIn("OK", output.getvalue())
         self.assertIn("gpu/l20 1/2", output.getvalue())
 
-    def test_delete_uses_frontend_actor_api(self):
+    def test_resources_display_disk_capacity_and_allocation(self):
+        response = {
+            "items": [
+                {
+                    "id": "node-1",
+                    "status": 0,
+                    "capacity": {"CPU": 4000, "Memory": 8192, "Disk": 102400},
+                    "allocatable": {"CPU": 3000, "Memory": 4096, "Disk": 76800},
+                }
+            ]
+        }
+        output = io.StringIO()
+        with (
+            patch("akernel_sdk.cli.query_resource_view", return_value=response),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.handle_resources()
+        text = output.getvalue()
+        self.assertIn("DISK", text)
+        self.assertIn("DISK ALLOC", text)
+        self.assertNotIn("DISK AVAIL", text)
+        self.assertNotIn("DISK avail:", text)
+        self.assertIn("100.0G", text)
+        self.assertIn("25.0G", text)
+        self.assertIn("25.0%", text)
+
+    def test_resources_missing_disk_is_not_reported_as_zero_capacity(self):
+        response = {
+            "items": [
+                {
+                    "id": "node-1",
+                    "status": 0,
+                    "capacity": {"CPU": 4000, "Memory": 8192},
+                    "allocatable": {"CPU": 4000, "Memory": 8192},
+                }
+            ]
+        }
+        output = io.StringIO()
+        with (
+            patch("akernel_sdk.cli.query_resource_view", return_value=response),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.handle_resources()
+        self.assertIn("DISK total:  -", output.getvalue())
+        self.assertNotIn("DISK avail:", output.getvalue())
+
+    def test_list_displays_tenant_for_each_instance_and_handles_missing_tenant(self):
+        response = {
+            "status": 200,
+            "body": (
+                '{"items":[{"id":"sandbox-1","tenant_id":"tenant-a",'
+                '"status":"running"},{"id":"sandbox-2","status":"running"}],'
+                '"nextPageToken":""}'
+            ),
+        }
+        output = io.StringIO()
+        with (
+            patch(
+                "akernel_sdk.cli._get_endpoint",
+                return_value=Endpoint("akernel.example", 443, "https", False),
+            ),
+            patch("akernel_sdk.cli._get_auth_token", return_value="token"),
+            patch("akernel_sdk.cli._create_ssl_context"),
+            patch("akernel_sdk.cli._make_get_request", return_value=response),
+            contextlib.redirect_stdout(output),
+        ):
+            cli.handle_list()
+        lines = output.getvalue().splitlines()
+        self.assertIn("TENANT", lines[0])
+        self.assertEqual(lines[2].split(), ["sandbox-1", "tenant-a", "running"])
+        self.assertEqual(lines[3].split(), ["sandbox-2", "-", "running"])
+
+    def test_list_uses_local_catalog(self):
+        output = io.StringIO()
+        with (
+            patch(
+                "akernel_sdk.cli._get_endpoint",
+                return_value=Endpoint("akernel.example", 443, "https", False),
+            ),
+            patch("akernel_sdk.cli._get_auth_token", return_value="token"),
+            patch("akernel_sdk.cli._create_ssl_context"),
+            patch(
+                "akernel_sdk.cli._make_get_request",
+                return_value={
+                    "status": 200,
+                    "body": (
+                        '{"items":[{"id":"sandbox-1","status":"running"}],'
+                        '"nextPageToken":""}'
+                    ),
+                },
+            ) as make_request,
+            contextlib.redirect_stdout(output),
+        ):
+            cli.handle_list(quiet=True)
+        self.assertEqual(
+            make_request.call_args.args[0],
+            "https://akernel.example/api/instances?pageSize=1000",
+        )
+        self.assertEqual(output.getvalue().splitlines(), ["sandbox-1"])
+
+    def test_list_reads_all_catalog_pages(self):
+        output = io.StringIO()
+        responses = [
+            {
+                "status": 200,
+                "body": (
+                    '{"items":[{"id":"sandbox-1","status":"running"}],'
+                    '"nextPageToken":"next/page"}'
+                ),
+            },
+            {
+                "status": 200,
+                "body": (
+                    '{"items":[{"id":"sandbox-2","status":"running"}],'
+                    '"nextPageToken":""}'
+                ),
+            },
+        ]
+        with (
+            patch(
+                "akernel_sdk.cli._get_endpoint",
+                return_value=Endpoint("akernel.example", 443, "https", False),
+            ),
+            patch("akernel_sdk.cli._get_auth_token", return_value="token"),
+            patch("akernel_sdk.cli._create_ssl_context"),
+            patch(
+                "akernel_sdk.cli._make_get_request", side_effect=responses
+            ) as make_request,
+            contextlib.redirect_stdout(output),
+        ):
+            cli.handle_list(quiet=True)
+
+        self.assertEqual(output.getvalue().splitlines(), ["sandbox-1", "sandbox-2"])
+        self.assertEqual(
+            [call.args[0] for call in make_request.call_args_list],
+            [
+                "https://akernel.example/api/instances?pageSize=1000",
+                (
+                    "https://akernel.example/api/instances?pageSize=1000"
+                    "&pageToken=next%2Fpage"
+                ),
+            ],
+        )
+
+    def test_delete_uses_sandbox_api(self):
         output = io.StringIO()
         endpoint = Endpoint("akernel.example", 443, "https", False)
         with (
@@ -121,25 +265,19 @@ class CliTest(unittest.TestCase):
             patch("akernel_sdk.cli._get_auth_token", return_value="token"),
             patch("akernel_sdk.cli._create_ssl_context"),
             patch(
-                "akernel_sdk.cli._make_json_request",
-                return_value={"status": 200, "body": '{"code":0,"message":""}'},
+                "akernel_sdk.cli._make_delete_request",
+                return_value={"status": 204, "body": ""},
             ) as make_request,
         ):
             with contextlib.redirect_stdout(output):
                 cli.handle_delete(["sandbox-1", "sandbox-2"])
 
         self.assertEqual(
-            [call.args[3] for call in make_request.call_args_list],
+            [call.args[0] for call in make_request.call_args_list],
             [
-                {"instanceID": "sandbox-1", "signal": 1},
-                {"instanceID": "sandbox-2", "signal": 1},
+                "https://akernel.example/api/environment/v1/environments/sandbox-1",
+                "https://akernel.example/api/environment/v1/environments/sandbox-2",
             ],
-        )
-        self.assertTrue(
-            all(
-                call.args[0] == "https://akernel.example/frontend/v1/instance/kill"
-                for call in make_request.call_args_list
-            )
         )
         self.assertEqual(
             output.getvalue().splitlines(),
@@ -149,8 +287,8 @@ class CliTest(unittest.TestCase):
     def test_delete_reports_failures_and_continues(self):
         stderr = io.StringIO()
         responses = [
-            {"status": 200, "body": '{"code":22,"message":"not found"}'},
-            {"status": 200, "body": '{"code":0,"message":""}'},
+            {"status": 503, "body": '{"message":"unavailable"}'},
+            {"status": 204, "body": ""},
         ]
         with (
             patch(
@@ -159,14 +297,14 @@ class CliTest(unittest.TestCase):
             ),
             patch("akernel_sdk.cli._get_auth_token", return_value="token"),
             patch("akernel_sdk.cli._create_ssl_context"),
-            patch("akernel_sdk.cli._make_json_request", side_effect=responses),
+            patch("akernel_sdk.cli._make_delete_request", side_effect=responses),
             contextlib.redirect_stderr(stderr),
             self.assertRaises(SystemExit) as raised,
         ):
             cli.handle_delete(["missing", "sandbox-2"])
 
         self.assertEqual(raised.exception.code, 1)
-        self.assertIn("server returned code 22: not found", stderr.getvalue())
+        self.assertIn("server returned status 503", stderr.getvalue())
 
     def test_endpoint_errors_are_reported(self):
         stderr = io.StringIO()

@@ -1,0 +1,36 @@
+{{- if .Values.adx.ingressApi.publicService.enabled }}
+{{- $control := int .Values.adx.ingressApi.publicService.controlPort }}
+{{- $data := int .Values.adx.ingressApi.publicService.dataPort }}
+{{- if or (lt $control 1) (gt $control 65535) (lt $data 1) (gt $data 65535) (eq $control $data) (ne (float64 .Values.adx.ingressApi.publicService.controlPort) (float64 $control)) (ne (float64 .Values.adx.ingressApi.publicService.dataPort) (float64 $data)) }}
+{{- fail "ADX public controlPort and dataPort must be distinct ports between 1 and 65535" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: akernel-adx-public
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.adx.ingressApi.publicService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.adx.ingressApi.publicService.type }}
+  {{- if or (eq .Values.adx.ingressApi.publicService.type "LoadBalancer") (eq .Values.adx.ingressApi.publicService.type "NodePort") }}
+  externalTrafficPolicy: {{ .Values.adx.ingressApi.publicService.externalTrafficPolicy }}
+  {{- end }}
+  {{- if and (eq .Values.adx.ingressApi.publicService.type "LoadBalancer") .Values.adx.ingressApi.publicService.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.adx.ingressApi.publicService.loadBalancerIP | quote }}
+  {{- end }}
+  selector:
+    app: akernel-adx-ingress-api
+    {{- if .Values.adx.ingressApi.publicService.maintenance }}
+    akernel.io/maintenance: "true"
+    {{- end }}
+  ports:
+    - name: control
+      port: {{ .Values.adx.ingressApi.publicService.controlPort }}
+      targetPort: control
+    - name: data
+      port: {{ .Values.adx.ingressApi.publicService.dataPort }}
+      targetPort: data
+{{- end }}

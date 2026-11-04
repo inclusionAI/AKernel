@@ -1,0 +1,55 @@
+# Supply image.repository and image.digest separately for the qualified image.
+# Precreate the TLS/admin, Redis URL and bucket credential Secrets.
+adx:
+  namespace: akernel-checkpoint-s3-v1
+  tls:
+    existingSecret: akernel-adx-tls
+  redis:
+    mode: external
+    external:
+      existingSecret: akernel-redis-url
+      urlKey: redis-url
+  checkpointStorage:
+    kind: s3
+    alias: akernel-checkpoints-s3
+    prefix: akernel/checkpoints-v1
+    s3:
+      bucket: REPLACE_WITH_BOUND_BUCKET_NAME
+      region: us-east-1
+      # HTTP is restricted to the accepted private RGW network boundary.
+      endpoint: http://rook-ceph-rgw-checkpoints.akernel-storage.svc.cluster.local:8080
+      allowHttp: true
+      credentialsSecret: akernel-checkpoint-s3
+      cacheRoot: /home/akernel/adx/checkpoint-s3-cache
+      cacheBudgetBytes: 53687091200
+      cacheMaxEntries: 500
+  coordinator:
+    replicas: 1
+    nodeSelector: {node-role: akernel-control-plane}
+    tolerations:
+      - {key: dedicated, operator: Equal, value: akernel-control-plane, effect: NoSchedule}
+  ingressApi:
+    replicas: 3
+    nodeSelector: {node-role: akernel-control-plane}
+    tolerations:
+      - {key: dedicated, operator: Equal, value: akernel-control-plane, effect: NoSchedule}
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector: {matchLabels: {app: akernel-adx-ingress-api}}
+    publicService:
+      enabled: true
+      maintenance: true
+node:
+  # A fresh directory on the pre-mounted XFS volume; never a system-disk fallback.
+  hostDiskPath: /home/akernel/checkpoint-generation-v1
+  nodeSelector:
+    node-role: akernel-worker
+    akernel.io/runtime-generation: checkpoint-s3-v1
+  tolerations:
+    - {key: dedicated, operator: Equal, value: akernel-worker, effect: NoSchedule}
+  config:
+    sandboxd:
+      nativeFilestore: true
+      runscCheckpointMode: reflink

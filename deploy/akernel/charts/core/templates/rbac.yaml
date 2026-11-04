@@ -5,7 +5,7 @@ metadata:
   name: akernel-node-resource-{{ $namespace }}
 rules:
   # sandboxd's node-resource module watches the local Node and the Pods
-  # scheduled to it, then exposes the available capacity to openYuanrong over
+  # scheduled to it, then exposes the available capacity to adxlet over
   # /var/run/resource.sock. Field selectors narrow the requests at runtime,
   # but Kubernetes still requires cluster-scoped list/watch permissions.
   - apiGroups: [""]

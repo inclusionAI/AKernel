@@ -48,11 +48,15 @@ class StartPlatformTest(unittest.TestCase):
             TOKEN_FILE=str(self.directory / "data/token"),
             IAM_SEED_FILE=str(self.directory / "data/iam-seed"),
             SANDBOXD_CONFIG_FILE=str(self.directory / "data/sandboxd/config.toml"),
+            AKERNEL_CONTROL_PORT="443", AKERNEL_DATA_PORT="80",
+            AKERNEL_CONTROL_BIND="127.0.0.1", AKERNEL_DATA_BIND="127.0.0.1",
+            AKERNEL_ENDPOINT_HOST="127.0.0.1",
             NODE_CONTAINER_NAME="akernel-node",
             TRAEFIK_CONTAINER_NAME="akernel-traefik",
             ETCD_PORT="2379", ETCD_PEER_PORT="2378",
             YR_IMAGE_PROCESS_CONFIG="/run/akernel/yr-image-process.json",
             AKERNEL_ENABLE_RUNC="true", AKERNEL_NAT_BACKEND="iptables",
+            AKERNEL_FIRECRACKER_BACKEND="kvm",
             MOCK_HOST="Darwin", MOCK_OS="OrbStack",
             MOCK_ENGINE="linux/aarch64", MOCK_IMAGE="linux/arm64",
             MOCK_TRAEFIK_IMAGE="linux/arm64",
@@ -132,7 +136,7 @@ GPU_RUN_ARGS=()
             "validate_container_proxy", "configure_container_proxy",
             "validate_host_platform", "validate_image_platform",
             "validate_image_capabilities", "prepare_host_network_modules",
-            "start_node_container", "start_traefik_container",
+            "configure_afs", "start_node_container",
         )
         functions = "\n".join(
             function_from(STANDALONE_DIR / "start.sh", name) for name in names
@@ -154,16 +158,23 @@ configure_network() { record stage configure_network; }
 wait_for_ready() { record stage wait_for_ready; }
 container_ip() { printf '192.0.2.44\n'; }
 write_traefik_config() { record stage write_traefik_config; }
-wait_for_gateway() { record stage wait_for_gateway; }
+wait_for_endpoints() { record stage wait_for_endpoints; }
+write_sdk_env() { record stage write_sdk_env; }
 show_status() { record stage show_status; }
 '''
-        main = (STANDALONE_DIR / "start.sh").read_text().split("# Main\n", 1)[1]
+        main = function_from(STANDALONE_DIR / "start.sh", "main") + "\nmain"
         return self.run_script(stubs + main, **overrides)
 
     def assert_no_profile_mutation(self):
         self.assertFalse((self.directory / "data").exists())
         self.assertFalse(any(call[0] == "stage" for call in self.recorded_calls()))
         self.assertFalse(any(call[:2] == ["docker", "run"] for call in self.recorded_calls()))
+
+    def test_invalid_firecracker_backend_is_rejected_before_profile_mutation(self):
+        result = self.run_main(AKERNEL_FIRECRACKER_BACKEND="invalid")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AKERNEL_FIRECRACKER_BACKEND must be kvm or pvm", result.stderr)
+        self.assert_no_profile_mutation()
 
     def test_native_runc_uses_only_disposable_capability_probe(self):
         result = self.run_script(
@@ -190,7 +201,6 @@ show_status() { record stage show_status; }
             ({"MOCK_ENGINE": "linux/x86_64"}, "native linux/arm64 Docker engine"),
             ({"MOCK_IMAGE": "linux/amd64"}, "not native linux/arm64"),
             ({"MOCK_IMAGE": "windows/arm64"}, "not native linux/arm64"),
-            ({"MOCK_TRAEFIK_IMAGE": "linux/amd64"}, "not native linux/arm64"),
             ({"MOCK_KATA": "true"}, "image must disable kata"),
             ({"MOCK_FIRECRACKER": "<no value>"}, "image must disable firecracker"),
             ({"MOCK_RUNC": "false"}, "runc payload enabled"),
@@ -233,7 +243,7 @@ show_status() { record stage show_status; }
         result = self.run_main(DOCKER_DEFAULT_PLATFORM="linux/amd64", MOCK_LOCAL_IMAGE="false")
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = [call for call in self.recorded_calls() if call[1] in ("pull", "run")]
-        self.assertEqual(len(commands), 5)
+        self.assertEqual(len(commands), 3)
         for command in commands:
             self.assertEqual(command[command.index("--platform") + 1], "linux/arm64")
 
@@ -282,7 +292,7 @@ show_status() { record stage show_status; }
         self.assertTrue((self.directory / "data/sandboxd/config").is_dir())
 
     def test_existing_node_or_gateway_is_rejected_without_cleanup(self):
-        for container in ("akernel-node", "akernel-traefik"):
+        for container in ("akernel-node",):
             with self.subTest(container=container):
                 self.calls.unlink(missing_ok=True)
                 result = self.run_main(MOCK_COLLISION=container)
@@ -322,50 +332,34 @@ show_status() { record stage show_status; }
                     self.assertNotIn("fixture-secret", result.stdout + result.stderr)
                     self.assert_no_profile_mutation()
 
-    def test_new_auth_seed_is_private_even_with_wide_umask(self):
-        # The synthetic generator also checks permissions before writing data,
-        # so a later chmod cannot hide an initially world-readable temp file.
-        result = self.run_script(r'''
-umask 022
-python3() {
-    command python3 -c 'import glob, os; paths=glob.glob(os.environ["DATA_DIR"]+"/.iam-seed.*"); assert len(paths)==1; assert os.stat(paths[0]).st_mode & 0o777 == 0o600; print("A1"*32)'
-}
-prepare_data
-configure_auth
-''')
+    def test_new_api_key_is_private_even_with_wide_umask(self):
+        result = self.run_script("umask 000\nconfigure_auth")
         self.assertEqual(result.returncode, 0, result.stderr)
-        seed = self.directory / "data/iam-seed"
-        self.assertEqual(seed.read_text(), "A1" * 32 + "\n")
-        self.assertEqual(seed.stat().st_mode & 0o777, 0o600)
-        self.assertEqual((self.directory / "data/token").stat().st_mode & 0o777, 0o600)
-        self.assertEqual(list((self.directory / "data").glob(".iam-seed.*")), [])
-        self.assertNotIn("A1" * 32, result.stdout + result.stderr)
+        key = self.directory / "data/adx/secrets/admin-key"
+        self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+        self.assertTrue((self.directory / "data/token").is_symlink())
+        self.assertRegex(key.read_text(), r"^[0-9a-f]{64}$")
+        self.assertNotIn(key.read_text(), result.stdout + result.stderr)
 
-    def test_existing_auth_seed_is_tightened_without_rotating_identity(self):
-        seed = self.directory / "data/iam-seed"
-        seed.parent.mkdir()
-        contents = "b2" * 32 + "\n"
-        seed.write_text(contents)
-        seed.chmod(0o644)
-        result = self.run_script("umask 022\nconfigure_auth")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(seed.read_text(), contents)
-        self.assertEqual(seed.stat().st_mode & 0o777, 0o600)
-        self.assertNotIn("Generated a deployment-specific IAM seed", result.stdout)
-        self.assertNotIn(contents.strip(), result.stdout + result.stderr)
-
-    def test_invalid_auth_seed_failure_does_not_echo_seed(self):
-        seed = self.directory / "data/iam-seed"
-        seed.parent.mkdir()
-        seed.write_text("fixture-secret-invalid-hex")
+    def test_existing_api_key_is_tightened_without_rotating_identity(self):
+        key = self.directory / "data/adx/secrets/admin-key"
+        key.parent.mkdir(parents=True)
+        key.write_text("a" * 64)
+        key.chmod(0o644)
         result = self.run_script("configure_auth")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("even-length hexadecimal seed", result.stderr)
-        self.assertNotIn("fixture-secret", result.stdout + result.stderr)
-        self.assertFalse((self.directory / "data/token").exists())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(key.read_text(), "a" * 64)
+        self.assertEqual(key.stat().st_mode & 0o777, 0o600)
 
+    def test_invalid_api_key_failure_does_not_echo_credentials(self):
+        key = self.directory / "data/adx/secrets/admin-key"
+        key.parent.mkdir(parents=True)
+        key.write_text("fixture-secret-too-short")
+        result = self.run_script("configure_auth")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("32..512 bytes", result.stderr)
+        self.assertNotIn(key.read_text(), result.stdout + result.stderr)
 
-class PreflightCleanupTest(unittest.TestCase):
     def run_cleanup(self, *, failed_unmount="", status=0, partial=False, cgroup_failure=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

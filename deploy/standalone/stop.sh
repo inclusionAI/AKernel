@@ -7,7 +7,7 @@
 
 set -e
 
-CONTAINER_NAMES=("akernel-traefik" "akernel-node")
+CONTAINER_NAMES=("akernel-node")
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
@@ -74,12 +74,11 @@ for container in "${CONTAINER_NAMES[@]}"; do
 done
 
 # The source-profile manager supplies exact expected IDs after checking mounts
-# and draining sandboxes. Verify the entire inventory before stopping either
-# container, including names that were absent when the manager checked them.
+# and draining sandboxes. Verify the entire inventory before stopping the
+# node, including names that were absent when the manager checked them.
 for index in "${!CONTAINER_NAMES[@]}"; do
     case "${CONTAINER_NAMES[index]}" in
         akernel-node) expected_id="${AKERNEL_EXPECTED_NODE_ID:-}" ;;
-        akernel-traefik) expected_id="${AKERNEL_EXPECTED_TRAEFIK_ID:-}" ;;
     esac
     if [[ -z "${expected_id}" ]]; then continue; fi
     actual_id="${CONTAINER_IDS[index]:-absent}"
@@ -89,8 +88,7 @@ for index in "${!CONTAINER_NAMES[@]}"; do
     fi
 done
 
-# Stop the gateway before the AKernel container so no new requests arrive
-# while the runtime is shutting down. Continue after individual failures.
+# Stop and remove only the verified node identity.
 cleanup_failed=false
 for index in "${!CONTAINER_NAMES[@]}"; do
     container="${CONTAINER_NAMES[index]}"

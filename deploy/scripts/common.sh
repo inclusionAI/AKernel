@@ -124,13 +124,6 @@ csv_to_hcl_list() {
   printf '%s\n' "${out}"
 }
 
-generate_hex_seed() {
-  python3 - <<'PY'
-import secrets
-print(secrets.token_hex(32).upper())
-PY
-}
-
 generate_password() {
   python3 - <<'PY'
 import secrets

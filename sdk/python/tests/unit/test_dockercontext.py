@@ -219,7 +219,7 @@ class TestContextManifest(unittest.TestCase):
                 [DockerContextEntry("Dockerfile", "file", 0o644)],
             )
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             context_dir = root / "context"
             context_dir.mkdir()
             dockerfile = root / "outside.Dockerfile"

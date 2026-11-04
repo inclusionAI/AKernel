@@ -28,7 +28,7 @@ def endpoint_tuple(endpoint):
 
 
 class AddressConfigTest(unittest.TestCase):
-    def test_host_only_uses_https_api_and_http_gateway(self):
+    def test_host_only_uses_separate_control_and_data_ports(self):
         with patch.dict(os.environ, {"AKERNEL_SERVER_ADDRESS": "10.0.0.1"}, clear=True):
             self.assertEqual(
                 endpoint_tuple(api_endpoint_from_env()),
@@ -43,16 +43,16 @@ class AddressConfigTest(unittest.TestCase):
                 ("http", "10.0.0.1", 80, False),
             )
 
-    def test_explicit_server_port_uses_plain_http_gateway(self):
+    def test_explicit_server_port_preserves_shared_port_contract(self):
         with patch.dict(
             os.environ, {"AKERNEL_SERVER_ADDRESS": "10.0.0.1:8888"}, clear=True
         ):
             expected = ("https", "10.0.0.1", 8888, True)
-            gateway_expected = ("http", "10.0.0.1", 8888, False)
             self.assertEqual(endpoint_tuple(api_endpoint_from_env()), expected)
             self.assertEqual(endpoint_tuple(exec_endpoint_from_env()), expected)
             self.assertEqual(
-                endpoint_tuple(gateway_endpoint_from_env()), gateway_expected
+                endpoint_tuple(gateway_endpoint_from_env()),
+                ("http", "10.0.0.1", 8888, False),
             )
 
     def test_gateway_override_only_affects_public_gateway(self):
@@ -87,23 +87,27 @@ class AddressConfigTest(unittest.TestCase):
                 ("https", "gw.example.com", 9443, True),
             )
 
-    def test_internal_yr_gateway_does_not_override_exec_endpoint(self):
-        with patch.dict(
-            os.environ,
-            {
-                "AKERNEL_SERVER_ADDRESS": "10.0.0.1",
-                "YR_GATEWAY_ADDRESS": "10.0.0.1:80",
-            },
-            clear=True,
-        ):
-            self.assertEqual(
-                endpoint_tuple(exec_endpoint_from_env()),
-                ("https", "10.0.0.1", 443, True),
-            )
-            self.assertEqual(
-                endpoint_tuple(gateway_endpoint_from_env()),
-                ("http", "10.0.0.1", 80, False),
-            )
+    def test_gateway_override_uses_scheme_default_port(self):
+        cases = (
+            ("https://gw.example.com", "https", 443, True),
+            ("wss://gw.example.com", "wss", 443, True),
+            ("http://gw.example.com", "http", 80, False),
+            ("ws://gw.example.com", "ws", 80, False),
+            ("gw.example.com", "http", 80, False),
+            ("https://gw.example.com:80", "https", 80, True),
+        )
+        for address, scheme, port, tls in cases:
+            with self.subTest(address=address), patch.dict(
+                os.environ,
+                {"AKERNEL_GATEWAY_ADDRESS": address},
+                clear=True,
+            ):
+                endpoint = gateway_endpoint_from_env()
+                self.assertEqual(
+                    endpoint_tuple(endpoint), (scheme, "gw.example.com", port, tls)
+                )
+                if address == "https://gw.example.com":
+                    self.assertEqual(endpoint.base_url(), address)
 
     def test_missing_server_address_is_clear(self):
         with patch.dict(os.environ, {}, clear=True):

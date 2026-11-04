@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "id": "ubuntu-7.0.0-30-generic",
+  "maintenance": {
+    "owner_repository": "inclusionAI/AKernel",
+    "responsibilities": [
+      "OOT source and security backport pins",
+      "target ABI and compiler qualification",
+      "paired module rebuild and build receipt",
+      "fixture versions and isolated L1 qualification"
+    ]
+  },
+  "source": {
+    "repository": "https://github.com/hky1999/linux.git",
+    "commit": "a6636dd3df368a17173a7d71de75745f15a0a6c0",
+    "baseline_commit": "59ae80123caf09bdacd427595eb3583e9260a2ac",
+    "upstream_repository": "https://github.com/virt-pvm/linux",
+    "upstream_branch": "pvm-6.12-host-oot",
+    "upstream_commit": "71b35309f8698bb664dbed0028156c82b8ec79b8"
+  },
+  "target": {
+    "profile": "tools/pvm-oot/profiles/ubuntu-7.0.0-30-generic/profile.json",
+    "profile_sha256": "265840c6652114a213b1da01326ab2dae78d10bcde09219ecd36a65643bebbb0",
+    "prepared_tree_sha256": "d12468f9db108b2eab917d3f292b5b7805d13bc42e21ca175b55e6b8d3dd1437",
+    "kernel_image_sha256": "0ad39b13e289e1a5cf806d14541ac8f221eefe849017f5915e0846917ed67785",
+    "distribution": "Ubuntu 26.04.1 LTS",
+    "architecture": "x86_64",
+    "kernel_release": "7.0.0-30-generic",
+    "compiler_version": "gcc-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+    "files_sha256": {
+      ".config": "b07d3cb0d53236b021d73038e315018801fa6b843529d53129ad94a2a5233bf6",
+      "Module.symvers": "88ec24bc876cce4c2d7947424f964e5b2a76011801288209bd96539647bee4ba",
+      "include/generated/utsrelease.h": "9bfeb76d0e75dbbe7e31d187e592f48c8a8f47f7e3cf1398c2308e9e80290d14"
+    }
+  },
+  "build_evidence_sha256": "e78a6ef035641638c9a12f3f2dcd51a911c676d8894a32f1cbfcaf2c20de9df2",
+  "modules": [
+    "kvm.ko",
+    "kvm-pvm.ko"
+  ],
+  "debugctl_applied": false,
+  "boot": {
+    "required_kernel_arguments": [
+      "nokaslr",
+      "pti=off"
+    ],
+    "forbidden_cpu_flags": [
+      "vmx",
+      "svm",
+      "fred"
+    ]
+  },
+  "provisioning": {
+    "kernel_release": "7.0.0-30-generic",
+    "visible_vcpus": 4,
+    "guest_memory_mib": 8192,
+    "outer_cpu_quota": 2,
+    "outer_memory_gib": 10,
+    "outer_io_bytes_per_second": 20971520,
+    "private_docker_socket": "unix:///run/pvm-ci-docker.sock",
+    "module_root": "/opt/akernel-pvm-ci/modules",
+    "build_evidence": "/opt/akernel-pvm-ci/host-build.json",
+    "ownership_marker": "/etc/akernel-pvm-ci.json"
+  },
+  "build_evidence_path": "deploy/pvm/host-build.json",
+  "fixtures": {
+    "schema": 1,
+    "registry_container": "review-registry",
+    "registry_port": 5000,
+    "http_port": 18090,
+    "http_path": "/health.txt",
+    "images": {
+      "oci": "pvm/sdk@sha256:1004079367e0f0077d0cdba62fc537b14514cb4c606b01e50b868e4c0dace9c9",
+      "nydus": "pvm/sdk@sha256:b625b3b7ca5c25fe4f977865182a8e11090b7d5c167f2b6dc55a0fda42cef709",
+      "runtime_oci": "pvm/redis@sha256:41a05f1df0e41913c765714bcc4e2b7b61bad98686c3f8577fb5370306bd1efe"
+    }
+  }
+}

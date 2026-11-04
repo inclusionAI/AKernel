@@ -1,0 +1,6 @@
+# Pinned operator used by the direct Helm deployment path.
+currentNamespaceOnly: true
+enableDiscoveryDaemon: false
+image:
+  repository: docker.io/rook/ceph
+  tag: v1.21.0@sha256:2c3a65786d3cc85ba15d7f258461c0bf392c6a6ee19dde8011259b8d34eeedd0

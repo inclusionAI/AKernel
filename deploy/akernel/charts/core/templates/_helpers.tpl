@@ -5,10 +5,64 @@ Expand the name of the chart.
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{/* Shared openYuanrong component TLS Secret. */}}
-{{- define "core.componentTLSSecretName" -}}
-{{- default .Values.componentTLS.secretName .Values.componentTLS.existingSecret -}}
+{{/* Shared backend identity is identical for capture and reclamation. */}}
+{{- define "core.checkpointStorage" -}}
+{{- $storage := .Values.adx.checkpointStorage -}}
+{{- if eq $storage.kind "s3" -}}
+{{- dict "kind" "s3" "alias" $storage.alias "bucket" $storage.s3.bucket "region" $storage.s3.region "endpoint" ($storage.s3.endpoint | default nil) "allow_http" (eq (toString $storage.s3.allowHttp) "true") "prefix" $storage.prefix | toYaml -}}
+{{- else -}}
+{{- dict "kind" "distributed_fs" "alias" $storage.alias "mount_root" $storage.mountPath "prefix" $storage.prefix | toYaml -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "core.nodeCheckpointStorage" -}}
+{{- $storage := .Values.adx.checkpointStorage -}}
+{{- $config := include "core.checkpointStorage" . | fromYaml -}}
+{{- if eq $storage.kind "s3" -}}
+{{- $_ := set $config "root" $storage.s3.cacheRoot -}}
+{{- $_ := set $config "cache_budget_bytes" (int64 $storage.s3.cacheBudgetBytes) -}}
+{{- $_ := set $config "cache_max_entries" (int $storage.s3.cacheMaxEntries) -}}
+{{- end -}}
+{{- $config | toYaml -}}
+{{- end -}}
+
+{{- define "core.checkpointCredentialsEnv" -}}
+{{- if eq .Values.adx.checkpointStorage.kind "s3" -}}
+{{- range $key := list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_SESSION_TOKEN" }}
+- name: {{ $key }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $.Values.adx.checkpointStorage.s3.credentialsSecret | quote }}
+      key: {{ $key }}
+      {{- if eq $key "AWS_SESSION_TOKEN" }}
+      optional: true
+      {{- end }}
 {{- end }}
+- name: AWS_EC2_METADATA_DISABLED
+  value: "true"
+{{- end -}}
+{{- end -}}
+
+{{- define "core.checkpointVolume" -}}
+name: checkpoint-storage
+{{- if .Values.adx.checkpointStorage.existingClaim }}
+persistentVolumeClaim:
+  claimName: {{ .Values.adx.checkpointStorage.existingClaim | quote }}
+{{- else }}
+hostPath:
+  path: {{ .Values.adx.checkpointStorage.hostPath | quote }}
+  type: Directory
+{{- end }}
+{{- end -}}
+
+{{- define "core.checkpointMount" -}}
+name: checkpoint-storage
+mountPath: {{ .Values.adx.checkpointStorage.mountPath | quote }}
+{{- if .Values.adx.checkpointStorage.hostPath }}
+mountPropagation: HostToContainer
+{{- end }}
+{{- end -}}
+
 
 {{/*
 Create a default fully qualified app name.
@@ -67,7 +121,7 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
-Resolve component image settings. master/frontend/node default to the global
+Resolve component image settings. control/node default to the global
 all-in-one image, while each component can still override repository/tag/policy.
 */}}
 {{- define "core.image.repository" -}}
@@ -89,43 +143,13 @@ all-in-one image, while each component can still override repository/tag/policy.
 {{- end }}
 
 {{- define "core.image" -}}
+{{- $digest := .image.digest | default .root.Values.image.digest -}}
+{{- if $digest -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) -}}
+{{- fail "image.digest must be a sha256 digest" -}}
+{{- end -}}
+{{- printf "%s@%s" (include "core.image.repository" .) $digest -}}
+{{- else -}}
 {{- printf "%s:%s" (include "core.image.repository" .) (include "core.image.tag" .) -}}
 {{- end }}
-
-{{/*
-JWT signing seed Secret. auth.existingSecret lets template/apply deployments
-pre-create a stable per-deployment seed instead of rotating on every render.
-*/}}
-{{- define "core.litebusSecretName" -}}
-{{- default "akernel-master-secret" .Values.auth.existingSecret -}}
-{{- end }}
-
-{{- define "core.litebusDataKey" -}}
-{{- if .Values.auth.litebusDataKey -}}
-{{- .Values.auth.litebusDataKey -}}
-{{- else -}}
-{{- $secretName := include "core.litebusSecretName" . -}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
-{{- if and $existing $existing.data (index $existing.data "litebus-data-key") -}}
-{{- index $existing.data "litebus-data-key" | b64dec -}}
-{{- else -}}
-{{- uuidv4 | sha256sum | upper -}}
-{{- end -}}
-{{- end -}}
-{{- end }}
-
-{{- define "core.litebusSecretChecksum" -}}
-{{- if .Values.auth.existingSecret -}}
-{{- include "core.litebusSecretName" . | sha256sum -}}
-{{- else if .Values.auth.litebusDataKey -}}
-{{- include "core.litebusDataKey" . | sha256sum -}}
-{{- else -}}
-{{- $secretName := include "core.litebusSecretName" . -}}
-{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
-{{- if and $existing $existing.data (index $existing.data "litebus-data-key") -}}
-{{- include "core.litebusDataKey" . | sha256sum -}}
-{{- else -}}
-{{- $secretName | sha256sum -}}
-{{- end -}}
-{{- end -}}
 {{- end }}

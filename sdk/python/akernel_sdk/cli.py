@@ -21,20 +21,19 @@ import ssl
 import sys
 import threading
 from collections.abc import Sequence
+from typing import cast
 from urllib import request
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 
 from ._addresses import Endpoint, api_endpoint_from_env
 from ._resource_api import (
     ResourceAPIError,
+    parse_resource_nodes,
     query_resource_view,
 )
-from ._resource_api import (
-    extract_labels as _extract_labels,
-)
-from ._resource_api import (
-    extract_resources as _extract_resources,
-)
+from ._tls import create_ssl_context as _create_ssl_context
+from ._tls import verification_from_env
 from .pty import Pty, PtyError
 
 DEFAULT_COMMAND = "/bin/bash"
@@ -58,14 +57,6 @@ def _get_endpoint(configure) -> Endpoint:
         sys.exit(1)
 
 
-def _create_ssl_context() -> ssl.SSLContext:
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    return context
-
-
 def _make_get_request(url: str, token: str, ssl_context: ssl.SSLContext) -> dict:
     req = request.Request(url, method="GET", headers={"X-AUTH": token})
     try:
@@ -78,22 +69,17 @@ def _make_get_request(url: str, token: str, ssl_context: ssl.SSLContext) -> dict
         sys.exit(1)
 
 
-def _make_json_request(
+def _make_delete_request(
     url: str,
     token: str,
     ssl_context: ssl.SSLContext,
-    payload: dict,
 ) -> dict:
-    """Send an authenticated JSON request and return status and body."""
+    """Delete a sandbox through the public API and return status and body."""
 
     req = request.Request(
         url,
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-Auth": token,
-        },
+        method="DELETE",
+        headers={"X-Auth": token},
     )
     try:
         with request.urlopen(req, context=ssl_context) as response:
@@ -184,25 +170,19 @@ def handle_resources(debug: bool = False):
         print(json.dumps(data, indent=2, ensure_ascii=False))
         print()
 
-    # Response is QueryResourcesInfoResponse: {"requestID": "...", "resource": {...}}
-    resource = data.get("resource", data) if isinstance(data, dict) else None
-    if resource is None:
+    nodes = parse_resource_nodes(data) if isinstance(data, dict) else []
+    if not nodes:
         print("No resource data in response.")
         return
-
-    # The top-level resource is the domain scheduler (aggregate).
-    # Actual nodes live in resource.fragment as a map of nodeId → ResourceUnit.
-    fragment = resource.get("fragment", {}) if isinstance(resource, dict) else {}
-    if fragment:
-        units = list(fragment.values())
-    else:
-        units = [resource] if isinstance(resource, dict) else resource
 
     # ── Summary accumulators ──
     total_cpu_total = 0.0
     total_cpu_used = 0.0
     total_mem_total = 0.0
     total_mem_used = 0.0
+    total_disk_total = 0.0
+    total_disk_allocated = 0.0
+    disk_nodes = 0
 
     # ── Build per-node rows ──
     headers = [
@@ -214,20 +194,23 @@ def handle_resources(debug: bool = False):
         "MEM",
         "MEM USED",
         "MEM%",
+        "DISK",
+        "DISK ALLOC",
+        "DISK%",
         "XPU",
         "HOST IP",
     ]
     rows = []
-    for u in units:
-        nid = u.get("id", "-")
+    for node in nodes:
+        nid = node.id or "-"
         # Protobuf JSON omits the default enum value. YuanRong defines
         # NORMAL as zero, so an absent status is a normal node rather than an
         # unknown state.
-        st = _fmt_node_status(u.get("status", 0))
+        st = _fmt_node_status(node.status)
 
-        capacity = _extract_resources(u.get("capacity", {}))
-        allocatable = _extract_resources(u.get("allocatable", {}))
-        labels = _extract_labels(u.get("nodeLabels", {}))
+        capacity = node.capacity
+        allocatable = node.allocatable
+        labels = node.labels
 
         cpu_total = capacity.get("CPU", 0)  # millicores
         cpu_al = allocatable.get("CPU", 0)  # millicores
@@ -240,6 +223,20 @@ def handle_resources(debug: bool = False):
         mem_total = capacity.get("Memory", 0)
         mem_al = allocatable.get("Memory", 0)
         mem_used = mem_total - mem_al
+        disk_cells = ["-"] * 3
+        if "Disk" in capacity and "Disk" in allocatable:
+            disk_total = capacity["Disk"]
+            disk_available = allocatable["Disk"]
+            disk_allocated = disk_total - disk_available
+            disk_usage = 100 * disk_allocated / disk_total if disk_total > 0 else 0
+            disk_cells = [
+                _fmt_mem(disk_total),
+                _fmt_mem(disk_allocated),
+                f"{disk_usage:.1f}%",
+            ]
+            total_disk_total += disk_total
+            total_disk_allocated += disk_allocated
+            disk_nodes += 1
         host_ips = labels.get("HOST_IP", ["-"])
         host_ip = host_ips[0] if host_ips else "-"
 
@@ -261,6 +258,7 @@ def handle_resources(debug: bool = False):
                 _fmt_mem(mem_total),
                 _fmt_mem(mem_used),
                 f"{mem_usage:.1f}%",
+                *disk_cells,
                 _fmt_xpu(capacity, allocatable),
                 host_ip,
             ]
@@ -289,6 +287,17 @@ def handle_resources(debug: bool = False):
     print(f"  CPU  used:   {total_cpu_used:.1f} cores ({cluster_cpu_usage:.1f}%)")
     print(f"  MEM  total:  {_fmt_mem(total_mem_total)}")
     print(f"  MEM  used:   {_fmt_mem(total_mem_used)} ({cluster_mem_usage:.1f}%)")
+    if disk_nodes:
+        disk_usage = (
+            100 * total_disk_allocated / total_disk_total if total_disk_total > 0 else 0
+        )
+        print(f"  DISK total:  {_fmt_mem(total_disk_total)}")
+        print(f"  DISK alloc:  {_fmt_mem(total_disk_allocated)} ({disk_usage:.1f}%)")
+        if disk_nodes != len(rows):
+            print(f"  Disk data:   {disk_nodes}/{len(rows)} nodes")
+    else:
+        print("  DISK total:  -")
+        print("  DISK alloc:  -")
     print()
 
     # ── Per-node table ──
@@ -300,7 +309,7 @@ def handle_resources(debug: bool = False):
 
 
 def handle_list(quiet: bool = False):
-    """List all running instances.
+    """List visible running instances from the API Server directory.
 
     When *quiet* is set, print only instance IDs (one per line) so the output
     pipes cleanly into ``xargs ak delete``.
@@ -309,19 +318,49 @@ def handle_list(quiet: bool = False):
     token = _get_auth_token()
     ssl_context = _create_ssl_context()
 
-    list_url = f"{endpoint.base_url()}/api/instances?tenant_id=default"
-    result = _make_get_request(list_url, token, ssl_context)
+    list_url = f"{endpoint.base_url()}/api/instances?pageSize=1000"
+    instances: list[dict] = []
+    seen_tokens: set[str] = set()
+    while True:
+        result = _make_get_request(list_url, token, ssl_context)
+        if result["status"] != 200:
+            print(f"Error: server returned status {result['status']}", file=sys.stderr)
+            print(f"Response: {result['body']}", file=sys.stderr)
+            sys.exit(1)
 
-    if result["status"] != 200:
-        print(f"Error: server returned status {result['status']}", file=sys.stderr)
-        print(f"Response: {result['body']}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        instances = json.loads(result["body"])
-    except json.JSONDecodeError as e:
-        print(f"Error: failed to parse response: {e}", file=sys.stderr)
-        sys.exit(1)
+        try:
+            payload = json.loads(result["body"])
+        except json.JSONDecodeError as error:
+            print(f"Error: failed to parse response: {error}", file=sys.stderr)
+            sys.exit(1)
+        page_value: object
+        if isinstance(payload, list):
+            page_value, next_page_token = payload, ""
+        elif isinstance(payload, dict):
+            page_value = payload.get("items")
+            next_page_token = payload.get("nextPageToken", "")
+        else:
+            page_value, next_page_token = None, ""
+        if not isinstance(page_value, list) or not all(
+            isinstance(instance, dict) for instance in page_value
+        ):
+            print("Error: invalid instance list response", file=sys.stderr)
+            sys.exit(1)
+        page = cast(list[dict], page_value)
+        if not isinstance(next_page_token, str):
+            print("Error: invalid instance page token", file=sys.stderr)
+            sys.exit(1)
+        instances.extend(page)
+        if not next_page_token:
+            break
+        if next_page_token in seen_tokens:
+            print("Error: repeated instance page token", file=sys.stderr)
+            sys.exit(1)
+        seen_tokens.add(next_page_token)
+        list_url = (
+            f"{endpoint.base_url()}/api/instances?pageSize=1000"
+            f"&pageToken={quote(next_page_token, safe='')}"
+        )
 
     running = [inst for inst in instances if inst.get("status") == "running"]
 
@@ -340,16 +379,20 @@ def handle_list(quiet: bool = False):
     id_width = max(len(inst.get("id", "")) for inst in running)
     id_width = max(id_width, 2)
 
-    print(f"{'ID':<{id_width}}  STATUS")
-    print(f"{'-' * id_width}  ------")
+    tenant_width = max(
+        len("TENANT"), max(len(inst.get("tenant_id") or "-") for inst in running)
+    )
+    print(f"{'ID':<{id_width}}  {'TENANT':<{tenant_width}}  STATUS")
+    print(f"{'-' * id_width}  {'-' * tenant_width}  ------")
     for inst in running:
         inst_id = inst.get("id", "unknown")
+        tenant = inst.get("tenant_id") or "-"
         status = inst.get("status", "unknown")
-        print(f"{inst_id:<{id_width}}  {status}")
+        print(f"{inst_id:<{id_width}}  {tenant:<{tenant_width}}  {status}")
 
 
 def handle_delete(instance_ids: list[str]) -> None:
-    """Terminate sandbox instances through the frontend actor API."""
+    """Terminate sandbox instances through the public Sandbox API."""
 
     endpoint = _get_endpoint(api_endpoint_from_env)
     token = _get_auth_token()
@@ -357,26 +400,16 @@ def handle_delete(instance_ids: list[str]) -> None:
     failed = []
     for instance_id in instance_ids:
         try:
-            result = _make_json_request(
-                f"{endpoint.base_url()}/frontend/v1/instance/kill",
+            result = _make_delete_request(
+                f"{endpoint.base_url()}/api/environment/v1/environments/"
+                f"{quote(instance_id, safe='')}",
                 token,
                 ssl_context,
-                {"instanceID": instance_id, "signal": 1},
             )
-            if result["status"] != 200:
+            if result["status"] not in (200, 202, 204, 404):
                 raise RuntimeError(
                     f"server returned status {result['status']}: {result['body']}"
                 )
-            try:
-                body = json.loads(result["body"])
-            except json.JSONDecodeError as error:
-                raise RuntimeError(f"invalid server response: {error}") from error
-            if not isinstance(body, dict):
-                raise RuntimeError("invalid server response: expected a JSON object")
-            code = int(body.get("code", -1))
-            if code != 0:
-                message = body.get("message") or "unknown error"
-                raise RuntimeError(f"server returned code {code}: {message}")
             print(f"deleted: {instance_id}")
         except Exception as error:
             print(f"failed to delete {instance_id}: {error}", file=sys.stderr)
@@ -489,6 +522,16 @@ def handle_exec(instance_id: str, command: str | Sequence[str]) -> int:
 
 def main():
     parser = argparse.ArgumentParser(prog="ak", description="AKernel SDK CLI")
+    parser.add_argument(
+        "--verify-tls",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="verify HTTPS/WSS certificates (env: AKERNEL_VERIFY_TLS; default: off)",
+    )
+    parser.add_argument(
+        "--ca-file",
+        help="trusted PEM CA/certificate bundle; enables TLS verification",
+    )
     sub = parser.add_subparsers(dest="command")
 
     resources_parser = sub.add_parser(
@@ -527,6 +570,18 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.ca_file:
+        if args.verify_tls is False:
+            parser.error("--ca-file cannot be combined with --no-verify-tls")
+        os.environ["SSL_CERT_FILE"] = args.ca_file
+        os.environ["AKERNEL_VERIFY_TLS"] = "1"
+    elif args.verify_tls is not None:
+        os.environ["AKERNEL_VERIFY_TLS"] = "1" if args.verify_tls else "0"
+    try:
+        verification_from_env()
+    except ValueError as error:
+        parser.error(str(error))
 
     if args.command is None:
         parser.print_help()

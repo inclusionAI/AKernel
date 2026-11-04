@@ -4,17 +4,10 @@
 
 ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
-ARG AKERNEL_RUNTIME_PROFILE=rrt
 ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
-ARG OPEN_YR_VERSION=0.10.2rc10
-ARG OPEN_YR_CORE_WHEEL_URL=
-ARG OPEN_YR_CORE_WHEEL_SHA256=
-ARG OPEN_YR_RELEASE_BASE_URL=https://github.com/openYuanrong-mirror/yuanrong/releases/download
-ARG OPEN_YR_CORE_AMD64_SHA256=c54d2ca46263b1b786ce821942739d9df6f3839e05e58c159f82409b28e08dee
-ARG OPEN_YR_CORE_ARM64_SHA256=80a1002a4e81980c304b3f89cbe77bd42e396306a9fd0985a13e8eb99028994c
 ARG GVISOR_DOWNLOAD_IMAGE=ubuntu:24.04
 ARG GVISOR_RELEASE
 ARG GVISOR_URL
@@ -32,9 +25,11 @@ ARG FIRECRACKER_BUILD_IMAGE=ubuntu:24.04
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
+ARG FIRECRACKER_KERNEL_PROFILE=kvm
 ARG VIRTIOFSD_BUILD_IMAGE=rust:1.90.0-bookworm
 # virtiofsd v1.14.0, including the release Cargo.lock.
 ARG VIRTIOFSD_REVISION=c2540f8db14caba81c1e37fba23fc7bf2cd7f0dd
+# Upstream publishes the contrib 0.120.1 binary in the v0.120.0 archive.
 ARG OTELCOL_CONTRIB_VERSION=0.120.0
 ARG OTELCOL_CONTRIB_AMD64_SHA256=81bf885bc9a86705feb3c113c5a356571390e3601eb651ffcf2b3428f6571adb
 ARG OTELCOL_CONTRIB_ARM64_SHA256=00b11a5b468455e6ab49d6857e36f5825cb887bf5d8646282f8db33e3eeb5c76
@@ -42,6 +37,29 @@ ARG OTELCOL_CONTRIB_URL=
 ARG OTELCOL_CONTRIB_SHA256=
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
+ARG ADX_VERSION=v0.1.0rc2
+ARG ADX_RELEASE_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261101132856-aad9030ebc49/linux/amd64/adx-release.tar.gz
+ARG ADX_RELEASE_SHA256=bcc3c9dffda972f32243784338d6c9cf0b7c2f19f50455433778aa79d123c4f0
+
+FROM ${AKERNEL_NODE_BASE_IMAGE} AS adx-release
+ARG ADX_RELEASE_URL
+ARG ADX_RELEASE_SHA256
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    set -eux; \
+    sh /tmp/apt-get-update.sh; \
+    apt-get install -y --no-install-recommends ca-certificates curl python3; \
+    rm -rf /var/lib/apt/lists/*; \
+    mkdir -p /tmp/adx-release; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "${ADX_RELEASE_URL}" -o /tmp/adx-release.tar.gz; \
+    echo "${ADX_RELEASE_SHA256}  /tmp/adx-release.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/adx-release.tar.gz -C /tmp/adx-release; \
+    /tmp/adx-release/install.sh --prefix /opt/adx --bin-dir /usr/local/bin; \
+    rm -rf /tmp/adx-release /tmp/adx-release.tar.gz
 
 FROM ${GVISOR_DOWNLOAD_IMAGE} AS gvisor-runtime
 ARG GVISOR_RELEASE
@@ -55,7 +73,8 @@ ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN set -eux; \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    set -eux; \
     case "${TARGETARCH:-}" in \
       amd64|arm64) ;; \
       *) echo "unsupported gVisor target architecture: ${TARGETARCH}" >&2; \
@@ -65,7 +84,7 @@ RUN set -eux; \
     test -n "${GVISOR_URL}"; \
     test -n "${GVISOR_SHA512}"; \
     asset=/tmp/gvisor.tar.bz2; \
-    apt-get update; \
+    sh /tmp/apt-get-update.sh; \
     apt-get install -y --no-install-recommends bzip2 ca-certificates curl; \
     rm -rf /var/lib/apt/lists/*; \
     curl -fSL --http1.1 --retry 10 --retry-delay 2 --retry-all-errors \
@@ -74,7 +93,8 @@ RUN set -eux; \
       "${GVISOR_SHA512}" /gvisor; \
     for binary in runsc containerd-shim-runsc-v1 \
       gvisor-bin/checkpointgofer gvisor-bin/gvisor-sentry-prewarmer \
-      gvisor-bin/gvisor_sentry gvisor-bin/runsc-fd-parking gvisor-bin/runsc-metric-server; do \
+      gvisor-bin/gvisor_sentry gvisor-bin/runsc-fd-parking \
+      gvisor-bin/runsc-metric-server; do \
       sh /usr/local/libexec/verify-elf-arch.sh "/gvisor/${binary}" "${TARGETARCH}"; \
     done; \
     /gvisor/runsc --version
@@ -89,9 +109,10 @@ ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN set -eux; \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    set -eux; \
     test "${TARGETARCH:-amd64}" = "amd64"; \
-    apt-get update; \
+    sh /tmp/apt-get-update.sh; \
     apt-get install -y --no-install-recommends ca-certificates curl zstd; \
     rm -rf /var/lib/apt/lists/*; \
     archive="/tmp/kata-static-${KATA_RELEASE}-amd64.tar.zst"; \
@@ -130,7 +151,8 @@ ARG AKERNEL_APT_DEBIAN_SECURITY_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN apt-get update && \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    sh /tmp/apt-get-update.sh && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         gcc \
@@ -156,8 +178,10 @@ ARG AKERNEL_APT_DEBIAN_SECURITY_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    sh /tmp/apt-get-update.sh && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      -o Dpkg::Options::="--force-confold" --no-install-recommends \
       ca-certificates git libcap-ng-dev libseccomp-dev pkg-config && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /src/virtiofsd
@@ -168,16 +192,19 @@ RUN git init && \
     cargo build --release --locked
 
 FROM ${FIRECRACKER_BUILD_IMAGE} AS firecracker-runtime-true
+COPY src/sandboxd/third_party/firecracker-candidate/ /tmp/firecracker-candidate/
 ARG FIRECRACKER_RELEASE
 ARG FIRECRACKER_AMD64_SHA256
 ARG FIRECRACKER_AMD64_URL
+ARG FIRECRACKER_KERNEL_PROFILE
 ARG TARGETARCH
 ARG AKERNEL_APT_UBUNTU_MIRROR
 ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN apt-get update && \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    sh /tmp/apt-get-update.sh && \
     apt-get install -y --no-install-recommends ca-certificates cpio curl gzip jq && \
     rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
@@ -186,9 +213,12 @@ RUN set -eux; \
     test -n "${FIRECRACKER_AMD64_SHA256}"; \
     test -n "${FIRECRACKER_AMD64_URL}"; \
     archive="/tmp/firecracker-${FIRECRACKER_RELEASE}-x86_64.tgz"; \
-    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
-      "${FIRECRACKER_AMD64_URL}" \
-      -o "${archive}"; \
+    if [ "${FIRECRACKER_KERNEL_PROFILE}" = pvm ]; then \
+      cp /tmp/firecracker-candidate/firecracker.tgz "${archive}"; \
+    else \
+      curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+        "${FIRECRACKER_AMD64_URL}" -o "${archive}"; \
+    fi; \
     echo "${FIRECRACKER_AMD64_SHA256}  ${archive}" | sha256sum -c -; \
     mkdir -p /tmp/firecracker-release \
       /firecracker/usr/local/bin \
@@ -197,12 +227,20 @@ RUN set -eux; \
     tar -xzf "${archive}" -C /tmp/firecracker-release; \
     bundle="/tmp/firecracker-release/release-${FIRECRACKER_RELEASE}-x86_64"; \
     jq -e --arg release "${FIRECRACKER_RELEASE}" \
+      --arg profile "${FIRECRACKER_KERNEL_PROFILE}" \
       '.component == "akernel-firecracker-runtime" and \
        .repository == "akernel-dev/firecracker" and \
        .release_tag == $release and \
-       .architecture == "x86_64"' \
+       .architecture == "x86_64" and \
+       (.kernel_profile // "kvm") == $profile and \
+       ($profile == "kvm" or $profile == "pvm")' \
       "${bundle}/manifest.json" >/dev/null; \
     (cd "${bundle}"; sha256sum -c SHA256SUMS); \
+    if [ "${FIRECRACKER_KERNEL_PROFILE}" = pvm ]; then \
+      for config in PVM_GUEST X86_PIE X86_INTEL_MEMORY_PROTECTION_KEYS; do \
+        grep -qx "CONFIG_${config}=y" "${bundle}/kernel.config"; \
+      done; \
+    fi; \
     install -m 0755 "${bundle}/firecracker" \
       /firecracker/usr/local/bin/firecracker; \
     install -m 0644 \
@@ -210,7 +248,8 @@ RUN set -eux; \
       "${bundle}/kernel.config" \
       "${bundle}/manifest.json" \
       /firecracker/opt/firecracker/; \
-    cp -a "${bundle}/licenses/." /firecracker/opt/firecracker/licenses/
+    cp -a "${bundle}/licenses/." /firecracker/opt/firecracker/licenses/; \
+    rm -rf /tmp/firecracker-candidate
 
 COPY --from=virtiofsd-builder /src/virtiofsd/target/release/virtiofsd /firecracker/usr/local/bin/virtiofsd
 COPY --from=virtiofsd-builder /src/virtiofsd/LICENSE-APACHE /firecracker/opt/firecracker/licenses/virtiofsd-LICENSE-APACHE
@@ -243,7 +282,8 @@ ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN set -eux; \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    set -eux; \
     case "${TARGETARCH}" in \
       amd64|arm64) ;; \
       *) echo "unsupported runc target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
@@ -251,7 +291,7 @@ RUN set -eux; \
     test -n "${RUNC_VERSION}"; \
     test -n "${RUNC_SHA256}"; \
     test -n "${RUNC_RELEASE_BASE_URL}"; \
-    apt-get update; \
+    sh /tmp/apt-get-update.sh; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
     rm -rf /var/lib/apt/lists/*; \
     asset="/tmp/runc.${TARGETARCH}"; \
@@ -279,7 +319,8 @@ ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN apt-get update && \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    sh /tmp/apt-get-update.sh && \
     apt-get install -y --no-install-recommends ca-certificates curl jq binutils && \
     rm -rf /var/lib/apt/lists/*
 COPY ./builder/scripts/install-distill-fs.sh /install-distill-fs.sh
@@ -294,7 +335,6 @@ ENV container=oci
 ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_ENABLE_RUNC
 ARG AKERNEL_ENABLE_FIRECRACKER
-ARG AKERNEL_RUNTIME_PROFILE
 ARG GVISOR_RELEASE
 ARG GVISOR_SHA512
 ARG DISTILL_FS_SHA256
@@ -305,27 +345,13 @@ ARG LIBNVIDIA_CONTAINER_VERSION
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN set -eu; \
-    case "${TARGETARCH}" in \
-      amd64|arm64) ;; \
-      *) echo "unsupported node target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    case "${AKERNEL_RUNTIME_PROFILE}" in \
-      rrt) ;; \
-      python) \
-        if [ "${TARGETARCH}" != "amd64" ]; then \
-          echo "the python runtime profile currently supports linux/amd64 only" >&2; \
-          exit 1; \
-        fi ;; \
-      *) echo "unsupported AKERNEL_RUNTIME_PROFILE: ${AKERNEL_RUNTIME_PROFILE}" >&2; exit 1 ;; \
-    esac
-
 ARG AKERNEL_APT_UBUNTU_MIRROR
 ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
 RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
     sh /tmp/configure-apt-mirror.sh
 
-RUN apt-get update && \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    sh /tmp/apt-get-update.sh && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -346,13 +372,15 @@ RUN apt-get update && \
         procps \
         python3 \
         python3-pip \
+        python3-yaml \
         systemd \
         systemd-sysv \
         tzdata \
         xfsprogs && \
     rm -rf /var/lib/apt/lists/*
 
-RUN set -eux; \
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    set -eux; \
     if [ "${TARGETARCH}" = "arm64" ]; then \
       echo "NVIDIA payload is excluded from the linux/arm64 image"; \
     else \
@@ -364,7 +392,7 @@ RUN set -eux; \
       | sed \
         's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
       > /etc/apt/sources.list.d/nvidia-container-toolkit.list; \
-    apt-get update; \
+    sh /tmp/apt-get-update.sh; \
     apt-get install -y --no-install-recommends \
       "libnvidia-container1=${LIBNVIDIA_CONTAINER_VERSION}" \
       "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}"; \
@@ -391,67 +419,41 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone
 
 
-ENV YR_INSTALLATION_DIR=/home/yuanrong
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+COPY --from=runtime-image /akernel-runtime-rootfs.img /opt/akernel/runtime/akernel-runtime-rootfs.img
+RUN --mount=from=runtime-image,target=/mnt/akernel-runtime \
+    mkdir -p /opt/akernel/runtime/metadata && \
+    if test -d /mnt/akernel-runtime/runtime-metadata; then \
+      cp -a /mnt/akernel-runtime/runtime-metadata/. /opt/akernel/runtime/metadata/; \
+    fi
+COPY ./builder/scripts/verify-e2b-release.py /usr/local/libexec/verify-e2b-release.py
 
-ARG OPEN_YR_VERSION
-ARG OPEN_YR_CORE_WHEEL_URL
-ARG OPEN_YR_CORE_WHEEL_SHA256
-ARG OPEN_YR_RELEASE_BASE_URL
-ARG OPEN_YR_CORE_AMD64_SHA256
-ARG OPEN_YR_CORE_ARM64_SHA256
-
-# Install the complete, language-runtime-free openYuanRong control plane from
-# its checksum-pinned core wheel. A URL and checksum pair may override the
-# release asset when validating an unreleased daily build.
+# ADX provides the control and data plane processes. AKernel keeps building
+# sandboxd from pinned sources. The default rootfs installs only EXECD; the
+# opt-in E2B rootfs reuses the envd-enabled ADX Execd component.
+COPY --from=adx-release /opt/adx/current/bin/ /opt/adx/current/bin/
+COPY --from=adx-release /opt/adx/current/third_party/ /opt/adx/current/third_party/
+COPY --from=adx-release /opt/adx/current/LICENSE /opt/adx/current/LICENSE
+COPY --from=adx-release /opt/adx/current/manifest.json /opt/adx/current/manifest.json
+COPY --from=adx-release /opt/adx/current/etc/ /opt/adx/current/etc/
+COPY --from=adx-release /opt/adx/current/sdk/ /opt/adx/current/sdk/
+COPY --from=adx-release /opt/adx/current/runtime/adx-execd /opt/adx/current/runtime/adx-execd
 RUN set -eux; \
-    case "${TARGETARCH:-}" in \
-      amd64) wheel_arch=x86_64; wheel_platform=amd64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
-      arm64) wheel_arch=aarch64; wheel_platform=arm64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
-      "") \
-        case "$(uname -m)" in \
-          x86_64) wheel_arch=x86_64; wheel_platform=amd64; release_sha="${OPEN_YR_CORE_AMD64_SHA256}" ;; \
-          aarch64) wheel_arch=aarch64; wheel_platform=arm64; release_sha="${OPEN_YR_CORE_ARM64_SHA256}" ;; \
-          *) echo "unsupported openYuanRong target architecture: $(uname -m)" >&2; exit 1 ;; \
-        esac ;; \
-      *) echo "unsupported openYuanRong target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    wheel_name="openyuanrong_core-${OPEN_YR_VERSION}-py3-none-manylinux_2_31_${wheel_arch}.whl"; \
-    wheel_url="${OPEN_YR_RELEASE_BASE_URL}/${OPEN_YR_VERSION}/${wheel_name}"; \
-    wheel_sha="${release_sha}"; \
-    if [ -n "${OPEN_YR_CORE_WHEEL_URL}" ]; then \
-      test -n "${OPEN_YR_CORE_WHEEL_SHA256}"; \
-      wheel_name="$(python3 -c 'import os, sys, urllib.parse; print(os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path)))' "${OPEN_YR_CORE_WHEEL_URL}")"; \
-      case "${wheel_name}" in *.whl) ;; *) echo "OPEN_YR_CORE_WHEEL_URL must reference a .whl file" >&2; exit 1 ;; esac; \
-      wheel_url="${OPEN_YR_CORE_WHEEL_URL}"; \
-      wheel_sha="${OPEN_YR_CORE_WHEEL_SHA256}"; \
-    else \
-      test -z "${OPEN_YR_CORE_WHEEL_SHA256}"; \
+    test -x /opt/adx/current/bin/adxctl; \
+    test -x /opt/adx/current/bin/adx-coordinator; \
+    test -x /opt/adx/current/bin/adxlet; \
+    test -x /opt/adx/current/bin/adx-apiserver; \
+    test -x /opt/adx/current/runtime/adx-execd; \
+    test ! -e /opt/adx/current/runtime/adx-runtime-rootfs.img; \
+    if test -f /opt/akernel/runtime/metadata/adx-component-manifest.json; then \
+      python3 /usr/local/libexec/verify-e2b-release.py \
+        /opt/akernel/runtime/metadata/adx-component-manifest.json \
+        /opt/adx/current/manifest.json; \
     fi; \
-    wheel="/tmp/${wheel_name}"; \
-    target=/tmp/openyuanrong-core; \
-    curl -fSL --http1.1 --retry 10 --retry-delay 2 --retry-all-errors \
-      "${wheel_url}" -o "${wheel}"; \
-    echo "${wheel_sha}  ${wheel}" | sha256sum -c -; \
-    python3 -m pip install \
-      --break-system-packages \
-      --no-cache-dir \
-      --no-deps \
-      --target "${target}" \
-      "${wheel}"; \
-    test -x "${target}/yr/functionsystem/bin/yr"; \
-    mkdir -p "${YR_INSTALLATION_DIR}"; \
-    cp -a "${target}/yr/." "${YR_INSTALLATION_DIR}/"; \
-    for binary in domain_scheduler function_agent function_master function_proxy \
-      iam_server meta_service runtime_manager yr; do \
-      test -x "${YR_INSTALLATION_DIR}/functionsystem/bin/${binary}"; \
-      sh /usr/local/libexec/verify-elf-arch.sh \
-        "${YR_INSTALLATION_DIR}/functionsystem/bin/${binary}" "${TARGETARCH}"; \
+    for binary in adxctl adx-coordinator adxlet adx-apiserver; do \
+      sh /usr/local/libexec/verify-elf-arch.sh "/opt/adx/current/bin/${binary}" "${TARGETARCH}"; \
     done; \
-    rm -rf "${target}" "${wheel}"; \
-    ln -sfn "${YR_INSTALLATION_DIR}/functionsystem/bin/yr" /usr/bin/yr
-
-COPY --from=runtime-image /yr-runtime-rootfs.img ${YR_INSTALLATION_DIR}/yr-runtime-rootfs.img
+    ln -sfn /opt/adx/current/bin/adxctl /usr/local/bin/adxctl
 
 COPY --from=gvisor-runtime /gvisor/ /usr/local/bin/
 COPY --from=sandboxd-builder /src/sandboxd/output/sandboxd /usr/local/bin/sandboxd
@@ -467,8 +469,18 @@ RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
     fi
 
 COPY ./builder/scripts/akernel-entrypoint.sh /usr/local/bin/akernel-entrypoint
-COPY ./builder/scripts/ensure-component-cert.sh /usr/local/bin/ensure-component-cert
+COPY ./builder/scripts/prepare-adx-config.py /usr/local/libexec/prepare-adx-config.py
+COPY ./builder/scripts/adx-service.sh /usr/local/bin/adx-service
+COPY ./builder/scripts/otel-collector-service.sh /usr/local/bin/otel-collector-service
 COPY ./builder/scripts/sandboxd_network_prepare.sh /usr/local/bin/sandboxd-network-prepare
+ARG FIRECRACKER_KERNEL_PROFILE
+COPY ./builder/config/adx-standalone.yaml /etc/akernel/adx-standalone.yaml
+RUN case "${FIRECRACKER_KERNEL_PROFILE}" in \
+      pvm) python3 /usr/local/libexec/prepare-adx-config.py \
+        /etc/akernel/adx-standalone.yaml /etc/akernel/adx-standalone.yaml --pvm ;; \
+      kvm) ;; \
+      *) echo "invalid Firecracker kernel profile" >&2; exit 1 ;; \
+    esac
 RUN chmod 0755 \
         /usr/local/bin/runsc \
         /usr/local/bin/sandboxd \
@@ -476,7 +488,7 @@ RUN chmod 0755 \
         /usr/local/bin/sandbox-logger \
         /usr/local/bin/distill_fs \
         /usr/local/bin/akernel-entrypoint \
-        /usr/local/bin/ensure-component-cert \
+        /usr/local/bin/adx-service \
         /usr/local/bin/sandboxd-network-prepare
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then chmod 0755 /usr/local/bin/containerd-shim-kata-v2; fi
 RUN if [ "${AKERNEL_ENABLE_RUNC}" = "true" ]; then \
@@ -486,24 +498,10 @@ RUN if [ "${AKERNEL_ENABLE_RUNC}" = "true" ]; then \
       test ! -e /usr/local/bin/runc-shim; \
     fi
 
-COPY ./builder/config/yr_services.yaml /tmp/yr_services_rrt.yaml
-COPY ./builder/config/yr_services_python.yaml /tmp/yr_services_python.yaml
-RUN set -eux; \
-    case "${AKERNEL_RUNTIME_PROFILE}" in \
-      rrt) services=/tmp/yr_services_rrt.yaml ;; \
-      python) services=/tmp/yr_services_python.yaml ;; \
-      *) echo "unsupported AKERNEL_RUNTIME_PROFILE: ${AKERNEL_RUNTIME_PROFILE}" >&2; exit 1 ;; \
-    esac; \
-    install -D -m 0644 "${services}" ${YR_INSTALLATION_DIR}/deploy/process/services.yaml; \
-    rm -f /tmp/yr_services_rrt.yaml /tmp/yr_services_python.yaml
-
-RUN mkdir -p ${YR_INSTALLATION_DIR}/metrics ${YR_INSTALLATION_DIR}/trace
-COPY ./builder/config/otel-collector-config.yaml ${YR_INSTALLATION_DIR}/otel_config.yaml
-COPY ./builder/config/metrics_config.json ${YR_INSTALLATION_DIR}/metrics/metrics_config.json
-COPY ./builder/config/trace_config.json ${YR_INSTALLATION_DIR}/trace/trace_config.json
+COPY ./builder/config/otel-collector-standalone.yaml /etc/akernel/otel_standalone.yaml
+COPY ./deploy/akernel/charts/core/files/otel-collector/config.yaml /etc/akernel/otel_config.yaml
+RUN chmod 0755 /usr/local/bin/otel-collector-service
 COPY ./builder/config/logrotate.d/gvisor /etc/logrotate.d/gvisor
-COPY ./builder/scripts/yr_node_bootstrap.sh ${YR_INSTALLATION_DIR}/yr_node_bootstrap.sh
-COPY ./builder/scripts/master_entrypoint.sh ${YR_INSTALLATION_DIR}/entrypoint.sh
 COPY ./builder/scripts/*.sh /root/
 COPY ./builder/systemd_services/*.service /etc/systemd/system/
 
@@ -544,21 +542,16 @@ RUN set -eux; \
     sh /usr/local/libexec/verify-elf-arch.sh "${temp_dir}/otelcol-contrib" "${TARGETARCH}"; \
     install -m 0755 "${temp_dir}/otelcol-contrib" /usr/local/bin/otelcol-contrib
 
-RUN mkdir -p ${YR_INSTALLATION_DIR}/logs ${YR_INSTALLATION_DIR}/metrics ${YR_INSTALLATION_DIR}/trace && \
-    chmod 0755 ${YR_INSTALLATION_DIR}/yr_node_bootstrap.sh ${YR_INSTALLATION_DIR}/entrypoint.sh && \
-    chmod 0644 /etc/logrotate.d/gvisor && \
-    systemctl mask getty-static.service || true && \
-    systemctl enable logrotate.timer && \
-    systemctl enable otel_collector.service && \
-    systemctl enable sandboxd.service && \
-    systemctl enable yuanrong.service
+RUN chmod 0644 /etc/logrotate.d/gvisor && \
+    systemctl mask getty-static.service && \
+    systemctl enable logrotate.timer otel_collector.service sandboxd.service adx.service
 
 # Metadata-only changes must not invalidate fixed runtime download layers.
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
-      org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \
+      org.akernel.runtime.profile="rrt" \
       org.akernel.gvisor.release="${GVISOR_RELEASE}" \
       org.akernel.gvisor.archive.sha512="${GVISOR_SHA512}" \
       org.akernel.distill-fs.archive.sha256="${DISTILL_FS_SHA256}" \
@@ -569,6 +562,4 @@ LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.akernel.firecracker.release="${FIRECRACKER_RELEASE}" \
       org.akernel.firecracker.enabled="${AKERNEL_ENABLE_FIRECRACKER}"
 
-ENV YR_LOG_PATH=${YR_INSTALLATION_DIR}/logs \
-    YR_IMAGE_PROCESS_CONFIG=/run/akernel/yr-image-process.json
 STOPSIGNAL SIGRTMIN+3

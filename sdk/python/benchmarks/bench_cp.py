@@ -12,122 +12,191 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Benchmark: copy_from_local vs fs_write.
+"""Measure verified upload/download round trips through the public SDK."""
 
-Compares upload performance between the two file transfer methods.
-
-Prerequisites:
-  - AKERNEL_SERVER_ADDRESS and AKERNEL_TOKEN environment variables must be set.
-
-Usage:
-  export AKERNEL_SERVER_ADDRESS=your-server.example.com
-  export AKERNEL_TOKEN=your-token
-  python bench_cp.py
-"""
-
-import os
+import argparse
+import hashlib
+import json
 import tempfile
 import time
-import sys
+from pathlib import Path
+from uuid import uuid4
+
 from akernel_sdk import Sandbox
-
-# Test file sizes in bytes
-FILE_SIZES = [
-    (1 * 1024, "1KB"),
-    (64 * 1024, "64KB"),
-    (256 * 1024, "256KB"),
-    (512 * 1024, "512KB"),
-    (1 * 1024 * 1024, "1MB"),
-    (4 * 1024 * 1024, "4MB"),
-    (16 * 1024 * 1024, "16MB"),
-    (32 * 1024 * 1024, "32MB"),
-]
-
-ITERATIONS = 5
+from benchmarks.harness.errors import safe_error
+from benchmarks.harness.stats import LatencyHistogram
 
 
-def generate_file(path: str, size: int) -> None:
-    """Generate a file filled with pseudo-random printable bytes."""
-    import random
-    random.seed(42)
-    chunk = bytes(random.randint(32, 126) for _ in range(min(size, 64 * 1024)))
-    with open(path, "wb") as f:
-        written = 0
-        while written < size:
-            f.write(chunk[: size - written])
-            written += len(chunk)
+def _digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
-def bench_copy_from_local(sb, local_path: str, remote_path: str) -> float:
-    start = time.perf_counter()
-    sb.files.copy_from_local(local_path, remote_path)
-    return time.perf_counter() - start
+def generate_file(path: Path, size: int) -> None:
+    """Write reproducible binary data without changing global RNG state."""
+    if size < 1:
+        raise ValueError("size must be positive")
+    chunk = bytes((index * 17 + 31) % 256 for index in range(64 * 1024))
+    with path.open("wb") as target:
+        full, remainder = divmod(size, len(chunk))
+        for _ in range(full):
+            target.write(chunk)
+        target.write(chunk[:remainder])
 
 
-def bench_fs_write(sb, local_path: str, remote_path: str) -> float:
-    with open(local_path, "rb") as f:
-        data = f.read()
-    start = time.perf_counter()
-    sb.files.write(remote_path, data)
-    return time.perf_counter() - start
+def run_file_case(
+    files,
+    source: Path,
+    remote: str,
+    *,
+    method: str,
+    destination: Path,
+) -> dict:
+    """Upload, read back, download, hash-check, and remove one remote file."""
+    if method not in {"copy_from_local", "write"}:
+        raise ValueError(f"unsupported upload method: {method}")
+    local_download = destination / "download.bin"
+    expected_digest = _digest(source)
+    started = time.perf_counter()
+    try:
+        if method == "copy_from_local":
+            files.copy_from_local(str(source), remote)
+        else:
+            files.write(remote, source.read_bytes())
+        uploaded = time.perf_counter()
+
+        read_back = files.read(remote, format="bytes")
+        if hashlib.sha256(read_back).hexdigest() != expected_digest:
+            raise AssertionError("remote read hash mismatch")
+        read_done = time.perf_counter()
+
+        files.copy_to_local(remote, str(local_download))
+        downloaded = time.perf_counter()
+        if _digest(local_download) != expected_digest:
+            raise AssertionError("download hash mismatch")
+
+        return {
+            "method": method,
+            "size_bytes": source.stat().st_size,
+            "sha256": expected_digest,
+            "upload_seconds": uploaded - started,
+            "read_seconds": read_done - uploaded,
+            "download_seconds": downloaded - read_done,
+            "full_seconds": time.perf_counter() - started,
+        }
+    finally:
+        try:
+            files.remove(remote)
+        finally:
+            local_download.unlink(missing_ok=True)
 
 
-def format_time(seconds: float) -> str:
-    if seconds < 0.001:
-        return f"{seconds * 1_000_000:.1f}us"
-    if seconds < 1:
-        return f"{seconds * 1_000:.1f}ms"
-    return f"{seconds:.3f}s"
+def run_benchmark(
+    *,
+    sizes: tuple[int, ...],
+    iterations: int,
+    runtime: str,
+    image: str | None,
+    cpu: int,
+    memory: int,
+    run_id: str,
+) -> dict:
+    if not sizes or any(size < 1 for size in sizes) or iterations < 1:
+        raise ValueError("sizes and iterations must be positive")
+    cases = []
+    errors = []
+    histograms: dict[str, LatencyHistogram] = {}
+    with tempfile.TemporaryDirectory(prefix="akernel-bench-cp-") as temp_dir:
+        temporary = Path(temp_dir)
+        with Sandbox(runtime=runtime, image=image, cpu=cpu, memory=memory) as sandbox:
+            for size in sizes:
+                source = temporary / f"payload-{size}.bin"
+                generate_file(source, size)
+                for method in ("copy_from_local", "write"):
+                    for iteration in range(iterations):
+                        remote = (
+                            f"/tmp/akernel-bench-{run_id}-{size}-{method}-{iteration}"
+                        )
+                        try:
+                            case = run_file_case(
+                                sandbox.files,
+                                source,
+                                remote,
+                                method=method,
+                                destination=temporary,
+                            )
+                        except Exception as error:
+                            errors.append(
+                                {
+                                    "size_bytes": size,
+                                    "method": method,
+                                    "iteration": iteration,
+                                    "error": safe_error(error),
+                                }
+                            )
+                            continue
+                        cases.append(case)
+                        key = f"{size}:{method}"
+                        histograms.setdefault(key, LatencyHistogram()).observe(
+                            case["full_seconds"]
+                        )
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "status": "passed" if not errors else "failed",
+        "config": {
+            "sizes_bytes": list(sizes),
+            "iterations": iterations,
+            "runtime": runtime,
+            "image": image,
+        },
+        "completed_cases": len(cases),
+        "failed_cases": len(errors),
+        "cases": cases,
+        "latency_ms": {key: value.summary() for key, value in histograms.items()},
+        "errors": errors[:20],
+    }
 
 
-def main():
-    with Sandbox(cpu=2000, memory=4096) as sb:
-        print(f"Sandbox: {sb.id}")
-        print(f"{'Size':<8} {'Method':<22} {'Iter':>5} {'Min':>10} {'Avg':>10} {'Max':>10}")
-        print("-" * 73)
-
-        for size, label in FILE_SIZES:
-            with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
-                local_path = f.name
-            generate_file(local_path, size)
-
-            remote_base = f"/tmp/bench_{label}"
-
-            methods = [
-                ("copy_from_local (tar)", bench_copy_from_local),
-                ("fs_write (auto)", bench_fs_write),
-            ]
-
-            for method_name, bench_fn in methods:
-                times = []
-                for i in range(ITERATIONS):
-                    remote_path = f"{remote_base}_{i}.bin"
-                    try:
-                        elapsed = bench_fn(sb, local_path, remote_path)
-                        times.append(elapsed)
-                    except Exception as exc:
-                        print(f"  {method_name} iter {i} ERROR: {exc}")
-                        times = []
-                        break
-
-                if times:
-                    avg = sum(times) / len(times)
-                    print(
-                        f"{label:<8} {method_name:<22} {len(times):>5} "
-                        f"{format_time(min(times)):>10} {format_time(avg):>10} {format_time(max(times)):>10}"
-                    )
-
-                # Cleanup remote files
-                for i in range(ITERATIONS):
-                    remote_path = f"{remote_base}_{i}.bin"
-                    try:
-                        sb.files.remove(remote_path)
-                    except Exception:
-                        pass
-
-            os.remove(local_path)
-
-    print("\nDone.")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Verified AKernel SDK file benchmark")
+    parser.add_argument("--sizes", default="1024,1048576,33554432")
+    parser.add_argument("--iterations", type=int, default=5)
+    parser.add_argument("--runtime", default="runsc")
+    parser.add_argument("--image", default="")
+    parser.add_argument("--cpu", type=int, default=1000)
+    parser.add_argument("--memory", type=int, default=2048)
+    parser.add_argument("--run-id", default=uuid4().hex)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        sizes = tuple(int(item) for item in args.sizes.split(","))
+        result = run_benchmark(
+            sizes=sizes,
+            iterations=args.iterations,
+            runtime=args.runtime,
+            image=args.image or None,
+            cpu=args.cpu,
+            memory=args.memory,
+            run_id=args.run_id,
+        )
+    except Exception as error:
+        result = {
+            "schema_version": 1,
+            "run_id": args.run_id,
+            "status": "driver_error",
+            "error": safe_error(error),
+        }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = args.output.with_name(args.output.name + ".tmp")
+    temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(args.output)
+    print(f"file benchmark status={result['status']} result={args.output}")
+    if result["status"] != "passed":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

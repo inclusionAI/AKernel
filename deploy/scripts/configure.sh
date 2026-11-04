@@ -31,11 +31,17 @@ image_tag_override=""
 install_monitor_override=""
 install_dragonfly_override=""
 chunk_db_size_override=""
+juicefs_enabled="false"
+juicefs_storage_class=""
+juicefs_cache_mib="4096"
+juicefs_cache_host_path=""
+juicefs_cache_large_write="true"
+checkpoint_storage_host_path=""
+checkpoint_storage_existing_claim=""
 enable_runc_override=""
 schedule_placement_policy_override=""
 grafana_public_access_override=""
 grafana_admin_password_override=""
-iam_seed_hex_override=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -123,6 +129,34 @@ while [[ $# -gt 0 ]]; do
       chunk_db_size_override="$2"
       shift 2
       ;;
+    --juicefs-enabled)
+      juicefs_enabled="$2"
+      shift 2
+      ;;
+    --juicefs-storage-class)
+      juicefs_storage_class="$2"
+      shift 2
+      ;;
+    --juicefs-cache-mib)
+      juicefs_cache_mib="$2"
+      shift 2
+      ;;
+    --juicefs-cache-host-path)
+      juicefs_cache_host_path="$2"
+      shift 2
+      ;;
+    --juicefs-cache-large-write)
+      juicefs_cache_large_write="$2"
+      shift 2
+      ;;
+    --checkpoint-storage-host-path)
+      checkpoint_storage_host_path="$2"
+      shift 2
+      ;;
+    --checkpoint-storage-existing-claim)
+      checkpoint_storage_existing_claim="$2"
+      shift 2
+      ;;
     --enable-runc)
       enable_runc_override="$2"
       shift 2
@@ -139,10 +173,6 @@ while [[ $# -gt 0 ]]; do
       grafana_admin_password_override="$2"
       shift 2
       ;;
-    --iam-seed-hex)
-      iam_seed_hex_override="$2"
-      shift 2
-      ;;
     *)
       die "unknown argument: $1"
       ;;
@@ -151,6 +181,14 @@ done
 
 vendor="$(normalize_vendor "${vendor}")"
 require_cmd python3 terraform
+storage_tfvars="$(python3 "${ROOT}/deploy/scripts/shared_storage_config.py" \
+  --juicefs-enabled "${juicefs_enabled}" \
+  --juicefs-storage-class "${juicefs_storage_class}" \
+  --juicefs-cache-mib "${juicefs_cache_mib}" \
+  --juicefs-cache-host-path "${juicefs_cache_host_path}" \
+  --juicefs-cache-large-write "${juicefs_cache_large_write}" \
+  --checkpoint-host-path "${checkpoint_storage_host_path}" \
+  --checkpoint-existing-claim "${checkpoint_storage_existing_claim}")"
 
 prompt() {
   local var_name="$1"
@@ -268,7 +306,6 @@ dir="$(state_dir "${env_name}")"
 mkdir -p "${dir}"
 chmod 700 "${dir}"
 
-seed_file="${dir}/iam-seed"
 tfvars_file="${dir}/terraform.tfvars"
 config_file="${dir}/config.env"
 kubeconfig_file="${dir}/kubeconfig"
@@ -280,9 +317,6 @@ if [[ "${force}" -ne 1 && ( -f "${tfvars_file}" || -f "${config_file}" ) ]]; the
   fi
   echo "Local AKernel profile already exists: ${dir}"
   echo "This will overwrite config.env and terraform.tfvars."
-  if [[ -f "${seed_file}" ]]; then
-    echo "The existing iam-seed will be reused so previously generated tokens stay compatible."
-  fi
   read -r -p "Overwrite this profile? [y/N]: " overwrite
   case "$(printf '%s' "${overwrite}" | tr '[:upper:]' '[:lower:]')" in
     y | yes)
@@ -293,23 +327,6 @@ if [[ "${force}" -ne 1 && ( -f "${tfvars_file}" || -f "${config_file}" ) ]]; the
   esac
 fi
 
-if [[ -n "${iam_seed_hex_override}" ]]; then
-  iam_seed_hex_override="$(printf '%s' "${iam_seed_hex_override}" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
-  if [[ ! "${iam_seed_hex_override}" =~ ^[0-9A-F]+$ || $(( ${#iam_seed_hex_override} % 2 )) -ne 0 ]]; then
-    die "--iam-seed-hex must be an even-length hex string"
-  fi
-  printf '%s\n' "${iam_seed_hex_override}" > "${seed_file}"
-  chmod 600 "${seed_file}"
-elif [[ ! -s "${seed_file}" ]]; then
-  generate_hex_seed > "${seed_file}"
-  chmod 600 "${seed_file}"
-fi
-iam_seed="$(tr -d '[:space:]' < "${seed_file}" | tr '[:lower:]' '[:upper:]')"
-if [[ ! "${iam_seed}" =~ ^[0-9A-F]+$ || $(( ${#iam_seed} % 2 )) -ne 0 ]]; then
-  die "${seed_file} must contain an even-length hexadecimal seed"
-fi
-printf '%s\n' "${iam_seed}" > "${seed_file}"
-chmod 600 "${seed_file}"
 printf '%s\n' "${grafana_admin_password}" > "${grafana_password_file}"
 chmod 600 "${grafana_password_file}"
 
@@ -356,22 +373,11 @@ master_image_repository = "${image_repository}"
 master_image_tag        = "${image_tag}"
 node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
-iam_litebus_data_key    = "${iam_seed}"
 
-frontend_enabled  = true
-frontend_replicas = 1
-frontend_cpu      = "1"
-frontend_memory   = "2Gi"
-
-traefik_enabled               = true
-install_traefik               = true
-traefik_service_type          = "LoadBalancer"
-traefik_enable_web_entrypoint = true
-traefik_websecure_port        = 443
-traefik_web_port              = 80
-traefik_tls_enabled           = false
-traefik_tls_create_secret     = false
-traefik_internal_stats_enabled = true
+adx_public_service_enabled = true
+adx_service_type           = "LoadBalancer"
+adx_control_port           = 443
+adx_data_port              = 80
 
 install_prereqs = false
 
@@ -413,21 +419,11 @@ master_image_repository = "${image_repository}"
 master_image_tag        = "${image_tag}"
 node_image_repository   = "${image_repository}"
 node_image_tag          = "${image_tag}"
-iam_litebus_data_key    = "${iam_seed}"
 
-frontend_enabled  = true
-frontend_replicas = 1
-frontend_cpu      = "1"
-frontend_memory   = "2Gi"
-
-install_traefik                  = true
-traefik_public_access            = true
-traefik_enable_web_entrypoint    = true
-traefik_websecure_port           = 443
-traefik_web_port                 = 80
-traefik_tls_enabled              = false
-traefik_tls_create_secret        = false
-traefik_internal_stats_enabled   = true
+adx_public_service_enabled = true
+adx_service_type           = "LoadBalancer"
+adx_control_port           = 443
+adx_data_port              = 80
 
 install_prereqs = false
 
@@ -445,6 +441,7 @@ EOF
     ;;
 esac
 
+printf '\n%s\n' "${storage_tfvars}" >> "${tfvars_file}"
 terraform fmt "${tfvars_file}" >/dev/null
 
 cat > "${config_file}" <<EOF
@@ -453,7 +450,6 @@ ENV_NAME=${env_name}
 REGION=${region}
 CLUSTER_NAME=${cluster_name}
 TFVARS_FILE=${tfvars_file}
-IAM_SEED_FILE=${seed_file}
 GRAFANA_PASSWORD_FILE=${grafana_password_file}
 KUBECONFIG_PATH=${kubeconfig_file}
 IMAGE_REPOSITORY=${image_repository}
@@ -475,7 +471,6 @@ fi
 
 info "wrote ${config_file}"
 info "wrote ${tfvars_file}"
-info "wrote ${seed_file}"
 info "wrote ${grafana_password_file}"
 echo
 echo "Next:"

@@ -1,0 +1,74 @@
+{{- if .Values.juicefs.enabled }}
+{{- $name := include "juicefs.name" . -}}
+{{- if eq .Values.postgres.mode "managed" }}
+{{- if not .Values.postgres.existingSecret }}
+{{- $old := lookup "v1" "Secret" .Release.Namespace (include "juicefs.auth" .) -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "juicefs.auth" . }}
+  annotations: {helm.sh/resource-policy: keep}
+type: Opaque
+data:
+  password: {{ if $old }}{{ index $old.data "password" | quote }}{{ else }}{{ randAlphaNum 40 | b64enc | quote }}{{ end }}
+---
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-postgres
+  annotations: {helm.sh/resource-policy: keep}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.postgres.storageClass | quote }}
+  resources: {requests: {storage: {{ .Values.postgres.size | quote }}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-postgres
+spec:
+  selector: {app: {{ $name }}-postgres}
+  ports: [{name: postgres, port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-postgres
+spec:
+  serviceName: {{ $name }}-postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ $name }}-postgres}
+  template:
+    metadata:
+      labels: {app: {{ $name }}-postgres}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      affinity: {{ include "juicefs.placement" .Values.ceph.nodeSelector | nindent 8 }}
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image | quote }}
+          args: [postgres, -c, fsync=on, -c, synchronous_commit=on, -c, full_page_writes=on]
+          env:
+            - {name: POSTGRES_USER, value: juicefs}
+            - {name: POSTGRES_DB, value: juicefs}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "juicefs.auth" . | quote }}, key: password}
+          readinessProbe:
+            exec: {command: [pg_isready, -U, juicefs, -d, juicefs]}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: {{ $name }}-postgres}
+{{- end }}
+
+{{- end }}

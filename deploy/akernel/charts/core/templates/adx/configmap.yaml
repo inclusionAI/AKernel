@@ -1,0 +1,310 @@
+{{- $sampling := .Values.adx.node.metricsIntervalSeconds }}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $sampling))) (lt (int $sampling) 1) (gt (int $sampling) 3600) }}
+{{- fail "adx.node.metricsIntervalSeconds must be an integer between 1 and 3600" }}
+{{- end }}
+{{- if not (has (.Values.coordinator.schedulePlacementPolicy | default "spread") (list "binpack" "spread")) }}
+{{- fail "coordinator.schedulePlacementPolicy must be binpack or spread" }}
+{{- end }}
+{{- if not (has .Values.adx.redis.mode (list "managed" "external")) }}
+{{- fail "adx.redis.mode must be managed or external" }}
+{{- end }}
+{{- if and (eq .Values.adx.redis.mode "external") (not .Values.adx.redis.external.existingSecret) }}
+{{- fail "adx.redis.external.existingSecret is required in external mode" }}
+{{- end }}
+{{- $runtimeControl := .Values.adx.runtimeControl }}
+{{- $runtimePush := eq (toString $runtimeControl.enabled) "true" }}
+{{- if not $runtimePush }}
+{{- fail "adx.runtimeControl.enabled must be true: lifecycle events require runtime control" }}
+{{- end }}
+{{- if $runtimePush }}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $runtimeControl.port))) (lt (int $runtimeControl.port) 1) (gt (int $runtimeControl.port) 65535) }}
+{{- fail "adx.runtimeControl.port must be between 1 and 65535" }}
+{{- end }}
+{{- end }}
+{{- $storage := .Values.adx.checkpointStorage }}
+{{- if not (has $storage.kind (list "local" "distributed_fs" "s3")) }}
+{{- fail "adx.checkpointStorage.kind must be local, distributed_fs or s3" }}
+{{- end }}
+{{- if eq $storage.kind "s3" }}
+{{- if or (empty $storage.s3.bucket) (empty $storage.s3.region) (empty $storage.s3.credentialsSecret) }}
+{{- fail "S3 checkpoints require bucket, region and credentialsSecret" }}
+{{- end }}
+{{- if and $storage.s3.endpoint (not (regexMatch "^https?://[^/?#@]+/?$" $storage.s3.endpoint)) }}
+{{- fail "S3 endpoint must be an HTTP(S) origin without credentials, query or path" }}
+{{- end }}
+{{- if and (hasPrefix "http://" $storage.s3.endpoint) (ne (toString $storage.s3.allowHttp) "true") }}
+{{- fail "HTTP S3 endpoints require explicit allowHttp=true" }}
+{{- end }}
+{{- if not (regexMatch "^/home/akernel/adx/[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $storage.s3.cacheRoot) }}
+{{- fail "S3 cacheRoot must be a dedicated directory under /home/akernel/adx" }}
+{{- end }}
+{{- range $reserved := list "/home/akernel/adx/run" "/home/akernel/adx/logs" "/home/akernel/adx/degraded" }}
+{{- if or (eq $storage.s3.cacheRoot $reserved) (hasPrefix (printf "%s/" $reserved) $storage.s3.cacheRoot) }}
+{{- fail "S3 cacheRoot overlaps ADX runtime state" }}
+{{- end }}
+{{- end }}
+{{- range $limit := list $storage.s3.cacheBudgetBytes $storage.s3.cacheMaxEntries }}
+{{- if or (le (int64 $limit) 0) (ne (float64 $limit) (float64 (int64 $limit))) }}
+{{- fail "S3 cache limits must be positive integers" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if has $storage.kind (list "s3" "distributed_fs") }}
+{{- if or (eq $storage.alias "local") (not (regexMatch "^[A-Za-z0-9-]+$" $storage.alias)) }}
+{{- fail "checkpointStorage.alias must contain only ASCII letters, digits or hyphens and must not be local" }}
+{{- end }}
+{{- if not (regexMatch "^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $storage.prefix) }}
+{{- fail "checkpointStorage prefixes must contain safe relative directory components" }}
+{{- end }}
+{{- end }}
+{{- if eq $storage.kind "distributed_fs" }}
+{{- if eq (empty $storage.hostPath) (empty $storage.existingClaim) }}
+{{- fail "distributed_fs requires exactly one checkpointStorage.hostPath or existingClaim" }}
+{{- end }}
+{{- if or (eq $storage.alias "local") (not (regexMatch "^[A-Za-z0-9-]+$" $storage.alias)) }}
+{{- fail "checkpointStorage.alias must contain only ASCII letters, digits or hyphens and must not be local" }}
+{{- end }}
+{{- if not (regexMatch "^(/[A-Za-z0-9_-]+)+$" $storage.mountPath) }}
+{{- fail "checkpointStorage.mountPath must be a dedicated absolute mount directory" }}
+{{- end }}
+{{- range $reserved := list "/home/akernel" "/opt/adx" "/etc" "/run" "/var/run" "/proc" "/sys" "/dev" }}
+{{- if or (eq $storage.mountPath $reserved) (hasPrefix (printf "%s/" $reserved) $storage.mountPath) (hasPrefix (printf "%s/" $storage.mountPath) $reserved) }}
+{{- fail "checkpointStorage.mountPath must not cover AKernel state or system directories" }}
+{{- end }}
+{{- end }}
+{{- if and $storage.hostPath (or (not (hasPrefix "/" $storage.hostPath)) (eq $storage.hostPath "/")) }}
+{{- fail "checkpointStorage.hostPath must be absolute" }}
+{{- end }}
+{{- range $path := list $storage.prefix }}
+{{- if or (not (regexMatch "^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $path)) }}
+{{- fail "checkpointStorage prefixes must contain safe relative directory components" }}
+{{- end }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: akernel-adx-config
+  namespace: {{ .Release.Namespace }}
+data:
+  coordinator.yaml: |
+    schema_version: 1
+    package_dir: /opt/adx/current
+    state_dir: /home/akernel/adx/run/coordinator
+    redis_url: ${ADX_REDIS_URL}
+    namespace: {{ .Values.adx.namespace | quote }}
+    restart_delay_ms: 1000
+    stop_timeout_seconds: 90
+    services:
+      - id: coordinator
+        role: coordinator
+        config:
+          listen: 0.0.0.0:19000
+          advertised_address: http://akernel-adx-coordinator.{{ .Release.Namespace }}.svc.cluster.local:19000
+          scheduler_shards: {{ .Values.adx.schedulerShards }}
+          placement: {{ eq (.Values.coordinator.schedulePlacementPolicy | default "spread") "binpack" | ternary "pack" "spread" | quote }}
+          {{- if has $storage.kind (list "s3" "distributed_fs") }}
+          checkpoint_reclaimers:
+            - {{ include "core.checkpointStorage" . | nindent 14 | trim }}
+          {{- end }}
+          rpc_timeout_seconds: 30
+          heartbeat_timeout_seconds: 30
+          discovery_ttl_seconds: 15
+          metrics_listen: 0.0.0.0:19090
+          tls:
+            mode: network
+          bootstrap_credentials:
+            - key_file: /etc/adx/secrets/admin-key
+              tenant_id: admin
+              administrator: true
+              expires_at_unix_seconds: 0
+        env:
+          ADX_LOG_FORMAT: json
+          {{- if .Values.monitoring.tempoEndpoint }}
+          ADX_TRACE_ENABLED: "true"
+          ADX_TRACE_SAMPLE_RATIO: "0.1"
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318
+          {{- end }}
+    logging:
+      enabled: true
+      line_records: true
+      max_record_bytes: 65536
+      compress_after_seconds: 300
+      max_file_bytes: 104857600
+      rotate_seconds: 86400
+      compress: true
+      max_files: 5
+      max_age_seconds: 604800
+      max_total_bytes: 1073741824
+  ingress-api.yaml: |
+    schema_version: 1
+    package_dir: /opt/adx/current
+    state_dir: /home/akernel/adx/run/ingress-api
+    redis_url: ${ADX_REDIS_URL}
+    namespace: {{ .Values.adx.namespace | quote }}
+    restart_delay_ms: 1000
+    stop_timeout_seconds: 90
+    services:
+      - id: apiserver
+        role: apiserver
+        config:
+          listen: 127.0.0.1:18888
+          metrics_listen: 127.0.0.1:19093
+          internal_security: network
+          create_mode: local_first
+          rpc_timeout_seconds: 90
+          cache_entries: 10000
+          auth_cache_ttl_seconds: 10
+          agent_address: ""
+          loopback_http: true
+        env:
+          ADX_LOG_FORMAT: json
+          {{- if .Values.monitoring.tempoEndpoint }}
+          ADX_TRACE_ENABLED: "true"
+          ADX_TRACE_SAMPLE_RATIO: "0.1"
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318
+          {{- end }}
+      - id: ingress
+        role: ingress
+        config:
+          rpc_timeout_seconds: 5
+          refresh_seconds: 2
+          auth_cache_seconds: 10
+          auth_cache_entries: 4096
+          tls:
+            mode: network
+        env:
+          ADX_LOG_FORMAT: json
+          {{- if .Values.monitoring.tempoEndpoint }}
+          ADX_TRACE_ENABLED: "true"
+          ADX_TRACE_SAMPLE_RATIO: "0.1"
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318
+          {{- end }}
+          ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ROUTES: exact:/,exact:/healthz,prefix:/api/instances,prefix:/api/environment,prefix:/api/admin/v1/keys,prefix:/global-scheduler
+          ADX_DATA_PLANE_INGRESS_TLS_BIND: 0.0.0.0:8443
+          ADX_DATA_PLANE_INGRESS_PLAIN_BIND: 0.0.0.0:8080
+          ADX_DATA_PLANE_INGRESS_HEALTH_BIND: 0.0.0.0:18080
+          ADX_DATA_PLANE_INGRESS_TLS_CERT: /etc/adx/tls/public.pem
+          ADX_DATA_PLANE_INGRESS_TLS_KEY: /etc/adx/tls/public.key
+          ADX_DATA_PLANE_INGRESS_ALLOWED_CLIENT_CIDRS: 0.0.0.0/0
+          ADX_DATA_PLANE_INGRESS_CONTROL_PLANE_ADDRESS: 127.0.0.1:18888
+          ADX_DATA_PLANE_INGRESS_NODE_SECURITY_MODE: network
+          {{- if .Values.adx.ingressApi.portHostDomain }}
+          ADX_DATA_PLANE_INGRESS_PORT_HOST_DOMAIN: {{ .Values.adx.ingressApi.portHostDomain | quote }}
+          {{- end }}
+    logging:
+      enabled: true
+      line_records: true
+      max_record_bytes: 65536
+      compress_after_seconds: 300
+      max_file_bytes: 104857600
+      rotate_seconds: 86400
+      compress: true
+      max_files: 5
+      max_age_seconds: 604800
+      max_total_bytes: 1073741824
+    runtime_profile:
+      rootfs:
+        runtime_class: runsc
+        type: local
+        path: /opt/akernel/runtime/akernel-runtime-rootfs.img
+        readonly: false
+      bootstrap:
+        type: erofs
+        root: /opt/akernel/runtime/akernel-runtime-rootfs.img
+        target: /__adx
+        entrypoint:
+          - /__adx/usr/local/bin/adx-execd
+        image_process_config: /etc/adx-image-process.json
+      env:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  node.yaml: |
+    schema_version: 1
+    package_dir: /opt/adx/current
+    state_dir: /home/akernel/adx/run/node
+    redis_url: ${ADX_REDIS_URL}
+    namespace: {{ .Values.adx.namespace | quote }}
+    restart_delay_ms: 1000
+    stop_timeout_seconds: 90
+    services:
+      - id: adxlet
+        role: adxlet
+        config:
+          node_id: ${NODE_NAME}
+          listen: 0.0.0.0:19001
+          advertised_address: ${INSTANCE_IP}:19001
+          proxy_address: ${INSTANCE_IP}:19002
+          sandboxd_socket: /run/sandboxd/sandboxd.sock
+          proxy_socket: /home/akernel/adx/run/node/route.sock
+          metrics_interval_seconds: {{ .Values.adx.node.metricsIntervalSeconds }}
+          report_interval_seconds: {{ .Values.adx.node.reportIntervalSeconds }}
+          rpc_timeout_seconds: 30
+          execd_port: 50090
+          {{- if $runtimePush }}
+          runtime_control:
+            listen: {{ printf "0.0.0.0:%d" (int $runtimeControl.port) | quote }}
+            advertised_address: {{ printf "http://${INSTANCE_IP}:%d" (int $runtimeControl.port) | quote }}
+            key_file: /home/akernel/adx/runtime-control-key
+          {{- end }}
+          execd_env:
+            ADX_EXECD_CONTROL_SOCKET_PATH: /run/akernel
+            {{- if .Values.monitoring.tempoEndpoint }}
+            ADX_TRACE_ENABLED: "true"
+            ADX_TRACE_SAMPLE_RATIO: "0.1"
+            OTEL_EXPORTER_OTLP_ENDPOINT: http://${INSTANCE_IP}:4318
+            {{- end }}
+          {{- if has $storage.kind (list "s3" "distributed_fs") }}
+          checkpoint_storage:
+            {{- include "core.nodeCheckpointStorage" . | nindent 12 }}
+          {{- else }}
+          checkpoint_dir: /home/akernel/adx/checkpoints
+          {{- end }}
+          degradation_journal: /home/akernel/adx/degraded/results.sqlite
+          metrics_listen: 0.0.0.0:19091
+          runtime_logs:
+            directory: /home/akernel/adx/run/node/logs/runtime
+          resource_source:
+            kind: sandboxd
+            socket: /var/run/resource.sock
+            valid_for_seconds: {{ .Values.adx.node.resourceValidForSeconds }}
+          tls:
+            mode: network
+        env:
+          ADX_LOG_FORMAT: json
+          {{- if .Values.monitoring.tempoEndpoint }}
+          ADX_TRACE_ENABLED: "true"
+          ADX_TRACE_SAMPLE_RATIO: "0.1"
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318
+          {{- end }}
+          ADX_DATA_PLANE_RELAY_ACTIVITY_UDS_DIR: /home/akernel/adx/run/node
+          ADX_DATA_PLANE_RELAY_BIND: 0.0.0.0:19002
+          ADX_DATA_PLANE_RELAY_ADVERTISE_ADDRESS: ${INSTANCE_IP}:19002
+          ADX_DATA_PLANE_ALLOWED_TARGET_CIDRS: {{ .Values.adx.node.allowedTargetCidrs | quote }}
+          ADX_DATA_PLANE_ALLOWED_INGRESS_CIDRS: {{ .Values.adx.node.allowedIngressCidrs | quote }}
+          ADX_DATA_PLANE_INGRESS_NODE_SECURITY_MODE: network
+    logging:
+      enabled: true
+      line_records: true
+      max_record_bytes: 65536
+      compress_after_seconds: 300
+      max_file_bytes: 104857600
+      rotate_seconds: 86400
+      compress: true
+      max_files: 5
+      max_age_seconds: 604800
+      max_total_bytes: 1073741824
+    runtime_profile:
+      rootfs:
+        runtime_class: runsc
+        type: local
+        path: /opt/akernel/runtime/akernel-runtime-rootfs.img
+        readonly: false
+      bootstrap:
+        type: erofs
+        root: /opt/akernel/runtime/akernel-runtime-rootfs.img
+        target: /__adx
+        entrypoint:
+          - /__adx/usr/local/bin/adx-execd
+        image_process_config: /etc/adx-image-process.json
+      env:
+        PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

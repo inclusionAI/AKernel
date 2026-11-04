@@ -1,0 +1,111 @@
+{{- define "state.redisProxyConfig" -}}
+{{- $name := .Values.redis.name -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-proxy
+data:
+  haproxy.cfg: |
+    global
+      log stdout format raw local0
+      maxconn 8192
+    defaults
+      mode tcp
+      log global
+      timeout connect 3s
+      timeout client 1h
+      timeout server 1h
+      timeout check 2s
+    resolvers kubernetes
+      parse-resolv-conf
+      resolve_retries 3
+      timeout resolve 1s
+      timeout retry 1s
+      hold valid 5s
+    frontend redis
+      bind :6379
+      default_backend redis_writes
+    backend redis_writes
+      option tcp-check
+      tcp-check connect
+      tcp-check send "AUTH ${REDIS_PASSWORD}\r\n"
+      tcp-check expect string +OK
+      tcp-check send "ROLE\r\n"
+      tcp-check expect string master
+      default-server inter 1s fall 2 rise 2 on-marked-down shutdown-sessions resolvers kubernetes init-addr none
+      {{- range $i := until 3 }}
+      server redis-{{ $i }} {{ $name }}-{{ $i }}.{{ $.Values.redis.headlessService }}.{{ $.Release.Namespace }}.svc.cluster.local:6379 check
+      {{- end }}
+    frontend health
+      bind :8404
+      mode http
+      monitor-uri /ready
+      monitor fail if { nbsrv(redis_writes) lt 1 }
+      http-request use-service prometheus-exporter if { path /metrics }
+{{- end }}
+{{- $name := .Values.redis.name -}}
+{{ include "state.redisProxyConfig" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-write
+  annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8404"}
+spec:
+  selector: {app: {{ $name }}-proxy}
+  ports:
+    - {name: redis, port: 6379, targetPort: redis}
+    - {name: metrics, port: 8404, targetPort: health}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-proxy
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: {{ $name }}-proxy}}
+  template:
+    metadata:
+      labels: {app: {{ $name }}-proxy, akernel.io/state-service: "true"}
+      annotations:
+        checksum/config: {{ include "state.redisProxyConfig" . | sha256sum }}
+    spec:
+      nodeSelector: {{ toYaml .Values.haproxy.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.haproxy.tolerations | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: {{ $name }}-proxy}}
+              topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: haproxy
+          image: {{ .Values.haproxy.image | quote }}
+          args: [-f, /usr/local/etc/haproxy/haproxy.cfg]
+          securityContext: {allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 99, capabilities: {drop: [ALL]}}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.redis.authSecret | quote }}, key: password}
+          ports:
+            - {name: redis, containerPort: 6379}
+            - {name: health, containerPort: 8404}
+          readinessProbe:
+            httpGet: {path: /ready, port: health}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          volumeMounts: [{name: config, mountPath: /usr/local/etc/haproxy, readOnly: true}]
+      volumes:
+        - name: config
+          configMap: {name: {{ $name }}-proxy}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: {{ $name }}-proxy}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: {{ $name }}-proxy}}

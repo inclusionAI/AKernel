@@ -1,0 +1,4 @@
+apiVersion: v2
+name: akernel-storage-namespace
+version: 0.1.0
+description: Namespace for the optional AKernel shared storage stack

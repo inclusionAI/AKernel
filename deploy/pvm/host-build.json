@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "source": "a6636dd3df368a17173a7d71de75745f15a0a6c0",
+  "baseline": "59ae80123caf09bdacd427595eb3583e9260a2ac",
+  "prepared": {
+    "profile": "ubuntu-7.0.0-30-generic",
+    "profile_sha256": "265840c6652114a213b1da01326ab2dae78d10bcde09219ecd36a65643bebbb0",
+    "source": {
+      "repository": "https://github.com/hky1999/linux.git",
+      "commit": "59ae80123caf09bdacd427595eb3583e9260a2ac",
+      "upstream_base": "71b35309f8698bb664dbed0028156c82b8ec79b8",
+      "export_roots": [
+        "arch/x86/kvm",
+        "arch/x86/include",
+        "include",
+        "virt/kvm",
+        "Documentation/virt/kvm/pvm-oot.rst"
+      ],
+      "export_tree_sha256": "65b1b2a33abce2cd885d65d7b0d051123cafb5ce727e504464258dad80dad39f"
+    },
+    "patches": [
+      {
+        "file": "0001-KVM-PVM-adapt-host-headers-and-config-for-Ubuntu-7.0.patch",
+        "sha256": "6c8b1fad73987ba2b079b5a0bf7686dbe924469ce3b718ac5cca0840485a3b78"
+      },
+      {
+        "file": "0002-KVM-use-the-target-hrtimer-setup-API.patch",
+        "sha256": "c69408f5cbac01c074d7edeb364338f81f829c8cde8a2d9b19284ee75945b13b"
+      },
+      {
+        "file": "0003-KVM-adapt-syscore-registration-to-the-target-API.patch",
+        "sha256": "66aa1d079e883a22751c213b24f187be48b1ff6bef34db7e91cee5e672220d8c"
+      },
+      {
+        "file": "0004-KVM-pass-the-eventfd-to-target-IRQ-bypass-registrati.patch",
+        "sha256": "509c406d48f977aabd7e4eca3b8a7d23b242e542b8aba8e09aef676a740ad8ab"
+      },
+      {
+        "file": "0005-KVM-PVM-bridge-target-core-only-exports-to-the-OOT-b.patch",
+        "sha256": "bd51f26f23be2a22f6618295a7c2c7d5de5570c25c7acdd33fa3b6335962f14c"
+      },
+      {
+        "file": "0006-KVM-use-the-target-PIT-worker-run-API.patch",
+        "sha256": "c474a5872b47541e4615c35d07244d0fafe503f7303d864e8921e88658a0252b"
+      }
+    ],
+    "target": {
+      "distribution": "Ubuntu 26.04.1 LTS",
+      "architecture": "x86_64",
+      "kernel_release": "7.0.0-30-generic",
+      "compiler_version": "gcc-15 (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+      "files_sha256": {
+        ".config": "b07d3cb0d53236b021d73038e315018801fa6b843529d53129ad94a2a5233bf6",
+        "Module.symvers": "88ec24bc876cce4c2d7947424f964e5b2a76011801288209bd96539647bee4ba",
+        "include/generated/utsrelease.h": "9bfeb76d0e75dbbe7e31d187e592f48c8a8f47f7e3cf1398c2308e9e80290d14"
+      }
+    },
+    "compiler_command": "gcc-15",
+    "prepared_tree_sha256": "d12468f9db108b2eab917d3f292b5b7805d13bc42e21ca175b55e6b8d3dd1437"
+  },
+  "modules": {
+    "kvm.ko": "901eeaa4accff1d6a3e2b4d018e2182cc2515167f8d3ca1c780900b79392307c",
+    "kvm-pvm.ko": "9537320117ca8e05acbc934d0be0e8c477cc96315210ec9b3e0233b3aab1eee0"
+  },
+  "debugctl_applied": false,
+  "modpost_passed": true,
+  "original_evidence_sha256": "1085dfdd9459fea3d75b595eb9d1c7450f3863f3265f1f357e5d4035b0750b6b"
+}

@@ -13,125 +13,133 @@ serviceAccount:
   name: default
 
 monitoring:
+  # Stable identity shared by Coordinator, API Server and node metrics.
+  clusterName: "akernel"
   akernelEnv: "default"
   prometheusEndpoint: ""
   lokiEndpoint: ""
   tempoEndpoint: ""
 
 image:
+  digest: ""
   repository: registry.example.com/akernel/all-in-one
   tag: "latest"
   pullPolicy: IfNotPresent
 
-yuanrong:
-  imageProcessConfig: "/run/akernel/yr-image-process.json"
-
-auth:
-  # Existing Secret that contains the JWT signing seed. For
-  # `helm template | kubectl apply`, prefer pre-creating this Secret with
-  # deploy/scripts/ensure-iam-secret.sh so repeated applies do not rotate it.
-  existingSecret: ""
-  # Optional explicit JWT signing seed. If empty and no existingSecret is set,
-  # the chart generates a random hex seed at render time.
-  litebusDataKey: ""
-
-# Shared TLS material used by the openYuanrong frontend and IAM services.
-# The chart generates a deployment-specific self-signed certificate when an
-# existing Secret or explicit certificate is not supplied.
-componentTLS:
-  existingSecret: ""
-  secretName: "akernel-component-tls"
-  caCrt: ""
-  moduleCrt: ""
-  moduleKey: ""
-
-etcd:
-  # The bundled chart currently manages one durable etcd member. Use an
-  # external HA etcd deployment when control-plane availability requires it.
-  replicas: 1
-  dataDir: /etcd
-  persistence:
+# Agent DX is the default AKernel control and data plane. The chart expects an
+# existing Secret containing the public HTTPS certificate and initial API key;
+# see deploy/README.md for the exact key contract.
+adx:
+  namespace: akernel
+  schedulerShards: 1
+  # Execd pushes checkpoint requests and runtime status directly to adxlet.
+  runtimeControl:
     enabled: true
-    storageClassName: ""
-    size: "20Gi"
-    accessModes:
-    - ReadWriteOnce
-  volumePermissions:
-    enabled: true
-    runAsUser: 0
-    dataUser: 1001
+    port: 19003
+  # Select local storage, S3 with node-local inputs, or direct distributed_fs.
+  # Filesystem mode requires an operator-mounted JuiceFS/AFS volume or RWX claim.
+  checkpointStorage:
+    kind: local
+    alias: akernel-checkpoints
+    mountPath: /mnt/akernel-shared
+    hostPath: ""
+    existingClaim: ""
+    prefix: akernel/checkpoints
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""
+      allowHttp: false
+      # Keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY; optional AWS_SESSION_TOKEN.
+      credentialsSecret: ""
+      cacheRoot: /home/akernel/adx/checkpoint-s3-cache
+      cacheBudgetBytes: 53687091200
+      cacheMaxEntries: 500
+    # Optional placement shared by execution nodes and Coordinator. Managed
+    # JuiceFS sets this to its client selector so both roles have a host mount.
+    nodeSelector: {}
+  tls:
+    existingSecret: akernel-adx-tls
+  redis:
+    mode: managed
+    appendfsync: everysec
+    external:
+      existingSecret: ""
+      urlKey: redis-url
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 20Gi
+      accessModes:
+        - ReadWriteOnce
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  coordinator:
+    replicas: 1
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  ingressApi:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
+    replicas: 1
+    portHostDomain: ""
+    publicService:
+      enabled: false
+      # Keep the existing load balancer while withholding public traffic.
+      maintenance: false
+      type: LoadBalancer
+      controlPort: 443
+      dataPort: 80
+      annotations: {}
+      loadBalancerIP: ""
+      externalTrafficPolicy: Cluster
+    resources:
+      requests:
+        cpu: "2"
+        memory: 256Mi
+      limits:
+        cpu: "8"
+        memory: 1Gi
+  node:
+    allowedTargetCidrs: 10.88.0.0/16
+    allowedIngressCidrs: 0.0.0.0/0
+    reportIntervalSeconds: 5
+    metricsIntervalSeconds: 15
+    resourceValidForSeconds: 30
+
+# Preserve the existing placement setting; translate binpack to ADX pack.
+coordinator:
   image:
-    repository: public.ecr.aws/bitnami/etcd
-    tag: 3.6.8
-    pullPolicy: IfNotPresent
-  resources:
-    limits:
-      cpu: "1"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
-  args:
-    quotaBackendBytes: "42949672960"
-    autoCompactionRetention: "100000"
-
-master:
-  replicas: 1
-  # AKernel defaults YuanRong's Unit scheduler to spread. Use binpack to
-  # compact new sandbox placements onto fewer eligible nodes.
+    digest: ""
+    repository: ""
+    tag: ""
+    pullPolicy: ""
   schedulePlacementPolicy: spread
-  host: ""
-  port: "22770"
-  service:
-    type: ClusterIP
-    annotations: {}
-  image:
-    repository: ""
-    tag: ""
-    pullPolicy: ""
-  resources:
-    limits:
-      cpu: "1"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
-  etcd:
-    host: ""
-    port: "2379"
-
-frontend:
-  enabled: true
-  replicas: 2
-  service:
-    type: ClusterIP
-    annotations: {}
-  # Image defaults to the global all-in-one image. Set these only to override.
-  image:
-    repository: ""
-    tag: ""
-    pullPolicy: ""
-  resources:
-    limits:
-      cpu: "1"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
-  etcd:
-    host: ""
-    port: "2379"
-  master:
-    metaServiceAddress: ""
-    iamServerAddress: ""
 
 node:
+  nodeSelector: {}
   secret:
     create: true
     oss_auths: {}
     registry_auths:
       auths: {}
   image:
+    digest: ""
     repository: ""
     tag: ""
     pullPolicy: ""
@@ -141,7 +149,13 @@ node:
     requests:
       ephemeral-storage: 50Gi
   annotations: {}
+  # Operator-managed preparation; see deploy/docs/node-local-directories.md
+  # and deploy/akernel/examples/node-local-directories.yaml. Lists replace on merge.
   initContainers: []
+  directoryHelper:
+    # Package the script for the init-container example without invoking it.
+    # Disabled by default to preserve the node rollout checksum.
+    enabled: false
   hostDiskPath: "/home/akernel"
   homeDisk:
     useEphemeralPVC: false
@@ -448,9 +462,15 @@ node:
       cpuQuota: "800%"
 
     sandboxd:
+      # Reflink requires the matching gVisor bundle, a native filestore and node-local checkpoint inputs.
+      runscCheckpointMode: full
+      nativeFilestore: false
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
       # Sandboxd probes runc and runc-shim before advertising the runtime.
       enableRunc: false
+      # pvm selects firecracker-pvm and removes Kata from this node profile.
+      # The image must contain the validated PVM guest bundle.
+      firecrackerBackend: kvm
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
       config: |-
@@ -477,16 +497,28 @@ node:
         max_instance_num=1000
         enable_cache_in_stock_mode=true
 
+        [plugin.resource.memory_limit]
+        enabled = false
+        # Set a deployment-specific total reserve before enabling.
+        # total_reserve = "22GiB"
+
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
         resolv_conf_path="/etc/resolv_akernel.conf"
         # A configured size creates a loop-backed bounded filestore. ext4 is
         # used by default; set filestore_xfs_enabled=true to select XFS.
         filestore_dir="/home/akernel/filestore"
-        filestore_dir_size="200G"
+        filestore_dir_size="200G" # AKERNEL_NATIVE_FILESTORE
         filestore_xfs_enabled=false
         loop_device_dir="/dev"
         overlay_tmpfs_size="10G"
+
+        [plugin.runtime.checkpoint_sync]
+        sync_output=true
+
+        [plugin.runtime.runsc]
+        # AKERNEL_RUNSC_CHECKPOINT_MODE
+        background_restore=true
 
         [plugin.runtime.basic_spec]
         runsc="/home/akernel/images/config.json"
@@ -500,9 +532,9 @@ node:
         # AKERNEL_RUNTIME_RUNC
 
         [plugin.runtime.firecracker]
-        virtiofs_enabled=true
+        virtiofs_enabled=false
         virtiofsd_path="/usr/local/bin/virtiofsd"
-        writable_io_engine="AsyncDirect"
+        writable_io_engine="Async"
         writable_cache_type="Writeback"
 
         [plugin.runtime.kata]
@@ -531,53 +563,7 @@ node:
         registry_auths_path="/home/akernel/sandboxd/config/registry_auths.json"
         cgroup_memory_limit="64GiB"
 
-        # node-resource config. sock_path matches what yuanrong's C++
-        # external_system_collector reads, so it must stay /var/run/...
+        # Adxlet reads scheduling capacity and devices from this resource socket.
         [plugin.node_resource]
         provider="kubernetes"
         sock_path="/var/run/resource.sock"
-
-traefik:
-  enabled: false
-  mode: "http"
-  enableTLS: false
-  # When enabled, creates a separate "web" entrypoint (no TLS) on its own port
-  # for port forwarding traffic, while frontend API stays on "websecure" with TLS.
-  enableWebEntrypoint: true
-  # Transport options for the frontend (akernel-master) backend.
-  frontendTransport:
-    # Force HTTP/1.1 to the frontend backend. The HTTP provider reloads the
-    # full config every 1s, and the per-sandbox routes churn constantly; each
-    # reload drains Traefik's backend connections. An HTTP/2 backend uses a
-    # single multiplexed connection, so a reload stalls all in-flight requests
-    # for 7-10s. An HTTP/1.1 connection pool avoids this. Keep true unless the
-    # frontend backend requires HTTP/2 (e.g. gRPC over :8888).
-    disableHTTP2: true
-  replicas: 1
-  image:
-    repository: traefik
-    tag: v3.6.8
-    pullPolicy: IfNotPresent
-  service:
-    type: LoadBalancer
-    clusterIP: ""
-    annotations: {}
-    loadBalancerIP: ""
-  ports:
-    tcp: 8888
-    websecure: 443
-    web: 80
-    dashboard: 9990
-  tls:
-    enabled: false
-    createSecret: false
-    secretName: "traefik-tls"
-    moduleCrt: ""
-    moduleKey: ""
-  internalStats:
-    enabled: false
-    image: busybox:1.37.0-musl
-    port: 8079
-  grafana:
-    enabled: false
-    url: "http://grafana.akernel-monitor.svc:3000"

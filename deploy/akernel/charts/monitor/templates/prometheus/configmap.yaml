@@ -15,9 +15,16 @@ data:
         cluster: {{ .Values.prometheusServer.config.clusterName | quote }}
         environment: {{ .Values.prometheusServer.config.environment | quote }}
 
+    rule_files:
+      - /etc/prometheus/adx-rules.yaml
+{{- if .Values.prometheusServer.config.sharedStorage.enabled }}
+      - /etc/prometheus/shared-storage-rules.yaml
+{{- end }}
+
     scrape_configs:
       # Prometheus self-monitoring endpoint
       - job_name: 'prometheus'
+        scrape_interval: 30s
         static_configs:
           - targets: ['localhost:9090']
             labels:
@@ -29,6 +36,45 @@ data:
         file_sd_configs:
           - files:
             - /etc/prometheus/pushgateways.json
+
+{{- with .Values.prometheusServer.config.sharedStorage }}
+{{- if .enabled }}
+      - job_name: akernel-ceph
+        static_configs:
+          - targets: [{{ printf "%s.%s.svc:9283" .cephManagerService .namespace | quote }}]
+            labels:
+              cluster: {{ $.Values.prometheusServer.config.clusterName | quote }}
+              adx_env: {{ $.Values.prometheusServer.config.environment | quote }}
+{{- if .postgresEnabled }}
+      - job_name: akernel-postgres
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: [{{ .namespace | quote }}]}
+            selectors:
+              - role: pod
+                label: {{ printf "cnpg.io/cluster=%s" .postgresCluster | quote }}
+        relabel_configs:
+          - {source_labels: [__meta_kubernetes_pod_phase], action: keep, regex: Running}
+          - {source_labels: [__meta_kubernetes_pod_container_port_name], action: keep, regex: metrics}
+          - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+          - {target_label: cluster, replacement: {{ $.Values.prometheusServer.config.clusterName | quote }}}
+          - {target_label: adx_env, replacement: {{ $.Values.prometheusServer.config.environment | quote }}}
+{{- end }}
+      - job_name: akernel-redis
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: [{{ .namespace | quote }}]}
+            selectors:
+              - role: pod
+                label: {{ printf "app in (%s,%s-sentinel-sentinel)" .redisName .redisName | quote }}
+        relabel_configs:
+          - {source_labels: [__meta_kubernetes_pod_phase], action: keep, regex: Running}
+          - {source_labels: [__meta_kubernetes_pod_container_port_name], action: keep, regex: redis-exporter}
+          - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+          - {target_label: cluster, replacement: {{ $.Values.prometheusServer.config.clusterName | quote }}}
+          - {target_label: adx_env, replacement: {{ $.Values.prometheusServer.config.environment | quote }}}
+{{- end }}
+{{- end }}
 
 {{- $controlPlanePods := .Values.prometheusServer.config.controlPlanePods | default dict }}
 {{- if $controlPlanePods.enabled }}
@@ -66,7 +112,7 @@ data:
           regex: Running
         - source_labels: [__meta_kubernetes_pod_container_name]
           action: keep
-          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|traefik|manager|scheduler|seed-client|mysql|redis" | quote }}
+          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|manager|scheduler|seed-client|mysql|redis" | quote }}
         - source_labels: [__meta_kubernetes_pod_container_port_name, __meta_kubernetes_pod_container_port_number]
           action: keep
           regex: {{ printf "(%s);.*|;(%s)" ($controlPlanePods.targetPortNameRegex | default "http|client|dashboard|mysql|redis") ($controlPlanePods.targetPortNumberRegex | default "8000|4002|3306|6379") | quote }}
@@ -103,7 +149,7 @@ data:
           target_label: component
           replacement: frontend
         - source_labels: [__meta_kubernetes_pod_label_app]
-          regex: (etcd|traefik)
+          regex: (etcd)
           action: replace
           target_label: component
           replacement: $1
@@ -168,7 +214,7 @@ data:
           regex: Running
         - source_labels: [__meta_kubernetes_pod_container_name]
           action: keep
-          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|traefik|manager|scheduler|seed-client|mysql|redis" | quote }}
+          regex: {{ $controlPlanePods.targetContainerRegex | default "akernel-master|akernel-frontend|etcd|manager|scheduler|seed-client|mysql|redis" | quote }}
         - source_labels: [__meta_kubernetes_pod_container_port_name, __meta_kubernetes_pod_container_port_number]
           action: keep
           regex: {{ printf "(%s);.*|;(%s)" ($controlPlanePods.targetPortNameRegex | default "http|client|dashboard|mysql|redis") ($controlPlanePods.targetPortNumberRegex | default "8000|4002|3306|6379") | quote }}
@@ -205,7 +251,7 @@ data:
           target_label: component
           replacement: frontend
         - source_labels: [__meta_kubernetes_pod_label_app]
-          regex: (etcd|traefik)
+          regex: (etcd)
           action: replace
           target_label: component
           replacement: $1
@@ -416,5 +462,55 @@ data:
           action: replace
           target_label: app
 
+{{- if .Values.environmentDetails.enabled }}
+      {{- range $role := list "coordinator" "node" }}
+      - job_name: adx-{{ $role }}-environments
+        metrics_path: /metrics/environments
+        scrape_interval: {{ $.Values.environmentDetails.scrapeInterval }}
+        sample_limit: 200000
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names: {{ $.Values.environmentDetails.namespaces | toJson }}
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_phase]
+          action: keep
+          regex: Running
+        - source_labels: [__meta_kubernetes_pod_container_name, __meta_kubernetes_pod_container_port_name]
+          action: keep
+          regex: {{ if eq $role "coordinator" }}'coordinator;metrics'{{ else }}'akernel-node;'{{ end }}
+        - source_labels: [__meta_kubernetes_pod_ip]
+          target_label: __address__
+          regex: (.+)
+          replacement: {{ if eq $role "coordinator" }}'${1}:19090'{{ else }}'${1}:19091'{{ end }}
+        - target_label: cluster
+          replacement: {{ $.Values.prometheusServer.config.clusterName | quote }}
+        - target_label: adx_env
+          replacement: {{ $.Values.environmentDetails.environment | quote }}
+        - target_label: component_name
+          replacement: {{ if eq $role "node" }}adxlet{{ else }}adx-coordinator{{ end }}
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+      {{- end }}
+{{- end }}
+
   pushgateways.json: |
     {{ .Values.prometheusServer.config.pushgateways | toJson | indent 4 }}
+
+  adx-rules.yaml: |
+    groups:
+      - name: adx-dashboard-compatibility
+        interval: 15s
+        rules:
+          # The copied ADX overview uses the deployment-level sandbox_running name.
+          # Count Running environments, with an explicit zero for registered nodes.
+          - record: sandbox_running
+            expr: >-
+              sum by (cluster, adx_env, node_id) (adx_coordinator_environments{state="Running"})
+              or on (cluster, adx_env, node_id)
+              (max by (cluster, adx_env, node_id) (adx_coordinator_node_reachable) * 0)
+      - name: adx-creation
+        interval: 15s
+        rules:
+        - record: adx:environment_created_qps:rate1m
+          expr: sum by (cluster, adx_env) (rate(adx_environment_created_total[1m]))

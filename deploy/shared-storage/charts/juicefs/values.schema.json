@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "imagePullSecrets": {
+      "type": "array"
+    },
+    "juicefs": {
+      "type": "object",
+      "properties": {
+        "volumeName": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "hostMountPath": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_-]+)+$"
+        },
+        "blockSizeKiB": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 16384
+        },
+        "trashDays": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cacheMiB": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "readaheadMiB": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "image": {
+          "type": "string"
+        },
+        "cacheHostPath": {
+          "type": "string",
+          "pattern": "^$|^(/[A-Za-z0-9_-]+)+$"
+        },
+        "cacheLargeWrite": {
+          "type": "boolean"
+        },
+        "writeback": {
+          "type": "boolean",
+          "enum": [
+            false
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ceph": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "dataDirHostPath": {
+          "type": "string",
+          "pattern": "^$|^(/[A-Za-z0-9_-]+)+$"
+        },
+        "osdCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "monCount": {
+          "type": "integer",
+          "enum": [
+            1,
+            3,
+            5
+          ]
+        },
+        "gatewayInstances": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "osdSize": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+        },
+        "monSize": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "gatewayTcpNoDelay": {
+          "type": "boolean"
+        },
+        "mgrCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "failureDomain": {
+          "type": "string",
+          "enum": [
+            "host",
+            "zone"
+          ]
+        },
+        "zones": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tolerations": {
+          "type": "array"
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "managed",
+            "external"
+          ]
+        },
+        "external": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "pattern": "^$|^[a-zA-Z0-9.-]+$"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "database": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_]+$"
+            },
+            "user": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_]+$"
+            },
+            "sslMode": {
+              "type": "string",
+              "enum": [
+                "disable",
+                "verify-ca",
+                "verify-full"
+              ]
+            },
+            "caSecret": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 3300
+        }
+      }
+    }
+  }
+}

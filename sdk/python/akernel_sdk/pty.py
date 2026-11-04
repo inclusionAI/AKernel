@@ -16,18 +16,13 @@
 
 from __future__ import annotations
 
-import os
 import shlex
-import ssl
 import threading
+import weakref
 from collections.abc import Callable, Sequence
+from typing import Any
 
-from ._addresses import exec_endpoint_from_env
-from ._pty_transport import (
-    _build_pty_uri,
-    _PtyConnection,
-    _PtyTransportError,
-)
+from ._backends.registry import load_backend
 
 
 class PtyError(RuntimeError):
@@ -58,27 +53,26 @@ def _normalize_command(command: str | Sequence[str]) -> list[str]:
     return arguments
 
 
-def _ssl_context(endpoint_tls: bool) -> ssl.SSLContext | None:
-    if not endpoint_tls:
-        return None
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    return context
-
-
 class PtySession:
     """A connection-scoped interactive process running in a sandbox."""
 
     def __init__(
         self,
-        connection: _PtyConnection,
+        connection: Any,
         *,
         remove: Callable[[PtySession], None],
     ) -> None:
         self._connection = connection
         self._remove = remove
+        self._released = False
+        self._release_lock = threading.Lock()
+
+    def _release(self) -> None:
+        with self._release_lock:
+            if self._released:
+                return
+            self._released = True
+        self._remove(self)
 
     @property
     def session_id(self) -> str:
@@ -86,7 +80,7 @@ class PtySession:
 
         try:
             return self._connection.session_id
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     @property
@@ -108,7 +102,7 @@ class PtySession:
             raise TypeError("data must be bytes")
         try:
             self._connection.send_stdin(data)
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     def close_stdin(self) -> None:
@@ -116,7 +110,7 @@ class PtySession:
 
         try:
             self._connection.close_stdin()
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     def resize(self, *, rows: int, cols: int) -> None:
@@ -126,7 +120,7 @@ class PtySession:
         _validate_size("cols", cols)
         try:
             self._connection.resize(rows=rows, cols=cols)
-        except _PtyTransportError as error:
+        except Exception as error:
             raise PtyError(str(error)) from error
 
     def wait(self, timeout: float | None = None) -> int:
@@ -135,15 +129,23 @@ class PtySession:
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be greater than zero")
         try:
-            return self._connection.wait(timeout)
-        except _PtyTransportError as error:
+            result = self._connection.wait(timeout)
+            self._release()
+            return result
+        except Exception as error:
+            if isinstance(error, TimeoutError):
+                raise
             raise PtyError(str(error)) from error
 
     def close(self) -> None:
         """Close the connection and terminate the remote PTY process."""
 
-        self._connection.close()
-        self._remove(self)
+        try:
+            self._connection.close()
+        except Exception as error:
+            raise PtyError(str(error)) from error
+        finally:
+            self._release()
 
     def __enter__(self) -> PtySession:
         return self
@@ -155,9 +157,10 @@ class PtySession:
 class Pty:
     """Factory for interactive PTY sessions in one sandbox."""
 
-    def __init__(self, instance_id: str) -> None:
+    def __init__(self, instance_id: str, *, driver: Any | None = None) -> None:
         self._instance_id = instance_id
-        self._sessions: set[PtySession] = set()
+        self._driver = driver
+        self._sessions: weakref.WeakSet[PtySession] = weakref.WeakSet()
         self._lock = threading.Lock()
 
     def create(
@@ -198,45 +201,26 @@ class Pty:
         if timeout <= 0:
             raise ValueError("timeout must be greater than zero")
 
-        token = os.environ.get("AKERNEL_TOKEN", "").strip()
-        if not token:
-            raise RuntimeError("AKERNEL_TOKEN is not set")
-        endpoint = exec_endpoint_from_env()
-        uri = _build_pty_uri(
-            endpoint,
-            instance_id=self._instance_id,
-            token=token,
-            command=arguments,
-            rows=rows,
-            cols=cols,
-        )
-
-        session_ref: list[PtySession] = []
-
-        def on_done() -> None:
-            if session_ref:
-                self._remove(session_ref[0])
-
-        connection = _PtyConnection(
-            uri,
-            ssl_context=_ssl_context(endpoint.use_tls),
-            rows=rows,
-            cols=cols,
-            on_data=on_data,
-            on_done=on_done,
-        )
+        driver = self._driver
+        if driver is None:
+            driver = load_backend().pty_for(self._instance_id)
+        try:
+            connection = driver.create(
+                arguments,
+                rows=rows,
+                cols=cols,
+                on_data=on_data,
+                timeout=timeout,
+            )
+        except TimeoutError:
+            raise
+        except Exception as error:
+            raise PtyError(str(error)) from error
         session = PtySession(connection, remove=self._remove)
-        session_ref.append(session)
         with self._lock:
             self._sessions.add(session)
-        try:
-            connection.start(float(timeout))
-        except (TimeoutError, _PtyTransportError) as error:
-            connection.close()
-            self._remove(session)
-            if isinstance(error, TimeoutError):
-                raise
-            raise PtyError(str(error)) from error
+        if connection.done:
+            session._release()
         return session
 
     def _remove(self, session: PtySession) -> None:

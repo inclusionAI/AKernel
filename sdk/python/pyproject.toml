@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akernel-sdk"
-version = "0.1.6rc9"
+version = "0.2.0rc5"
 description = "Python SDK and CLI for AKernel remote sandboxes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -28,23 +28,19 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
+    "adx-environment==0.1.0rc3",
     "idna>=3,<4",
-    "openyuanrong-sandbox==0.10.2rc11",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
 ]
 
 [project.optional-dependencies]
-openyuanrong-sdk = [
-    "openyuanrong-sdk==0.9.9",
-]
-all = [
-    "openyuanrong-sdk==0.9.9",
-]
+# Retain existing installation extras without installing retired backends.
+openyuanrong-sandbox = []
+all = []
 dev = [
     "build>=1.2,<2",
     "mypy>=1.10,<2",
-    "openyuanrong-sdk==0.9.9",
     "ruff>=0.11,<1",
 ]
 
@@ -52,10 +48,10 @@ dev = [
 ak = "akernel_sdk.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/akernel-dev/akernel"
-Documentation = "https://github.com/akernel-dev/akernel/tree/main/sdk/python"
-Repository = "https://github.com/akernel-dev/akernel.git"
-Issues = "https://github.com/akernel-dev/akernel/issues"
+Homepage = "https://github.com/inclusionAI/AKernel"
+Documentation = "https://github.com/inclusionAI/AKernel/tree/develop/sdk/python"
+Repository = "https://github.com/inclusionAI/AKernel.git"
+Issues = "https://github.com/inclusionAI/AKernel/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -82,7 +78,7 @@ warn_unused_ignores = true
 exclude = ["akernel_sdk/_instance.py"]
 
 [[tool.mypy.overrides]]
-module = ["yr", "yr.*", "yr_sandbox", "yr_sandbox.*"]
+module = ["adx_environment", "adx_environment.*", "yr_sandbox", "yr_sandbox.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

@@ -1,0 +1,109 @@
+{{- if .Values.juicefs.enabled }}
+{{- $name := include "juicefs.name" . -}}
+{{- $rbac := printf "%s-readiness-%s" $name (printf "%s/%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}-readiness
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-readiness
+rules:
+  - apiGroups: [apps]
+    resources: [daemonsets]
+    resourceNames: [{{ printf "%s-client" $name | quote }}]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-readiness
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-readiness
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}-readiness
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $rbac }}
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $rbac }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $rbac }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}-readiness
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-readiness
+data:
+  wait_for_clients.py: |
+    {{- .Files.Get "scripts/wait_for_clients.py" | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-readiness
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ add (int .Values.readiness.timeoutSeconds) 40 }}
+  template:
+    spec:
+      serviceAccountName: {{ $name }}-readiness
+      restartPolicy: Never
+      nodeSelector: {kubernetes.io/os: linux}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: readiness
+          image: {{ .Values.readiness.image | quote }}
+          command: [python3, /scripts/wait_for_clients.py]
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: CLIENT_DAEMONSET
+              value: {{ printf "%s-client" $name | quote }}
+            - name: READINESS_TIMEOUT_SECONDS
+              value: {{ .Values.readiness.timeoutSeconds | quote }}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: script, mountPath: /scripts, readOnly: true}
+      volumes:
+        - name: script
+          configMap: {name: {{ $name }}-readiness}
+
+{{- end }}

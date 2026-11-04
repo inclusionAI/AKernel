@@ -58,6 +58,7 @@ runs:
         import os
         from importlib.metadata import distribution, version
 
+        import adx_environment
         import akernel_sdk
 
         assert version("akernel-sdk") == os.environ["EXPECTED_VERSION"]
@@ -66,6 +67,13 @@ runs:
             for entry in distribution("akernel-sdk").entry_points
         )
         assert akernel_sdk.__name__ == "akernel_sdk"
+        assert adx_environment.__name__ == "adx_environment"
+        adx_requirement = next(
+            requirement
+            for requirement in distribution("akernel-sdk").requires
+            if requirement.startswith("adx-environment==")
+        )
+        assert version("adx-environment") == adx_requirement.removeprefix("adx-environment==")
         PY
           "${test_env}/bin/ak" --help
         done

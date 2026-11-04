@@ -18,12 +18,13 @@ The public SDK accepts a compact ``AKERNEL_SERVER_ADDRESS`` value:
 
 * ``host:port``: shared-port mode.  Frontend API and exec WebSocket use the
   explicit port with TLS; public port-forward URLs use it with plain HTTP.
-* ``host:port``: shared-port mode.  Frontend API, exec WebSocket, and public
-  port-forward URLs all use the explicit port with TLS by default.
+* ``host``: control traffic uses TLS port 443; public sandbox URLs use HTTP
+  port 80.
 
 ``AKERNEL_GATEWAY_ADDRESS`` remains an explicit override for standalone or
 custom network topologies.  When it is set without a scheme, it is treated as a
-plain HTTP/WebSocket gateway.
+plain HTTP/WebSocket gateway. Scheme-qualified gateway overrides use the
+standard 443 port for HTTPS/WSS and 80 for HTTP/WS unless a port is supplied.
 """
 
 from __future__ import annotations
@@ -102,10 +103,7 @@ def _server_address_raw() -> str:
 
 
 def _gateway_override_raw() -> str:
-    return (
-        os.environ.get("AKERNEL_GATEWAY_ADDRESS", "").strip()
-        or os.environ.get("YR_GATEWAY_ADDRESS", "").strip()
-    )
+    return os.environ.get("AKERNEL_GATEWAY_ADDRESS", "").strip()
 
 
 def api_endpoint_from_env() -> Endpoint:
@@ -121,15 +119,19 @@ def gateway_endpoint_from_env() -> Endpoint:
     """Return the public port-forwarding gateway endpoint.
 
     An explicit gateway override is parsed as plain HTTP by default because
-    standalone exposes Traefik's web entrypoint without TLS.  Without an
+    standalone exposes a plain HTTP data entrypoint.  Without an
     explicit gateway, host-only server addresses use public 80, while
     host:port server addresses reuse the API port with plain HTTP.
     """
     override = _gateway_override_raw()
     if override:
+        scheme = urlparse(override).scheme
+        default_port = (
+            DEFAULT_API_PORT if scheme in ("https", "wss") else DEFAULT_PUBLIC_PORT
+        )
         return _parse_endpoint(
             override,
-            default_port=DEFAULT_PUBLIC_PORT,
+            default_port=default_port,
             default_scheme="http",
         )
 

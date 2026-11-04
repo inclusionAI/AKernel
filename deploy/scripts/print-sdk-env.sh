@@ -52,14 +52,37 @@ get_lb_host() {
   printf '%s' "${host}"
 }
 
-traefik_host="$(get_lb_host "${core_ns}" traefik)"
-[[ -n "${traefik_host}" ]] || die "traefik LoadBalancer address is not ready"
+ingress_host="$(get_lb_host "${core_ns}" akernel-adx-public)"
+[[ -n "${ingress_host}" ]] || die "akernel-adx-public LoadBalancer address is not ready"
+control_port="$(kubectl --kubeconfig "${kubeconfig}" -n "${core_ns}" get svc akernel-adx-public -o jsonpath='{.spec.ports[?(@.name=="control")].port}')"
+data_port="$(kubectl --kubeconfig "${kubeconfig}" -n "${core_ns}" get svc akernel-adx-public -o jsonpath='{.spec.ports[?(@.name=="data")].port}')"
+[[ -n "${control_port}" ]] || die "akernel-adx-public control port is not available"
+[[ -n "${data_port}" ]] || die "akernel-adx-public data port is not available"
 
-token="$("${AKERNEL_REPO_ROOT}/deploy/scripts/generate-token.py" --env "${env_name}" --write-file "${dir}/token")"
+address_host="${ingress_host}"
+if [[ "${address_host}" == *:* && "${address_host}" != \[*\] ]]; then
+  address_host="[${address_host}]"
+fi
+server_address="${address_host}"
+if [[ "${control_port}" != "443" ]]; then
+  server_address="${server_address}:${control_port}"
+fi
+gateway_address="http://${address_host}"
+if [[ "${data_port}" != "80" ]]; then
+  gateway_address="${gateway_address}:${data_port}"
+fi
+
+token="$("${AKERNEL_REPO_ROOT}/deploy/scripts/get-adx-admin-key.sh" \
+  --vendor "${vendor}" --env "${env_name}" --write-file "${dir}/token")"
 
 sdk_env="${dir}/sdk.env"
 {
-  printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${traefik_host}"
+  printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${server_address}"
+  if [[ "${data_port}" != 80 || "${control_port}" != 443 ]]; then
+    printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' "${gateway_address}"
+  else
+    printf 'unset AKERNEL_GATEWAY_ADDRESS\n'
+  fi
   printf 'export AKERNEL_TOKEN=%q\n' "${token}"
 } > "${sdk_env}"
 chmod 600 "${sdk_env}"

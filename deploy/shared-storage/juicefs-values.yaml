@@ -1,0 +1,11 @@
+# Values for deploy/akernel/charts/core. With the umbrella chart, place this
+# mapping under core:. Mount the same JuiceFS volume at hostPath on every host
+# eligible for Coordinator or node Pods before applying this configuration.
+adx:
+  checkpointStorage:
+    kind: distributed_fs
+    alias: akernel-checkpoints
+    mountPath: /mnt/akernel-shared
+    hostPath: /srv/akernel-shared
+    existingClaim: ""
+    prefix: akernel/checkpoints

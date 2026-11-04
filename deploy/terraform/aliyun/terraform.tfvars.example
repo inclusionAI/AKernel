@@ -85,20 +85,16 @@ node_pool_key_name = "<your-ecs-key-name>"
 # --- Core chart settings ---
 core_namespace = "akernel"
 
-# Optional: stable IAM JWT signing seed. Generate a 32-byte hex value with:
+# Legacy control-plane only: stable IAM JWT signing seed. Ignored by the
+# default ADX deployment. Generate a 32-byte hex value with:
 #   python3 -c 'import secrets; print(secrets.token_hex(32).upper())'
-# iam_litebus_data_key = "<64-char-hex-seed>"
 
 # --- Component images ---
 # Override image repository/tag for each component. Defaults to <acr_registry>/<component>.
-# etcd_image_repository    = "my-registry.com/etcd"
-# etcd_image_tag           = "3.6.8"
 # master_image_repository  = "my-registry.com/akernel/all-in-one"
 # master_image_tag         = "<release-tag>"
 # node_image_repository    = "my-registry.com/akernel/all-in-one"
 # node_image_tag           = "<release-tag>"
-# traefik_image_repository = "my-registry.com/traefik"
-# traefik_image_tag        = "v3.6.8"
 
 # Optional mirror registry for Grafana, Prometheus, Loki, Tempo, and BusyBox.
 # Leave empty to use the projects' official public images.
@@ -131,36 +127,6 @@ core_namespace = "akernel"
 # prometheus_resources       = { cpu = "2", memory = "4Gi", pvc_size = "50Gi" }
 # loki_resources             = { cpu = "1", memory = "2Gi", pvc_size = "50Gi" }
 # tempo_resources            = { cpu = "1", memory = "2Gi", pvc_size = "20Gi" }
-
-# Optional: expose akernel-master port 8888 through LoadBalancer.
-# master_public_access_8888 = true
-# master_service_type       = "LoadBalancer"
-
-# Optional: master replicas (for HA when frontend is enabled).
-# master_replicas = 1
-
-# Frontend Deployment. Traefik routes API traffic to akernel-frontend when it is enabled.
-frontend_enabled  = true
-frontend_replicas = 1
-frontend_cpu      = "1"
-frontend_memory   = "2Gi"
-
-# Traefik ingress controller (deployed via core chart).
-traefik_enabled               = true
-install_traefik               = true
-traefik_service_type          = "LoadBalancer"
-traefik_enable_web_entrypoint = true
-traefik_websecure_port        = 443
-traefik_web_port              = 80
-# traefik_replicas = 1
-# Optional: mount a custom default certificate. The websecure router still
-# serves TLS when this is false, using Traefik's default certificate.
-traefik_tls_enabled       = false
-traefik_tls_create_secret = false
-# traefik_tls_cert        = "<PEM certificate>"
-# traefik_tls_key         = "<PEM private key>"
-# traefik_internal_stats_enabled = true
-# traefik_internal_stats_image   = "registry-vpc.cn-hangzhou.aliyuncs.com/my-namespace/busybox:1.37.0-musl"
 
 # Install prerequisite components (OpenKruise) before AKernel charts.
 install_prereqs             = false
@@ -269,3 +235,24 @@ dragonfly_server_node_pool = {
 # Example for using existing cluster instead of creating ACK:
 # create_cluster  = false
 # kubeconfig_path = "/abs/path/to/kubeconfig"
+
+# ADX directly exposes HTTPS control/PTY and HTTP sandbox traffic.
+adx_public_service_enabled = true
+adx_service_type           = "LoadBalancer"
+adx_control_port           = 443
+adx_data_port              = 80
+# adx_service_annotations = {}
+# adx_load_balancer_ip = ""
+
+# Optional full JuiceFS stack: Rook/Ceph RGW, PostgreSQL and host FUSE clients.
+# Ceph's StorageClass must support raw Block PVCs. Defaults require three hosts.
+# juicefs = {
+#   enabled                = true
+#   ceph_storage_class     = "YOUR_RAW_BLOCK_STORAGE_CLASS"
+#   postgres_storage_class = "YOUR_FILESYSTEM_STORAGE_CLASS"
+# }
+# To use a pre-mounted AFS/JuiceFS volume instead, keep juicefs disabled:
+# checkpoint_storage = {
+#   kind      = "distributed_fs"
+#   host_path = "/srv/akernel-shared"
+# }

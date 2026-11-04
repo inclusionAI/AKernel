@@ -14,6 +14,39 @@ data:
 
   sandboxd_config.toml: |
 {{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
+{{- $saveMode := .Values.node.config.sandboxd.runscCheckpointMode | default "full" }}
+{{- $nativeFilestore := eq (toString (.Values.node.config.sandboxd.nativeFilestore | default false)) "true" }}
+{{- if not (has $saveMode (list "full" "reflink")) }}
+{{- fail "node.config.sandboxd.runscCheckpointMode must be full or reflink" }}
+{{- end }}
+{{- if eq $saveMode "reflink" }}
+{{- $localInputs := has .Values.adx.checkpointStorage.kind (list "local" "s3") }}
+{{- if not (and $nativeFilestore $localInputs) }}
+{{- fail "runsc reflink requires nativeFilestore and node-local checkpoint inputs (local or s3)" }}
+{{- end }}
+{{- if not (contains "# AKERNEL_RUNSC_CHECKPOINT_MODE" $sandboxdConfig) }}
+{{- fail "runsc reflink requires the # AKERNEL_RUNSC_CHECKPOINT_MODE marker in sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = replace "# AKERNEL_RUNSC_CHECKPOINT_MODE" "checkpoint_mode=\"reflink\"" $sandboxdConfig }}
+{{- end }}
+{{- if $nativeFilestore }}
+{{- if not (regexMatch "(?m)^[\\t ]*filestore_dir_size=.*# AKERNEL_NATIVE_FILESTORE$" $sandboxdConfig) }}
+{{- fail "nativeFilestore requires the filestore_dir_size # AKERNEL_NATIVE_FILESTORE marker in sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)filestore_dir_size=.*# AKERNEL_NATIVE_FILESTORE$" $sandboxdConfig "${1}filestore_dir_size=\"\" # Native node filesystem" }}
+{{- end }}
+{{- $firecrackerBackend := .Values.node.config.sandboxd.firecrackerBackend | default "kvm" }}
+{{- if not (has $firecrackerBackend (list "kvm" "pvm")) }}
+{{- fail "node.config.sandboxd.firecrackerBackend must be kvm or pvm" }}
+{{- end }}
+{{- if eq $firecrackerBackend "pvm" }}
+{{- if not (and (contains "[plugin.runtime.firecracker]" $sandboxdConfig) (contains "firecracker=\"/usr/local/bin/firecracker\"" $sandboxdConfig)) }}
+{{- fail "PVM selection requires the standard Firecracker config section and binary entry" }}
+{{- end }}
+{{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)firecracker=" $sandboxdConfig "${1}firecracker-pvm=" }}
+{{- $sandboxdConfig = replace "[plugin.runtime.firecracker]" "[plugin.runtime.firecracker_pvm]" $sandboxdConfig }}
+{{- $sandboxdConfig = regexReplaceAll "(?m)^[\\t ]*kata=.*$" $sandboxdConfig "# Kata is disabled on the PVM node profile." }}
+{{- end }}
 {{- $runcMarker := "# AKERNEL_RUNTIME_RUNC" }}
 {{- if .Values.node.config.sandboxd.enableRunc }}
 {{- if not (contains $runcMarker $sandboxdConfig) }}
@@ -42,3 +75,11 @@ data:
 
   prepare_node.sh: |
 {{ .Files.Get "scripts/prepare_node.sh" | indent 4 }}
+{{- if (.Values.node.directoryHelper | default dict).enabled }}
+
+  prepare-node-directories.py: |
+{{ .Files.Get "scripts/prepare-node-directories.py" | indent 4 }}
+{{- end }}
+
+  prepare_checkpoint_storage.py: |
+{{ .Files.Get "scripts/prepare_checkpoint_storage.py" | indent 4 }}

@@ -34,6 +34,7 @@ prometheusServer:
     tag: "v3.2.1"
 %{ endif ~}
   config:
+    clusterName: "${cluster_name}"
     dragonflyMetrics:
       enabled: ${install_dragonfly}
 %{ if install_dragonfly ~}

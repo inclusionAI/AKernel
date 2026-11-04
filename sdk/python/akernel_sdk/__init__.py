@@ -17,12 +17,23 @@
 import importlib
 
 from ._backends.errors import (
+    AuthenticationException,
     BackendNotInstalledError,
     BackendOperationError,
+    CommandExitException,
     InvalidBackendError,
+    NotFoundException,
+    PermissionDeniedException,
+    RateLimitException,
+    SandboxNotFoundException,
+    ServiceBusyException,
+    TimeoutException,
     UnsupportedBackendFeatureError,
 )
 from ._backends.registry import selected_backend
+from ._fork import ForkCleanupError
+from ._sandboxes import SandboxPaginator, SandboxQuery, SandboxState
+from ._snapshots import SnapshotPaginator
 from .types import (
     CommandInfo,
     CommandResult,
@@ -37,11 +48,16 @@ from .types import (
     PortRange,
     S3Config,
     SandboxInfo,
+    SnapshotInfo,
     TrafficPolicy,
 )
 
 __all__ = [
     "Sandbox",
+    "Client",
+    "SandboxQuery",
+    "SandboxState",
+    "SandboxPaginator",
     "S3Config",
     "Mount",
     "NetworkPolicy",
@@ -56,6 +72,8 @@ __all__ = [
     "CommandHandle",
     "EntryInfo",
     "SandboxInfo",
+    "SnapshotInfo",
+    "SnapshotPaginator",
     "NodeInfo",
     "Pty",
     "PtySession",
@@ -66,6 +84,15 @@ __all__ = [
     "BackendNotInstalledError",
     "UnsupportedBackendFeatureError",
     "BackendOperationError",
+    "AuthenticationException",
+    "PermissionDeniedException",
+    "NotFoundException",
+    "SandboxNotFoundException",
+    "TimeoutException",
+    "RateLimitException",
+    "ServiceBusyException",
+    "CommandExitException",
+    "ForkCleanupError",
     "DockerContext",
     "DockerfileLaunch",
     "DockerContextEntry",
@@ -82,6 +109,7 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "Client": ("._client", "Client"),
     "Sandbox": (".sandbox", "Sandbox"),
     "CommandHandle": (".commands", "CommandHandle"),
     "Pty": (".pty", "Pty"),
