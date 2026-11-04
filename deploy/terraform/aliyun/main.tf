@@ -915,7 +915,7 @@ resource "null_resource" "node_image_pull_ready" {
       # ACK resource id is cluster_id:node_pool_id; Node labels use node_pool_id.
       POOLS = jsonencode(merge(
         { for pool in concat(alicloud_cs_kubernetes_node_pool.default_with_key, alicloud_cs_kubernetes_node_pool.default_with_password) : pool.node_pool_id => var.node_pool_size },
-        { for name, pool in alicloud_cs_kubernetes_node_pool.extra : pool.node_pool_id => pool.desired_size if contains(keys(local.node_image_pull_workers), "extra/${name}") }
+        { for name, pool in alicloud_cs_kubernetes_node_pool.extra : pool.node_pool_id => tonumber(pool.desired_size) if contains(keys(local.node_image_pull_workers), "extra/${name}") }
       ))
     }
     command = <<-EOT

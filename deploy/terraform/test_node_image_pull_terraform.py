@@ -6,7 +6,9 @@ import gzip
 import json
 import re
 import shutil
+import textwrap
 import unittest
+from unittest import mock
 
 from test_adx_contract import ROOT, evaluate_fixture
 
@@ -38,7 +40,7 @@ class NodeImagePullTerraformTest(unittest.TestCase):
         blocks.extend([
             'variable "test_default_with_key" { default = [{id = "c-test:np-key", node_pool_id = "np-key"}] }',
             'variable "test_default_with_password" { default = [{id = "c-test:np-password", node_pool_id = "np-password"}] }',
-            'variable "test_extra" { default = {baremetal = {id = "c-test:np-worker", node_pool_id = "np-worker", desired_size = 1}, storage = {id = "c-test:np-storage", node_pool_id = "np-storage", desired_size = 1}} }',
+            'variable "test_extra" { default = {baremetal = {id = "c-test:np-worker", node_pool_id = "np-worker", desired_size = "1"}, storage = {id = "c-test:np-storage", node_pool_id = "np-storage", desired_size = "1"}} }',
             'variable "repository" { default = "registry-vpc.cn-hangzhou.aliyuncs.com/team/all-in-one" }',
             'variable "credential_host" { default = "registry-vpc.cn-hangzhou.aliyuncs.com" }',
             'locals {\n node_image_repo = var.repository\n acr_host = var.credential_host\n'
@@ -80,6 +82,25 @@ class NodeImagePullTerraformTest(unittest.TestCase):
             self.assertLessEqual(len(wrapper.encode()), 16384)
         self.assertEqual(value["workers"]["extra/baremetal"]["user_data"], original)
         self.assertIn('akernel.io/image-pull-ready', value["affinity"])
+        script = textwrap.dedent(re.search(r'(?ms)^      import json, os, subprocess, time\n.*?(?=^      PY$)', MAIN).group())
+        nodes = [{"metadata": {"labels": {"alibabacloud.com/nodepool-id": pool,
+                  "akernel.io/image-pull-profile": "ack-dragonfly-v1", "akernel.io/image-pull-ready": "true"}},
+                  "status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+                 for pool, size in value["pools"].items() for _ in range(size)]
+        for state in ("healthy", "missing", "not-ready", "not-initialized"):
+            with self.subTest(state=state):
+                sample = json.loads(json.dumps(nodes))
+                if state == "missing": sample.pop()
+                if state == "not-ready": sample[-1]["status"]["conditions"][0]["status"] = "False"
+                if state == "not-initialized": sample[-1]["metadata"]["labels"]["akernel.io/image-pull-ready"] = "false"
+                with mock.patch.dict('os.environ', POOLS=json.dumps(value["pools"])), \
+                     mock.patch('subprocess.run', return_value=mock.Mock(returncode=0, stdout=json.dumps({"items": sample}))), \
+                     mock.patch('time.monotonic', side_effect=[0, 1, 721]), mock.patch('time.sleep'):
+                    if state == "healthy":
+                        exec(compile(script, '<readiness>', 'exec'), {})
+                    else:
+                        with self.assertRaisesRegex(SystemExit, 'bootstrap is not ready'):
+                            exec(compile(script, '<readiness>', 'exec'), {})
 
     def test_direct_is_unchanged_and_auto_rejects_unsupported_inputs(self):
         result, direct = self.evaluate(node_image_pull_mode="direct", node_pool_image_type="custom", repository="docker.io/team/image")
