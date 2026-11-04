@@ -184,6 +184,44 @@ AKernel node configuration. Set `oss_proxy_url` to override that address.
 Review `dragonfly_seed_node_pool`, `dragonfly_server_node_pool`, storage, and
 image registry settings before applying the plan.
 
+## ACK worker image pulls
+
+New ACR-based Aliyun profiles default to `NODE_IMAGE_PULL_MODE=auto`; other
+registries and raw Terraform default to `direct`. Regenerating an old ENV,
+including with `FORCE=1`, preserves its explicit mode or keeps legacy direct.
+Existing ENVs cannot switch modes; use a fresh ENV, not a mode change for migration.
+
+```bash
+make config VENDOR=aliyun ENV=ack-new NODE_IMAGE_PULL_MODE=auto
+```
+
+`INSTALL_DRAGONFLY` remains independent and default-false. The mirror uses
+`dragonfly-seed-client.<dragonfly_namespace>.svc.cluster.local:4001` with HTTPS
+ACR fallback when the Service is absent or unavailable. It affects all images
+from that registry host on participating workers. Private images need matching
+pull credentials or an ACK credential provider; bootstrap does not copy registry
+credentials into User Data.
+
+The default worker pool participates. Extra ECS/ACK bare-metal compute pools opt
+in with `node_image_pull_worker=true`; exclude seed/server/control pools and
+preserve runtime labels. Raw Bash hooks are `node_pool_pre_user_data` and
+`node_pool_user_data`; extra pools use `pre_user_data` and `user_data`. Pre scripts
+keep ACK's pre-join phase. All auto workers retain standard module/PID setup,
+then run post scripts as children before the helper, retaining failure status.
+Keep bare-metal host prerequisites in these hooks.
+ACK decoded User Data is limited to 16 KiB; complete hooks must fit, otherwise
+use `direct` or a separately reviewed initialization plan.
+
+The helper uses the node's kubelet identity, preserves kubelet's independent
+upstream resolver, and points the host at existing CoreDNS before writing
+`hosts.toml`. Worker readiness gates the first node-Pod pull; Terraform waits for
+bootstrap and optional Dragonfly before core. Shared DNS configuration is unchanged.
+
+Supported hosts use official Aliyun Linux 3 images (including Container Optimized),
+Python 3.6+, NetworkManager, native IPv4 upstream DNS and compatible containerd.
+Use `direct` for unqualified custom images, DNS stubs, NodeLocal DNS or other
+providers. Bootstrap errors retain pending readiness; missing Dragonfly does not.
+
 ## Public endpoint model
 
 The default cloud deployment exposes the embedded ADX Ingress directly through

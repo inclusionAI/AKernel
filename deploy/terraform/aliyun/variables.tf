@@ -193,6 +193,28 @@ variable "node_pool_image_id" {
   default     = ""
 }
 
+variable "node_image_pull_mode" {
+  type        = string
+  description = "direct preserves ACK pulls; auto initializes new ACK workers with a Dragonfly Service-domain mirror and ACR fallback. Existing nodes are not migrated."
+  default     = "direct"
+  validation {
+    condition     = contains(["direct", "auto"], var.node_image_pull_mode)
+    error_message = "node_image_pull_mode must be direct or auto."
+  }
+}
+
+variable "node_pool_pre_user_data" {
+  type        = string
+  description = "Optional raw Bash User Data run by ACK before joining the default pool; Terraform base64-encodes it for ACK."
+  default     = ""
+}
+
+variable "node_pool_user_data" {
+  type        = string
+  description = "Optional raw Bash appended to the default pool's existing runtime/PID initialization, before image-pull initialization."
+  default     = ""
+}
+
 variable "node_pool_zone_id" {
   type        = string
   description = "Optional zone for node pool placement. Empty means using the first zone in zone_ids."
@@ -320,7 +342,11 @@ variable "extra_node_pools" {
     system_disk_size  = optional(number)
     data_disk_enabled = optional(bool, true)
     data_disk_size    = optional(number)
-    labels            = optional(map(string), {})
+    # Worker participation is explicit; a data disk or instance type is not a runtime contract.
+    node_image_pull_worker = optional(bool, false)
+    pre_user_data          = optional(string, "")
+    user_data              = optional(string, "")
+    labels                 = optional(map(string), {})
     taints = optional(list(object({
       key    = string
       value  = string
