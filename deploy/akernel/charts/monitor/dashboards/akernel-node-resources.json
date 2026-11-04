@@ -205,7 +205,7 @@
           },
           "editorMode": "code",
           "expr": "sum(node_memory_usage_bytes{akernel_env=~\"$akernel_env\", host_name=~\"$host_name\"})",
-          "legendFormat": "used",
+          "legendFormat": "usage",
           "range": true,
           "refId": "A"
         },
