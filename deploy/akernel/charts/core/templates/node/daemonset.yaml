@@ -72,6 +72,27 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
+        {{- if .Values.node.config.sandboxd.enableRunc }}
+        - name: prepare-runc-filesystems
+          image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.node.image) }}
+          securityContext: {privileged: true, runAsUser: 0, readOnlyRootFilesystem: true}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              for filesystem in overlay erofs; do
+                if ! grep -Eq "(^|[[:space:]])${filesystem}$" /proc/filesystems; then
+                  modprobe "${filesystem}"
+                fi
+                if ! grep -Eq "(^|[[:space:]])${filesystem}$" /proc/filesystems; then
+                  echo "runc requires host filesystem ${filesystem}" >&2
+                  exit 1
+                fi
+              done
+          volumeMounts:
+            - {name: runc-host-modules, mountPath: /lib/modules, readOnly: true}
+        {{- end }}
         {{- if or (has .Values.adx.checkpointStorage.kind (list "s3" "distributed_fs")) (eq .Values.node.config.sandboxd.runscCheckpointMode "reflink") }}
         - name: prepare-checkpoint-storage
           image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
@@ -300,6 +321,10 @@ spec:
       tolerations:
       - operator: "Exists"
       volumes:
+      {{- if .Values.node.config.sandboxd.enableRunc }}
+      - name: runc-host-modules
+        hostPath: {path: /lib/modules, type: Directory}
+      {{- end }}
       {{- if .Values.node.applicationLogs.enabled }}
       - name: application-logs-disk
         hostPath:

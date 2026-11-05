@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,7 +15,7 @@ import yaml
 CHART = Path(__file__).resolve().parents[1]
 
 
-def render() -> tuple[list[dict], str]:
+def render(*settings: str) -> tuple[list[dict], str]:
     result = subprocess.run(
         [
             "helm",
@@ -24,6 +26,7 @@ def render() -> tuple[list[dict], str]:
             "akernel-system",
             "--set",
             "adx.tls.existingSecret=adx-test-tls",
+            *[argument for value in settings for argument in ("--set", value)],
         ],
         check=True,
         capture_output=True,
@@ -42,6 +45,54 @@ class AdxChartTest(unittest.TestCase):
             if resource.get("kind") == kind and resource["metadata"]["name"] == name:
                 return resource
         self.fail(f"missing {kind}/{name}")
+
+    def test_runc_filesystem_preparation_is_opt_in(self) -> None:
+        default = self.resource("DaemonSet", "akernel-node")["spec"]["template"]["spec"]
+        self.assertNotIn("prepare-runc-filesystems", [c["name"] for c in default["initContainers"]])
+        self.assertNotIn("runc-host-modules", [v["name"] for v in default["volumes"]])
+        resources, _ = render("node.config.sandboxd.enableRunc=true",
+                              "node.image.repository=registry.example.com/runc",
+                              "node.image.tag=qualified")
+        pod = next(r for r in resources if r["kind"] == "DaemonSet")["spec"]["template"]["spec"]
+        prepare = pod["initContainers"][0]
+        self.assertEqual(prepare["name"], "prepare-runc-filesystems")
+        self.assertEqual(prepare["image"], pod["containers"][0]["image"])
+        self.assertEqual(prepare["securityContext"], {"privileged": True, "runAsUser": 0, "readOnlyRootFilesystem": True})
+        self.assertEqual(prepare["volumeMounts"], [{"name": "runc-host-modules", "mountPath": "/lib/modules", "readOnly": True}])
+        volume = next(v for v in pod["volumes"] if v["name"] == "runc-host-modules")
+        self.assertEqual(volume["hostPath"], {"path": "/lib/modules", "type": "Directory"})
+
+    def test_runc_filesystem_preparation_loads_only_missing_and_fails_closed(self) -> None:
+        resources, _ = render("node.config.sandboxd.enableRunc=true")
+        pod = next(r for r in resources if r["kind"] == "DaemonSet")["spec"]["template"]["spec"]
+        script = pod["initContainers"][0]["command"][-1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            filesystems, calls = root / "filesystems", root / "calls"
+            modprobe = root / "modprobe"
+            modprobe.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$CALLS"\n'
+                                'case "$MODE" in fail) exit 23;; noop) exit 0;; esac\n'
+                                'printf "%s\\n" "$1" >> "$FILESYSTEMS"\n')
+            modprobe.chmod(0o755)
+            for registered, mode, expected_calls, success in (
+                ("nodev\toverlay\nerofs\n", "load", [], True),
+                ("nodev\toverlay\n", "load", ["erofs"], True),
+                ("", "load", ["overlay", "erofs"], True),
+                ("overlay-extra\nerofs-extra\n", "load", ["overlay", "erofs"], True),
+                ("nodev\toverlay\n", "fail", ["erofs"], False),
+                ("nodev\toverlay\n", "noop", ["erofs"], False),
+            ):
+                with self.subTest(registered=registered, mode=mode):
+                    filesystems.write_text(registered)
+                    calls.write_text("")
+                    env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
+                               CALLS=str(calls), FILESYSTEMS=str(filesystems), MODE=mode)
+                    result = subprocess.run(["/bin/sh", "-ec", script.replace("/proc/filesystems", str(filesystems))],
+                                            env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, success, result.stderr)
+                    self.assertEqual(calls.read_text().splitlines(), expected_calls)
+                    if mode == "noop":
+                        self.assertIn("runc requires host filesystem erofs", result.stderr)
 
     def test_direct_ingress_has_no_external_proxy_resources(self) -> None:
         names = {item["metadata"]["name"] for item in self.resources}
