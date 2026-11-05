@@ -31,10 +31,16 @@ total_reserve = "16GiB"
 Effective node memory is the minimum of host `MemTotal` and visible finite
 ancestor cgroup limits. Sandboxd subtracts the reserve, rounds the result down
 to a page boundary and preserves any existing stricter `/akernel/memory.max`.
-Adxlet's resource source is clipped to that effective parent ceiling, without
-subtracting the reserve a second time. For example, effective memory of 64 GiB
-and this reserve produce a candidate of 48 GiB; an existing 40 GiB cap remains
-40 GiB.
+The sandboxd resource socket is clipped to that effective parent ceiling,
+without subtracting the reserve a second time. Helm and cloud Adxlet configs
+consume that socket. For example, effective memory of 64 GiB and this reserve
+produce a candidate of 48 GiB; an existing 40 GiB cap remains 40 GiB.
+
+Standalone currently inherits ADX's `auto` capacity source, which observes the
+Adxlet's own cgroup rather than the sandbox parent. Its public scheduling
+capacity can therefore exceed the parent cap even when `/resource` is correct.
+The standalone capacity source must be wired to sandboxd and verified before
+relying on the public scheduling capacity to match the new limit.
 
 The default requires cgroup v2 and effective memory greater than 16 GiB, with
 enough remaining capacity for the requested sandboxes. Docker/OrbStack VM limits
@@ -48,6 +54,11 @@ there or through the existing complete-config override. Values use integer
 bytes or `B`, `KiB`, `MiB`, `GiB`, `TiB`; `16G`, percentages and `auto` are not
 accepted. Standard and PVM CI fixtures explicitly use a 2 GiB reserve while
 keeping the policy enabled.
+
+Verify the operating-system choice for cloud profiles as well. The current
+Aliyun `node_pool_image_type="AliyunLinux3"` default is the standard image,
+which uses cgroup v1; select and qualify a cgroup v2 image before enabling this
+policy. Huawei's selected node image also requires cgroup-mode verification.
 
 This reserve is deployment policy, not a measured component budget or a
 guarantee against host OOM. Distill-fs retains its independent 64 GiB limit and
