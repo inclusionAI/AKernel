@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import configparser
 import hashlib
 import ipaddress
 import json
@@ -26,6 +27,7 @@ UPSTREAM = BASE / 'kubelet-resolv.conf'
 KUBELET_CONF = Path('/etc/kubernetes/kubelet.conf')
 CONTAINERD_CONFIG = Path('/etc/containerd/config.toml')
 HOST_RESOLV = Path('/etc/resolv.conf')
+NM_DNS = Path('/etc/NetworkManager/conf.d/90-akernel-image-pull-dns.conf')
 INSTANCE_ID = Path('/var/lib/cloud/data/instance-id')
 PROFILE_LABEL = 'akernel.io/image-pull-profile'
 READY_LABEL = 'akernel.io/image-pull-ready'
@@ -169,6 +171,26 @@ def dns_options(text):
 
 def nm_values(text):
     return [value for value in re.split(r'[,;\s]+', text) if value]
+
+
+def global_dns(text):
+    config = configparser.ConfigParser(interpolation=None)
+    config.read_string(text)
+    return {name: {key: nm_values(value) for key, value in config[name].items() if value.strip()}
+            for name in config.sections() if name.startswith('global-dns')}
+
+
+def network_state(device):
+    addresses = json.loads(run(['ip', '-j', 'address', 'show', 'dev', device]))
+    require(len(addresses) == 1, 'one primary network device required')
+    state = {'addresses': sorted(canonical({key: value[key] for key in ('family', 'local', 'prefixlen', 'scope')}).decode()
+                                 for value in addresses[0].get('addr_info', []))}
+    for family in (4, 6):
+        routes = json.loads(run(['ip', '-j', '-' + str(family), 'route', 'show', 'table', 'all', 'dev', device]))
+        state['routes' + str(family)] = sorted(canonical({key: value[key] for key in
+            ('dst', 'gateway', 'prefsrc', 'dev', 'metric', 'scope', 'table', 'type', 'protocol') if key in value}).decode()
+            for value in routes)
+    return state
 
 
 def customized_args(text):
@@ -413,11 +435,16 @@ class Bootstrap:
             require((self.baseline['device'], self.baseline['connection'], self.baseline['cri'], str(self.hosts), self.cluster_dns)
                     == (device, connection, cri, str(hosts), dns[0]), 'network/CRI changed')
             return
-        require(not hosts.exists() and not hosts.is_symlink() and not UPSTREAM.exists() and not CUSTOM.is_symlink(), 'foreign managed configuration')
+        require(not hosts.exists() and not hosts.is_symlink() and not UPSTREAM.exists() and not CUSTOM.is_symlink()
+                and not NM_DNS.exists() and not NM_DNS.is_symlink(), 'foreign managed configuration')
+        require(not global_dns(run(['NetworkManager', '--print-config'])), 'existing global DNS configuration')
         original = Path(argument(arguments, '--resolv-conf', resolver)).read_text()
+        searches = re.findall(r'(?m)^\s*(?:search|domain)\s+([^#;\n]+)', HOST_RESOLV.read_text())
+        require(len(searches) <= 1, 'ambiguous host DNS searches')
         baseline = dict(binding=json.loads((BASE / 'binding.json').read_text()), device=device, connection=connection,
                         cri=cri, hosts=str(hosts), cluster_dns=dns[0], upstream=original,
                         upstream_ips=upstream_addresses(original, dns), host_options=dns_options(HOST_RESOLV.read_text()),
+                        host_searches=searches[0].split() if searches else [], network=network_state(device),
                         custom=CUSTOM.read_text() if CUSTOM.exists() else None,
                         custom_mode=(CUSTOM.stat().st_mode & 0o777) if CUSTOM.exists() else 0o644,
                         nm_dns=run(['nmcli', '-g', 'ipv4.dns', 'connection', 'show', connection]),
@@ -433,11 +460,26 @@ class Bootstrap:
                 run(['nmcli', '-g', 'ipv4.ignore-auto-dns', 'connection', 'show', connection]),
                 nm_values(run(['nmcli', '--escape', 'no', '-g', 'ipv4.dns-options', 'connection', 'show', connection])))
 
+    def dns_config(self):
+        b = self.baseline
+        return ('# Managed by AKernel ACK image-pull bootstrap\n[global-dns]\noptions=' +
+                ','.join(x for x in b['host_options'] if x != 'rotate') + '\nsearches=' +
+                ','.join(b['host_searches']) + '\n\n[global-dns-domain-*]\nservers=' +
+                ','.join([self.cluster_dns] + b['upstream_ips']) + '\n').encode()
+
+    def verify_network(self):
+        current = network_state(self.baseline['device'])
+        require(all(set(values) <= set(current[key]) for key, values in self.baseline['network'].items()),
+                'host network addresses/routes removed')
+
     def configure(self):
         b = self.baseline; wanted = [self.cluster_dns] + b['upstream_ips']
-        options = [x for x in b['host_options'] if x != 'rotate']; dns, ignore, current_options = self.dns_state()
-        require(dns in (nm_values(b['nm_dns']), wanted) and ignore in (b['nm_ignore_auto_dns'], 'yes')
-                and current_options in (nm_values(b['nm_dns_options']), options), 'foreign NM DNS settings')
+        options = [x for x in b['host_options'] if x != 'rotate']
+        require(self.dns_state() == (nm_values(b['nm_dns']), b['nm_ignore_auto_dns'], nm_values(b['nm_dns_options'])),
+                'foreign NM DNS settings')
+        require(global_dns(run(['NetworkManager', '--print-config'])) in ({}, global_dns(self.dns_config().decode())),
+                'foreign global DNS configuration')
+        self.verify_network()
         self.guard(); owned_write(UPSTREAM, b['upstream'].encode())
         custom = customized_args(b['custom'] or '')
         owned_write(CUSTOM, custom, b['custom'].encode() if b['custom'] is not None else None)
@@ -449,13 +491,11 @@ class Bootstrap:
                 run(['systemctl', 'restart', 'kubelet', '--job-mode=fail'], timeout=60)
             available(argument(kubelet_arguments(), '--resolv-conf') == str(UPSTREAM), 'resolver restart pending')
         self.guard()
-        if (dns, ignore, current_options) != (wanted, 'yes', options):
-            run(['nmcli', 'connection', 'modify', b['connection'], 'ipv4.ignore-auto-dns', 'yes',
-                 'ipv4.dns', ','.join(wanted), 'ipv4.dns-options', ','.join(options) or ' '])
-        effective = HOST_RESOLV.read_text()
-        actual = re.findall(r'(?m)^\s*nameserver\s+(\S+)\s*(?:#.*)?$', effective)
-        if actual != wanted or dns_options(effective) != options:
-            run(['nmcli', 'device', 'reapply', b['device']])
+        # Reload DNS policy only. Reapplying the NIC can remove externally
+        # installed addresses/routes, including the link-local address CNI uses.
+        owned_write(NM_DNS, self.dns_config())
+        run(['nmcli', 'general', 'reload', 'conf,dns-rc'])
+        self.verify_network()
         effective = HOST_RESOLV.read_text()
         available(re.findall(r'(?m)^\s*nameserver\s+(\S+)\s*(?:#.*)?$', effective) == wanted
                   and dns_options(effective) == options, 'host DNS apply pending')
@@ -470,12 +510,17 @@ class Bootstrap:
         receipt = json.loads((BASE / 'configured.json').read_text())
         require(receipt == dict(binding=b['binding'], mirror_sha256=sha(self.mirror)), 'configuration receipt changed')
         require(active_cri() == b['cri'], 'CRI configuration changed')
-        for path, expected in ((UPSTREAM, b['upstream'].encode()), (CUSTOM, customized_args(b['custom'] or '')), (self.hosts, self.mirror)):
+        self.verify_network()
+        for path, expected in ((UPSTREAM, b['upstream'].encode()), (CUSTOM, customized_args(b['custom'] or '')),
+                               (NM_DNS, self.dns_config()), (self.hosts, self.mirror)):
             require(not any(p.is_symlink() for p in [path] + list(path.parents))
                     and path.read_bytes() == expected, 'owned configuration changed: ' + str(path))
         require(argument(kubelet_arguments(), '--resolv-conf') == str(UPSTREAM), 'kubelet resolver changed')
         wanted = [self.cluster_dns] + b['upstream_ips']; options = [x for x in b['host_options'] if x != 'rotate']
-        require(self.dns_state() == (wanted, 'yes', options), 'owned NM DNS changed')
+        require(self.dns_state() == (nm_values(b['nm_dns']), b['nm_ignore_auto_dns'], nm_values(b['nm_dns_options'])),
+                'NM connection DNS changed')
+        require(global_dns(run(['NetworkManager', '--print-config'])) == global_dns(self.dns_config().decode()),
+                'owned global DNS changed')
         text = HOST_RESOLV.read_text()
         require(re.findall(r'(?m)^\s*nameserver\s+(\S+)\s*(?:#.*)?$', text) == wanted and dns_options(text) == options, 'host DNS changed')
         available(bool(socket.getaddrinfo(self.profile['registry'], 443, socket.AF_INET, socket.SOCK_STREAM)), 'origin DNS unavailable')

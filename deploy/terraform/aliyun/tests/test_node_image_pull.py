@@ -38,6 +38,8 @@ class BootstrapTest(unittest.TestCase):
                                HOST_RESOLV=self.root / 'resolv', INSTANCE_ID=self.root / 'instance').items():
             patcher = mock.patch.object(bootstrap, name, path)
             patcher.start(); self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(bootstrap, 'NM_DNS', self.root / 'nm-dns.conf')
+        patcher.start(); self.addCleanup(patcher.stop)
         self.original = 'nameserver 192.0.2.53\nnameserver 192.0.2.54\noptions timeout:1 rotate\n'
         bootstrap.HOST_RESOLV.write_text(self.original)
         bootstrap.CUSTOM.write_text('OTHER=keep\nKUBELET_CUSTOMIZED_ARGS="--v=2"\n')
@@ -52,6 +54,10 @@ class BootstrapTest(unittest.TestCase):
             bootstrap.PROFILE_LABEL:bootstrap.PROFILE, bootstrap.READY_LABEL:'false', bootstrap.POOL_LABEL:'default'}),
             spec=dict(providerID='test-region.i-new'), status=dict(conditions=[dict(type='Ready',status='True')]))
         self.dns, self.options, self.ignore = '', '', 'no'
+        self.addresses = [{'family': 'inet', 'local': '192.0.2.10', 'prefixlen': 24, 'scope': 'global'},
+                          {'family': 'inet6', 'local': 'fe80::10', 'prefixlen': 64, 'scope': 'link'}]
+        self.routes = {4: [{'dst': 'default', 'gateway': '192.0.2.1', 'dev': 'eth0'}],
+                       6: [{'dst': 'fe80::/64', 'dev': 'eth0', 'protocol': 'kernel'}]}
         self.job = 'Job='
         self.commands, self.patches, self.dry_runs = [], [], []
         self.cri = dict(main_path='/etc/containerd/config.toml', main_sha256='b'*64,
@@ -86,6 +92,13 @@ class BootstrapTest(unittest.TestCase):
             if isinstance(self.job, Exception): raise self.job
             return self.job
         if args == ['systemctl','is-active','NetworkManager']: return 'active'
+        if args == ['NetworkManager','--print-config']:
+            return '[main]\ndns=default\n' + (bootstrap.NM_DNS.read_text() if bootstrap.NM_DNS.exists() else '')
+        if args == ['ip','-j','address','show','dev','eth0']:
+            return json.dumps([{'addr_info': self.addresses}])
+        for family in (4, 6):
+            if args == ['ip','-j','-'+str(family),'route','show','table','all','dev','eth0']:
+                return json.dumps(self.routes[family])
         if args[:4] == ['ip','-j','route','show']: return '[{"dev":"eth0"}]'
         if args[:3] == ['nmcli','-g','GENERAL.CON-UUID']: return '11111111-1111-1111-1111-111111111111'
         if args[:3] == ['nmcli','-g','ipv4.dns']: return self.dns
@@ -99,7 +112,68 @@ class BootstrapTest(unittest.TestCase):
         elif args[:3] == ['nmcli','device','reapply']:
             bootstrap.HOST_RESOLV.write_text(''.join('nameserver '+ip+'\n' for ip in self.dns.split(',')) +
                                             'options '+self.options.replace(',',' ')+'\n')
+        elif args == ['nmcli','general','reload','conf,dns-rc']:
+            import configparser
+            config = configparser.ConfigParser(interpolation=None)
+            config.read_string(bootstrap.NM_DNS.read_text())
+            addresses = bootstrap.nm_values(config['global-dns-domain-*']['servers'])
+            options = bootstrap.nm_values(config['global-dns']['options'])
+            searches = bootstrap.nm_values(config['global-dns']['searches'])
+            bootstrap.HOST_RESOLV.write_text(''.join('nameserver '+ip+'\n' for ip in addresses) +
+                ('options '+' '.join(options)+'\n' if options else '') +
+                ('search '+' '.join(searches)+'\n' if searches else ''))
         return ''
+
+    def test_dns_only_reload_preserves_network_and_connection(self):
+        original = copy.deepcopy((self.addresses, self.routes, self.dns, self.ignore, self.options))
+        bootstrap.HOST_RESOLV.write_text(self.original + 'search example.test\n')
+        bootstrap.Bootstrap(self.profile).start()
+        self.assertEqual((self.addresses, self.routes, self.dns, self.ignore, self.options), original)
+        self.assertIn('search example.test\n', bootstrap.HOST_RESOLV.read_text())
+        self.assertIn(['nmcli','general','reload','conf,dns-rc'], self.commands)
+        self.assertFalse(any(x[:3] in (['nmcli','device','reapply'], ['nmcli','connection','modify']) for x in self.commands))
+
+    def test_network_loss_blocks_readiness_and_retry(self):
+        original = self.command
+        def lose_network(args, timeout=30):
+            value = original(args, timeout)
+            if args == ['nmcli','general','reload','conf,dns-rc']:
+                self.addresses.pop()
+            return value
+        with mock.patch.object(bootstrap, 'run', side_effect=lose_network):
+            with self.assertRaisesRegex(RuntimeError, 'network'):
+                bootstrap.Bootstrap(self.profile).start()
+        self.assertEqual(self.node['metadata']['labels'][bootstrap.READY_LABEL], 'false')
+        with self.assertRaisesRegex(RuntimeError, 'network'):
+            bootstrap.Bootstrap(self.profile).start()
+
+    def test_route_loss_blocks_ready_reentry_but_network_additions_are_allowed(self):
+        bootstrap.Bootstrap(self.profile).start()
+        original = copy.deepcopy(self.routes)
+        self.routes[6].clear()
+        with self.assertRaisesRegex(RuntimeError, 'network'):
+            bootstrap.Bootstrap(self.profile).start()
+        self.assertEqual(len(self.patches), 1)
+        self.routes = original
+        self.routes[4].append({'dst': '198.51.100.0/24', 'dev': 'eth0'})
+        bootstrap.Bootstrap(self.profile).start()
+
+    def test_existing_global_dns_fails_before_host_changes(self):
+        original = self.command
+        def foreign_dns(args, timeout=30):
+            if args == ['NetworkManager','--print-config']:
+                return '[global-dns-domain-*]\nservers=192.0.2.53\n'
+            return original(args, timeout)
+        for prepared in (False, True):
+            with self.subTest(prepared=prepared):
+                if prepared:
+                    worker = bootstrap.Bootstrap(self.profile)
+                    worker.guard(); worker.prepare()
+                with mock.patch.object(bootstrap, 'run', side_effect=foreign_dns):
+                    with self.assertRaisesRegex(RuntimeError, 'global DNS'):
+                        bootstrap.Bootstrap(self.profile).start()
+                self.assertFalse(bootstrap.UPSTREAM.exists())
+                self.assertFalse(bootstrap.NM_DNS.exists())
 
     def test_compatibility_and_fallback_configuration(self):
         ast.parse((MODULE/'node-image-pull.py').read_text(), feature_version=(3,6))
@@ -190,7 +264,7 @@ class BootstrapTest(unittest.TestCase):
         self.job='Job='
         def interrupted(args,timeout=30):
             if args==JOB: self.arguments.append('--resolv-conf='+str(bootstrap.UPSTREAM))
-            if args[:3]==['nmcli','device','reapply'] and not attempts:
+            if args==['nmcli','general','reload','conf,dns-rc'] and not attempts:
                 attempts.append(1); raise bootstrap.Pending('apply pending')
             return original(args,timeout)
         with mock.patch.object(bootstrap,'run',side_effect=interrupted):
