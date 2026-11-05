@@ -532,9 +532,9 @@ node:
         enable_cache_in_stock_mode=true
 
         [plugin.resource.memory_limit]
-        enabled = false
-        # Set a deployment-specific total reserve before enabling.
-        # total_reserve = "22GiB"
+        enabled = true
+        # Requires effective memory above this reserve; tune for the deployment.
+        total_reserve = "16GiB"
 
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"

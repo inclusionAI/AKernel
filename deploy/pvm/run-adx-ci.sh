@@ -119,6 +119,10 @@ assert text.count(old)==1
 text=text.replace(old,'resolv_conf_path="/home/akernel/sandboxd/config/pvm-ci-resolv.conf"')
 text=text.replace('filestore_dir_size="50G"','filestore_dir_size=""')
 text=text.replace('filestore_xfs_enabled=false','filestore_xfs_enabled=true')
+# The dedicated qualification L1 has 8 GiB; keep the parent policy enabled
+# with an explicit test reserve instead of the 16 GiB deployment default.
+assert text.count('total_reserve = "16GiB"')==1
+text=text.replace('total_reserve = "16GiB"','total_reserve = "2GiB"',1)
 # OCI and Nydus directory roots require an explicitly selected virtio-fs
 # profile; the maintained standalone default remains EROFS.
 assert text.count('virtiofs_enabled=false')==1

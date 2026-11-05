@@ -58,6 +58,17 @@ for inspection and retry. Data and credentials survive stopping.
 For an independent data profile, set an absolute `AKERNEL_STANDALONE_DATA_DIR`
 for every command. Only one standalone node can run per Docker daemon.
 
+Standalone enables the aggregate sandbox memory limit with a 16 GiB reserve.
+It requires cgroup v2 and effective memory above that reserve, including any
+Docker/OrbStack VM or visible ancestor limit. Before starting on a smaller
+machine, edit `[plugin.resource.memory_limit]` in
+`deploy/standalone/config/sandboxd_config.toml` to select a smaller positive
+`total_reserve` or explicitly disable the policy. Editing only the generated
+data-directory TOML is insufficient because startup regenerates it. This also
+applies to `make standalone-source-test`. See
+[the memory budget and upgrade contract](../README.md#aggregate-sandbox-memory-budget)
+before applying the new default to an existing profile.
+
 ### Runtime selection
 
 Runsc is the source default. Opt into runc with

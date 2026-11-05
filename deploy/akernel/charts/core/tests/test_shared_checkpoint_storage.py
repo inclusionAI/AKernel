@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -14,10 +15,14 @@ import yaml
 CHART = Path(__file__).resolve().parents[1]
 
 
-def render(*settings: str) -> dict[tuple[str, str], dict]:
+def render(
+    *settings: str, set_files: dict[str, Path] | None = None
+) -> dict[tuple[str, str], dict]:
     command = ["helm", "template", "akernel", str(CHART), "--namespace", "akernel-test"]
     for setting in settings:
         command.extend(["--set-string", setting])
+    for key, path in (set_files or {}).items():
+        command.extend(["--set-file", f"{key}={path}"])
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     return {
         (item["kind"], item["metadata"]["name"]): item
@@ -27,6 +32,47 @@ def render(*settings: str) -> dict[tuple[str, str], dict]:
 
 
 class SharedCheckpointStorageTests(unittest.TestCase):
+    def assert_memory_config(self, config, enabled, reserve):
+        resource = config["plugin"]["resource"]
+        self.assertEqual(
+            resource["memory_limit"],
+            {"enabled": enabled, "total_reserve": reserve},
+        )
+        self.assertIs(resource["memory_limit"]["enabled"], enabled)
+        self.assertEqual(resource["cgroup_root_name"], "/akernel")
+        self.assertEqual(resource["max_instance_num"], 1000)
+        self.assertIs(resource["enable_cache_in_stock_mode"], True)
+        self.assertEqual(config["plugin"]["image"]["cgroup_memory_limit"], "64GiB")
+
+    def test_default_parent_memory_limit_uses_16gib_total_reserve(self):
+        config = tomllib.loads(
+            render()[("ConfigMap", "akernel-node-config")]["data"][
+                "sandboxd_config.toml"
+            ]
+        )
+        self.assert_memory_config(config, True, "16GiB")
+
+    def test_complete_config_override_preserves_disabled_and_small_node_policy(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"][
+            "sandboxd_config.toml"
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-sandboxd.toml"
+            for enabled, reserve in ((False, "16GiB"), (True, "2GiB")):
+                with self.subTest(enabled=enabled, reserve=reserve):
+                    custom = default.replace(
+                        "enabled = true", f"enabled = {str(enabled).lower()}", 1
+                    ).replace(
+                        'total_reserve = "16GiB"', f'total_reserve = "{reserve}"', 1
+                    )
+                    path.write_text(custom)
+                    resources = render(set_files={"node.config.sandboxd.config": path})
+                    rendered = resources[("ConfigMap", "akernel-node-config")]["data"][
+                        "sandboxd_config.toml"
+                    ]
+                    self.assertEqual(rendered.rstrip(), custom.rstrip())
+                    self.assert_memory_config(tomllib.loads(rendered), enabled, reserve)
+
     def test_control_service_budgets_protect_voluntary_disruption(self):
         for replicas in (1, 3):
             resources = render(f"adx.ingressApi.replicas={replicas}")

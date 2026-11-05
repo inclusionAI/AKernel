@@ -93,6 +93,40 @@ class StartConfigTest(unittest.TestCase):
         self.assertEqual(self.config_output.read_text(), "existing config\n")
         self.assertFalse(self.resolver_output.exists())
 
+    def assert_memory_config(self, enabled, reserve):
+        config = self.read_sections()
+        self.assertEqual(
+            dict(config["plugin.resource.memory_limit"]),
+            {"enabled": enabled, "total_reserve": f'"{reserve}"'},
+        )
+        self.assertEqual(config["plugin.resource"]["cgroup_root_name"], '"/akernel"')
+        self.assertEqual(config["plugin.resource"]["max_instance_num"], "1000")
+        self.assertEqual(
+            config["plugin.resource"]["enable_cache_in_stock_mode"], "true"
+        )
+        self.assertEqual(config["plugin.image"]["cgroup_memory_limit"], '"64GiB"')
+
+    def test_generated_config_enables_parent_limit_with_16gib_reserve(self):
+        result = self.generate(AKERNEL_ENABLE_RUNC="false")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_memory_config("true", "16GiB")
+
+    def test_generated_config_preserves_explicit_memory_policy_overrides(self):
+        original = self.template.read_text()
+        for enabled, reserve in (("false", "16GiB"), ("true", "2GiB")):
+            with self.subTest(enabled=enabled, reserve=reserve):
+                custom, count = re.subn(
+                    r"(?ms)^\[plugin\.resource\.memory_limit\]\n.*?(?=^\[|\Z)",
+                    "[plugin.resource.memory_limit]\n"
+                    f"enabled = {enabled}\ntotal_reserve = \"{reserve}\"\n\n",
+                    original,
+                )
+                self.assertEqual(count, 1)
+                self.template.write_text(custom)
+                result = self.generate(AKERNEL_ENABLE_RUNC="false")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_memory_config(enabled, reserve)
+
     def test_pvm_selection_preserves_direct_resolver_configuration(self):
         result = self.generate(AKERNEL_FIRECRACKER_BACKEND="pvm")
         self.assertEqual(result.returncode, 0, result.stderr)

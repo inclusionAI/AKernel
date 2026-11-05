@@ -193,6 +193,13 @@ The dedicated PVM qualification omits runsc and Kata runtime entries from its te
 
 The PVM image applies `prepare-adx-config.py --pvm` to the shared standalone profile, setting coordinator and adxlet `rpc_timeout_seconds` to 90. Custom/externally supplied ADX configurations must carry these overrides themselves. The ordinary KVM image keeps its original ADX profile. This is a bounded runtime cleanup/reload budget: a recorded cleanup took 30.63 seconds and exceeded the old 30-second limit. The guest-agent startup budget stays at 15 seconds.
 
+The maintained PVM CI fixture selects a 2 GiB aggregate sandbox memory reserve
+for its 8 GiB L1, keeping the memory policy enabled. This explicit qualification
+profile is smaller than the 16 GiB deployment reserve; it does not qualify that
+deployment default or establish a host OOM safety budget.
+Earlier qualification runs predate this enabled finite-cap fixture; the updated
+profile requires rerunning PVM qualification.
+
 ## Real Actions qualification
 
 The [independent sandboxd PVM job](https://github.com/hky1999/sandboxd/actions/runs/38558942312), source `54d7fd878abe93db48b755f9063f7fdf3bc3d728`, passed Full, Incremental and virtio-fs suites with ten consecutive checkpoints each. It covered checkpoint-after-restore chains, OCI image-provider paths, network ACLs/DNAT, quota and EROFS/directory writable host mounts, rotation and read-offset preservation. All three exits were zero; host-kernel WARN/Oops checks and module cleanup passed. The external Redis DNAT client now waits for the suite's explicit Redis-ready stage before starting the existing DNAT readiness budget; earlier checkpoint work no longer consumes that budget.

@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import textwrap
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -176,6 +178,28 @@ class CheckpointStorageValidationTest(unittest.TestCase):
 
 
 class AdxTerraformContractTest(unittest.TestCase):
+    def test_each_provider_enables_parent_limit_with_16gib_total_reserve(self):
+        for provider in ("aliyun", "huaweicloud"):
+            with self.subTest(provider=provider):
+                values = (ROOT / provider / "values-akernel.yaml.tmpl").read_text()
+                block = re.search(
+                    r"(?ms)^      config: \|-\n(.*?)(?=^ {0,6}\S|\Z)", values
+                )
+                self.assertIsNotNone(block)
+                config = tomllib.loads(textwrap.dedent(block.group(1)))
+                resource = config["plugin"]["resource"]
+                self.assertEqual(
+                    resource["memory_limit"],
+                    {"enabled": True, "total_reserve": "16GiB"},
+                )
+                self.assertIs(resource["memory_limit"]["enabled"], True)
+                self.assertEqual(resource["cgroup_root_name"], "/akernel")
+                self.assertEqual(resource["max_instance_num"], 1000)
+                self.assertIs(resource["enable_cache_in_stock_mode"], True)
+                self.assertEqual(
+                    config["plugin"]["image"]["cgroup_memory_limit"], "64GiB"
+                )
+
     def test_each_provider_exposes_adx_control_and_data_directly(self) -> None:
         for provider in ("aliyun", "huaweicloud"):
             with self.subTest(provider=provider):

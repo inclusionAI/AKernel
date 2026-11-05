@@ -240,6 +240,16 @@ distill-fs release's packaged manifest.
 
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
+AKernel's maintained node templates enable the cgroup v2 parent memory policy
+with `total_reserve="16GiB"`. Effective memory (host MemTotal clipped by visible
+ancestor limits) must exceed that reserve and leave room for sandbox requests.
+Small Docker/OrbStack VMs and CI fixtures must explicitly select a smaller
+reserve or disable the policy in their sandboxd configuration. Keep standalone,
+Helm and both cloud templates aligned. Adding or lowering a parent cap requires
+an empty sandbox subtree; an existing stricter cap is retained. This aggregate
+sandbox cap does not bound all node components or guarantee avoidance of host OOM.
+See `deploy/README.md#aggregate-sandbox-memory-budget` for migration and scope.
+
 The [standalone guide](./deploy/standalone/README.md) owns source startup, supported platforms, runtime selection, and SDK setup. Preserve the source launcher's native-daemon architecture selection, clean sandboxd gitlink check, occupied-name preflight, profile locking, unique source image, and node/gateway health checks. Status and stop must verify recorded container identities, images, and data mounts; stop also requires an empty sandbox inventory. Source management is independent of cloud profiles and must preserve unrelated containers.
 
 The all-in-one image and node launchers declare lowercase `container=oci`
