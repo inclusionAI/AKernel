@@ -249,9 +249,9 @@ def cri_socket(dump, arguments):
     for line in dump.splitlines():
         header = re.fullmatch(r'\s*\[([^\[\]]+)\]\s*(?:#.*)?', line)
         if header:
-            section = header.group(1).strip().strip('"\'')
+            section = header.group(1).strip().replace('"', '').replace("'", '')
         match = re.fullmatch(r'\s*address\s*=\s*["\']([^"\']+)["\']\s*(?:#.*)?', line)
-        if section == 'grpc' and match:
+        if section in ('grpc', 'plugins.io.containerd.server.v1.grpc') and match:
             addresses.append(match.group(1))
     require(len(addresses) == 1 and socket_path(endpoint) == socket_path(addresses[0]),
             'CRI endpoint does not match daemon')

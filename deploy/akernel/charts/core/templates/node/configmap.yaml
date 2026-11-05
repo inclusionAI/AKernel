@@ -1,3 +1,12 @@
+{{- $logs := .Values.node.applicationLogs }}
+{{- if $logs.enabled }}
+{{- if or (not (regexMatch "^(/[A-Za-z0-9_-]+)+$" $logs.dataDiskRoot)) (not (regexMatch "^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $logs.relativePath)) (not (regexMatch "^[0-7]{4}$" $logs.mode)) }}
+{{- fail "applicationLogs requires a dedicated absolute disk root, safe relative directory and four-digit mode" }}
+{{- end }}
+{{- if and $logs.legacyMountPath (not (regexMatch "^/home/akernel/[A-Za-z0-9_-]+$" $logs.legacyMountPath)) }}
+{{- fail "temporary legacy log mount must be one non-system directory beneath /home/akernel" }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,7 +14,16 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   config.json: |
+{{- if and .Values.node.applicationLogs.enabled .Values.node.applicationLogs.mountInSandbox }}
+{{- $oci := .Values.node.config.ociConfig | fromJson }}
+{{- range ($oci.mounts | default list) }}
+{{- if eq .destination "/app/logs" }}{{ fail "applicationLogs owns /app/logs: remove a duplicate OCI baseline mount" }}{{- end }}
+{{- end }}
+{{- $_ := set $oci "mounts" (append ($oci.mounts | default list) (dict "destination" "/app/logs" "source" "/app/logs" "type" "bind" "options" (list "rbind" "rw" "rprivate"))) }}
+{{ $oci | toPrettyJson | indent 4 }}
+{{- else }}
 {{ .Values.node.config.ociConfig | indent 4 }}
+{{- end }}
 
   service-resource-control.conf: |
     [Slice]
@@ -83,3 +101,9 @@ data:
 
   prepare_checkpoint_storage.py: |
 {{ .Files.Get "scripts/prepare_checkpoint_storage.py" | indent 4 }}
+
+{{- if .Values.node.applicationLogs.enabled }}
+
+  prepare-application-logs.py: |
+{{ .Files.Get "scripts/prepare-application-logs.py" | indent 4 }}
+{{- end }}

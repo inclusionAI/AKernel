@@ -690,6 +690,12 @@ variable "grafana_admin_password" {
   sensitive   = true
 }
 
+variable "core_values_override_files" {
+  type        = list(string)
+  description = "Additional YAML values files for core chart overrides, appended in order."
+  default     = []
+}
+
 variable "node_secret_create" {
   type        = bool
   description = "Whether to create akernel-secrets for node daemonset. Set false only if an existing secret already exists."

@@ -964,7 +964,7 @@ resource "helm_release" "akernel_core" {
   timeout                    = 900
   disable_openapi_validation = true
 
-  values = [local.core_values]
+  values = concat([local.core_values], [for f in var.core_values_override_files : file(f)])
 
   # Force Terraform to detect changes in chart files (templates, configs, etc.)
   set {
@@ -984,7 +984,7 @@ resource "helm_release" "akernel_core_dragonfly" {
   create_namespace           = false
   timeout                    = 900
   disable_openapi_validation = true
-  values                     = [local.core_values]
+  values                     = concat([local.core_values], [for f in var.core_values_override_files : file(f)])
 
   set {
     name  = "chartContentHash"

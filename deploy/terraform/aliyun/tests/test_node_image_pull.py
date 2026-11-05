@@ -122,11 +122,18 @@ class BootstrapTest(unittest.TestCase):
             with self.assertRaises(RuntimeError): bootstrap.upstream_addresses(invalid,['10.20.0.10'])
         socket_dir = self.root / 'sockets'; socket_dir.mkdir()
         alias = self.root / 'socket-alias'; alias.symlink_to(socket_dir, target_is_directory=True)
-        dump = '[grpc]\naddress="'+str(socket_dir/'containerd.sock')+'"\n'
         endpoint = 'unix://'+str(alias/'containerd.sock')
-        self.assertEqual(bootstrap.cri_socket(dump,['kubelet','--container-runtime-endpoint='+endpoint]),str(socket_dir/'containerd.sock'))
-        with self.assertRaisesRegex(RuntimeError,'does not match'):
-            bootstrap.cri_socket(dump,['kubelet','--container-runtime-endpoint=unix://'+str(socket_dir/'other.sock')])
+        tables = ('grpc', 'plugins."io.containerd.server.v1.grpc"', "plugins.'io.containerd.server.v1.grpc'")
+        for table in tables:
+            dump = '['+table+']\naddress="'+str(socket_dir/'containerd.sock')+'"\n'
+            with self.subTest(table=table):
+                self.assertEqual(bootstrap.cri_socket(dump,['kubelet','--container-runtime-endpoint='+endpoint]),str(socket_dir/'containerd.sock'))
+                with self.assertRaisesRegex(RuntimeError,'does not match'):
+                    bootstrap.cri_socket(dump,['kubelet','--container-runtime-endpoint=unix://'+str(socket_dir/'other.sock')])
+        for dump in ('[plugins."unrelated"]\naddress="'+str(socket_dir/'containerd.sock')+'"\n',
+                     ''.join('['+table+']\naddress="'+str(socket_dir/'containerd.sock')+'"\n' for table in tables[:2])):
+            with self.subTest(dump=dump), self.assertRaisesRegex(RuntimeError,'does not match'):
+                bootstrap.cri_socket(dump,['kubelet','--container-runtime-endpoint='+endpoint])
 
     def test_complete_lifecycle_and_ready_reentry_do_not_wait_for_dragonfly(self):
         worker = bootstrap.Bootstrap(self.profile)

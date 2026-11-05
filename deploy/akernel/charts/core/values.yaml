@@ -58,6 +58,21 @@ adx:
     # Optional placement shared by execution nodes and Coordinator. Managed
     # JuiceFS sets this to its client selector so both roles have a host mount.
     nodeSelector: {}
+  # Optional first-migration pins: role -> {configSha256, legacyChecksum}.
+  # A role config edit fails until its pin is removed for a planned rollout.
+  configChecksumMigration: {}
+  # Both protocols share the same Coordinator, API, Ingress and node pool.
+  e2b:
+    enabled: false
+    # E2B-only plaintext ingress; requires an ADX release supporting this opt-in.
+    allowHttp: false
+    domain: ""
+    envdVersion: ""
+    envdSha256: ""
+    envdIngressSources: []
+    defaultUser: user
+    defaultWorkdir: /home/user
+
   tls:
     existingSecret: akernel-adx-tls
   redis:
@@ -92,12 +107,17 @@ adx:
         cpu: "1"
         memory: 1Gi
   ingressApi:
+    # Optional control-only image; defaults to coordinator.image, then image.
+    image: {}
     nodeSelector: {}
     tolerations: []
     affinity: {}
     topologySpreadConstraints: []
     replicas: 1
     portHostDomain: ""
+    # Operators may hold the first Ready replica during a controlled canary.
+    minReadySeconds: 0
+    progressDeadlineSeconds: 600
     publicService:
       enabled: false
       # Keep the existing load balancer while withholding public traffic.
@@ -134,6 +154,8 @@ coordinator:
 node:
   nodeSelector: {}
   secret:
+    # Preserve credentials rotated outside Helm; set false only for an intentional rotation.
+    preserveExisting: true
     create: true
     oss_auths: {}
     registry_auths:
@@ -156,6 +178,18 @@ node:
     # Package the script for the init-container example without invoking it.
     # Disabled by default to preserve the node rollout checksum.
     enabled: false
+  # Version-independent application logs; dataDiskRoot must be a real host XFS mount.
+  applicationLogs:
+    enabled: false
+    # Keep false only when restoring an older native mount layout.
+    mountInSandbox: true
+    dataDiskRoot: /home/akernel
+    relativePath: shared/app-logs
+    uid: 0
+    gid: 1000
+    mode: "2770"
+    # Temporary Node-Pod alias for callers migrating to /app/logs; remove after cutover.
+    legacyMountPath: ""
   hostDiskPath: "/home/akernel"
   homeDisk:
     useEphemeralPVC: false

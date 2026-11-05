@@ -123,6 +123,24 @@ class NodeImagePullTerraformTest(unittest.TestCase):
         result, _ = self.evaluate(node_pool_image_id="aliyun_3_x64_20G_container_optimized_alibase_20250101.vhd")
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_core_value_overrides_are_preserved_in_both_modes(self):
+        variables = (ALIYUN / "variables.tf").read_text()
+        blocks = [re.search(r'(?ms)^variable "core_values_override_files" {.*?^}', variables).group(),
+                  'locals { core_values = "base: true\\n" }']
+        releases = ("akernel_core", "akernel_core_dragonfly")
+        for name in releases:
+            block = re.search(rf'(?ms)^resource "helm_release" "{name}" {{.*?^}}', MAIN).group()
+            values = re.search(r'(?m)^\s+values\s*=\s*(.+)$', block).group(1)
+            blocks.append(f'output "{name}" {{ value = {values} }}')
+        files = {"first.yaml": "setting: first\n", "second.yaml": "setting: second\n"}
+        for paths in ([], list(files)):
+            with self.subTest(paths=paths):
+                result, output = evaluate_fixture("\n".join(blocks),
+                                                  {"core_values_override_files": paths}, files)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for name in releases:
+                    self.assertEqual(output[name], ["base: true\n"] + [files[path] for path in paths])
+
     def test_pool_scoping_and_core_order_preserve_existing_state(self):
         for name in ("default_with_key", "default_with_password", "extra"):
             block = re.search(rf'(?ms)^resource "alicloud_cs_kubernetes_node_pool" "{name}" {{.*?^}}', MAIN).group()

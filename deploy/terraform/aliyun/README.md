@@ -133,6 +133,8 @@ terraform apply \
 
 ## AKernel node storage
 
+Use `core_values_override_files = ["/path/to/reviewed-core-values.yaml"]` to retain deployment-specific Helm configuration, including the shared native/E2B profile and persistent application logs. Files are applied in order after the generated defaults, matching the HuaweiCloud entry point. See [dual SDK and application log configuration](../../docs/dual-sdk-and-application-logs.md). Keep credentials outside these tracked overlays and preserve live registry Secrets during upgrades. Existing develop installations upgrade their core Helm release directly with their reviewed values and controlled post-renderer; do not apply an unrelated Terraform state over them.
+
 New Terraform-managed ACK node pools attach two data disks by default. The
 first remains available to ACK for the container runtime. The second is a
 dedicated 300 GiB ESSD that ACK formats as XFS and mounts at

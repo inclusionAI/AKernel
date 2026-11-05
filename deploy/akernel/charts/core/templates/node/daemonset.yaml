@@ -40,7 +40,7 @@ spec:
         {{- end }}
       annotations:
         checksum/node-config: {{ include (print $.Template.BasePath "/node/configmap.yaml") . | sha256sum }}
-        checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
+        checksum/adx-config: {{ include "core.adxRoleChecksum" (dict "root" . "key" "node.yaml" "kind" "DaemonSet" "name" "akernel-node") }}
         checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
         {{- with .Values.node.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -114,6 +114,26 @@ spec:
           volumeMounts:
             - mountPath: /home/akernel
               name: home-disk
+      {{- if .Values.node.applicationLogs.enabled }}
+        - name: prepare-application-logs
+          image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
+          securityContext: {privileged: true, runAsUser: 0}
+          command: [python3, /config/prepare-application-logs.py]
+          args:
+            - --host-root=/host
+            - --host-proc=/host-proc
+            - --disk-root={{ .Values.node.applicationLogs.dataDiskRoot }}
+            - --disk-view=/log-storage
+            - --relative={{ .Values.node.applicationLogs.relativePath }}
+            - --uid={{ .Values.node.applicationLogs.uid }}
+            - --gid={{ .Values.node.applicationLogs.gid }}
+            - --mode={{ .Values.node.applicationLogs.mode }}
+          volumeMounts:
+            - {name: akernel-node-config, mountPath: /config, readOnly: true}
+            - {name: application-logs-disk, mountPath: /log-storage}
+            - {name: application-logs-host-root, mountPath: /host}
+            - {name: application-logs-host-proc, mountPath: /host-proc, readOnly: true}
+      {{- end }}
       {{- with .Values.node.initContainers }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -206,6 +226,16 @@ spec:
         securityContext:
           privileged: true
         volumeMounts:
+        {{- if .Values.node.applicationLogs.enabled }}
+        - name: application-logs-disk
+          mountPath: /app/logs
+          subPath: {{ .Values.node.applicationLogs.relativePath | quote }}
+        {{- with .Values.node.applicationLogs.legacyMountPath }}
+        - name: application-logs-disk
+          mountPath: {{ . | quote }}
+          subPath: {{ $.Values.node.applicationLogs.relativePath | quote }}
+        {{- end }}
+        {{- end }}
         # image-manager / resource-manager input configs live under
         # /home/akernel/sandboxd/config/, disjoint from the image_manager runtime
         # root that sandboxd wipes on pod change. Paths line up with the
@@ -270,6 +300,16 @@ spec:
       tolerations:
       - operator: "Exists"
       volumes:
+      {{- if .Values.node.applicationLogs.enabled }}
+      - name: application-logs-disk
+        hostPath:
+          path: {{ .Values.node.applicationLogs.dataDiskRoot | quote }}
+          type: Directory
+      - name: application-logs-host-root
+        hostPath: {path: /, type: Directory}
+      - name: application-logs-host-proc
+        hostPath: {path: /proc, type: Directory}
+      {{- end }}
       {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
       - {{ include "core.checkpointVolume" . | nindent 8 | trim }}
       {{- end }}
