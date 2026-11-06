@@ -76,6 +76,11 @@ def _parse_endpoint(
     value = raw.strip()
     if not value:
         raise RuntimeError("address is empty")
+    if "$" in value:
+        raise RuntimeError(
+            "address contains an unexpanded environment variable; "
+            "set an explicit host or URL before creating a sandbox"
+        )
 
     parsed = urlparse(value if "://" in value else f"//{value}")
     if not parsed.hostname:

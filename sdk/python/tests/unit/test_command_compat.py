@@ -13,8 +13,23 @@ from akernel_sdk.types import CommandResult
 
 
 class CommandCompatibilityTest(unittest.TestCase):
-
-
+    def test_checked_incomplete_result_retains_partial_output_and_status(self):
+        driver = MagicMock()
+        result = CommandResult(
+            "partial output",
+            "progress",
+            None,
+            status="RUNNING",
+            error_code="WAIT_TIMEOUT",
+            error_message="still running",
+        )
+        driver.run.return_value = result
+        with self.assertRaises(TimeoutException) as raised:
+            Commands(driver).run("work", timeout=20, check=True)
+        self.assertIs(raised.exception.command_result, result)
+        self.assertEqual(raised.exception.code, "WAIT_TIMEOUT")
+        self.assertIsNone(raised.exception.outcome)
+        driver.run.assert_called_once()
 
     def test_nonzero_exit_remains_compatible_unless_explicitly_checked(self):
         driver = MagicMock()

@@ -199,6 +199,9 @@ class NativeForkTest(unittest.TestCase):
         self.backend = adx.AdxBackend(config)
         self.spec = SnapshotRestoreSpec(
             snapshot_id="source-origin",
+            extra_config={
+                "fileBackedTmpfsMounts": [{"target": "/upper", "sizeMB": 64}]
+            },
             idle_timeout=480,
             schedule_timeout=35,
             timeout=95,
@@ -303,6 +306,7 @@ class NativeForkTest(unittest.TestCase):
         self.assertEqual(restored.timeout, 95)
         self.assertEqual(restored.command_cwd, "/work")
         self.assertEqual(restored.port_forwardings, (8080,))
+        self.assertEqual(restored.extra_config, self.spec.extra_config)
         self.assertIs(restored.reverse_tunnel, self.spec.reverse_tunnel)
         self.assertTrue(restored.failover)
         self.assertFalse(restored.detached)
