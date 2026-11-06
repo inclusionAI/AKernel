@@ -30,6 +30,7 @@ image_repository_override=""
 image_tag_override=""
 install_monitor_override=""
 install_dragonfly_override=""
+node_image_pull_mode_override=""
 chunk_db_size_override=""
 sandbox_memory_limit_enabled_override=""
 sandbox_memory_total_reserve_override=""
@@ -125,6 +126,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --install-dragonfly)
       install_dragonfly_override="$2"
+      shift 2
+      ;;
+    --node-image-pull-mode)
+      node_image_pull_mode_override="$2"
       shift 2
       ;;
     --chunk-db-size)
@@ -291,6 +296,50 @@ esac
 set_or_prompt image_tag "All-in-one image tag" "${default_tag}" "${image_tag_override}"
 set_or_prompt install_monitor "Install monitor chart (true/false)" "true" "${install_monitor_override}"
 set_or_prompt install_dragonfly "Install Dragonfly and dedicated node pools (true/false)" "false" "${install_dragonfly_override}"
+node_image_pull_mode="direct"
+if [[ "${vendor}" == "aliyun" ]]; then
+  # Decide before creating/overwriting profile files. --force authorizes file
+  # replacement; it never opts a previously deployed environment into auto.
+  resolve_pull_mode() {
+    python3 - "$(state_dir "${env_name}")" "${ROOT}" "${image_repository}" "$1" <<'PY'
+import json, pathlib, re, shlex, sys
+
+profile, root = map(pathlib.Path, sys.argv[1:3])
+repository, explicit = sys.argv[3:]
+policy = json.loads((root / 'deploy/terraform/aliyun/node-image-pull-policy.json').read_text())
+supported = re.fullmatch(policy['repository_pattern'], repository) is not None
+saved = []
+for path, key in ((profile / 'terraform.tfvars', 'node_image_pull_mode'),
+                  (profile / 'config.env', 'NODE_IMAGE_PULL_MODE')):
+    if path.is_file():
+        prefix = r'(?:export\s+)?' if key == 'NODE_IMAGE_PULL_MODE' else ''
+        assignments = re.findall(r'(?m)^\s*' + prefix + key + r'\s*=\s*([^\n]*)$', path.read_text())
+        if len(assignments) > 1:
+            sys.exit('ambiguous saved node image-pull mode; fix profile files or use a fresh ENV')
+        if assignments:
+            values = shlex.split(assignments[0], comments=True)
+            if len(values) != 1 or values[0] not in ('auto', 'direct'):
+                sys.exit('invalid saved node image-pull mode; fix profile files or use a fresh ENV')
+            saved.extend(values)
+if len(set(saved)) > 1:
+    sys.exit('saved node image-pull modes conflict; fix profile files or use a fresh ENV')
+previous = saved[0] if saved else 'direct'
+mode = explicit or (previous if profile.exists() else ('auto' if supported else 'direct'))
+if mode not in ('auto', 'direct'):
+    sys.exit('NODE_IMAGE_PULL_MODE must be auto or direct')
+if profile.exists() and mode != previous:
+    sys.exit('existing profile image-pull mode cannot change; use a fresh ENV')
+if mode == 'auto' and not supported:
+    sys.exit('auto image pulls require an Alibaba ACR image repository without a tag or digest; select NODE_IMAGE_PULL_MODE=direct for other registries')
+print(mode)
+PY
+  }
+  default_pull_mode="$(resolve_pull_mode "${node_image_pull_mode_override}")"
+  set_or_prompt node_image_pull_mode "ACK worker image pulls (auto/direct)" "${default_pull_mode}" "${node_image_pull_mode_override}"
+  node_image_pull_mode="$(resolve_pull_mode "${node_image_pull_mode}")"
+elif [[ -n "${node_image_pull_mode_override}" && "${node_image_pull_mode_override}" != "direct" ]]; then
+  die "auto image-pull bootstrap currently supports Aliyun ACK only"
+fi
 set_or_prompt chunk_db_size "Shared ChunkDB capacity (empty uses distill-fs default)" "" "${chunk_db_size_override}"
 if [[ -n "${chunk_db_size}" && ! "${chunk_db_size}" =~ ^[0-9]+(B|KiB|MiB|GiB|TiB)?$ ]]; then
   die "CHUNK_DB_SIZE must be whole bytes or an integer with B/KiB/MiB/GiB/TiB"
@@ -355,11 +404,16 @@ case "${vendor}" in
     zone_ids="$(csv_to_hcl_list "${zone_ids_csv}")"
     vswitch_cidrs="$(csv_to_hcl_list "${vswitch_cidrs_csv}")"
     node_pool_instance_types="$(csv_to_hcl_list "${node_pool_instance_types_csv}")"
+    profile_acr_registry_url=""
+    if [[ "${node_image_pull_mode}" == "auto" ]]; then
+      profile_acr_registry_url="${image_repository%/*}"
+    fi
 
     cat > "${tfvars_file}" <<EOF
 region       = "${region}"
 acr_region   = "${region}"
 acr_namespace = "${acr_namespace}"
+acr_registry_url = "${profile_acr_registry_url}"
 cluster_name = "${cluster_name}"
 
 zone_ids      = ${zone_ids}
@@ -386,6 +440,7 @@ node_pool_extra_data_disk_size       = 300
 node_pool_extra_data_disk_mount_path = "/home/akernel"
 node_pool_extra_data_disk_fs_type    = "xfs"
 node_pool_key_name             = "${node_pool_key_name}"
+node_image_pull_mode           = "${node_image_pull_mode}"
 
 core_namespace = "akernel"
 
@@ -481,6 +536,7 @@ IMAGE_TAG=${image_tag}
 CORE_NAMESPACE=akernel
 MONITOR_NAMESPACE=akernel-monitor
 INSTALL_DRAGONFLY=${install_dragonfly}
+NODE_IMAGE_PULL_MODE=${node_image_pull_mode}
 CHUNK_DB_SIZE=${chunk_db_size}
 SANDBOX_MEMORY_LIMIT_ENABLED=${sandbox_memory_limit_enabled}
 SANDBOX_MEMORY_TOTAL_RESERVE=${sandbox_memory_total_reserve}

@@ -41,7 +41,7 @@ class InitializationTimeoutTest(unittest.TestCase):
         def create(native, body):
             self.bodies.append(body)
             native._newly_created = True
-            return {"environmentId": f"child-{len(self.bodies)}"}
+            return {"environmentId": f"child-{len(self.bodies)}", "newlyCreated": True}
 
         for patcher in (
             patch.object(public, "load_backend", return_value=self.backend),

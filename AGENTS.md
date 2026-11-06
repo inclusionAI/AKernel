@@ -405,6 +405,9 @@ pinned public chart and, by default, creates three seed nodes and one server
 node in dedicated pools. Review the generated Terraform plan and expected cost
 before applying it.
 
+Preserve the `auto`/`direct` and legacy-profile contract in
+[ACK worker image pulls](deploy/terraform/aliyun/README.md#ack-worker-image-pulls).
+
 The deployment helper creates an HTTPS and API key Secret before Helm install.
 It retains an existing Secret so certificates and the bootstrap administrator
 API key stay stable across updates.

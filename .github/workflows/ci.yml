@@ -111,6 +111,15 @@ jobs:
         run: |
           make deploy-script-check
 
+      - name: Set up Terraform for ACK contract tests
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.13.4"
+          terraform_wrapper: false
+
+      - name: Test ACK image-pull bootstrap
+        run: make deploy-ack-image-pull-test
+
       - name: Check the maintained PVM host profile
         run: python3 deploy/pvm/test_host_profile.py -v
 
