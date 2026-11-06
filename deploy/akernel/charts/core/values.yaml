@@ -505,6 +505,9 @@ node:
       # pvm selects firecracker-pvm and removes Kata from this node profile.
       # The image must contain the validated PVM guest bundle.
       firecrackerBackend: kvm
+      # PVM parent memory enforcement requires separate host qualification.
+      # Explicit opt-in overrides memory_limit.enabled; set an appropriate reserve in config.
+      pvmMemoryLimitEnabled: false
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
       config: |-
@@ -532,9 +535,9 @@ node:
         enable_cache_in_stock_mode=true
 
         [plugin.resource.memory_limit]
-        enabled = false
-        # Set a deployment-specific total reserve before enabling.
-        # total_reserve = "22GiB"
+        enabled = true
+        # Requires effective memory above this reserve; tune for the deployment.
+        total_reserve = "16GiB"
 
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"

@@ -26,6 +26,8 @@ INSTALL_MONITOR ?=
 INSTALL_DRAGONFLY ?=
 NODE_IMAGE_PULL_MODE ?=
 CHUNK_DB_SIZE ?=
+SANDBOX_MEMORY_LIMIT_ENABLED ?=
+SANDBOX_MEMORY_TOTAL_RESERVE ?=
 JUICEFS_ENABLED ?= false
 JUICEFS_STORAGE_CLASS ?=
 JUICEFS_CACHE_MIB ?= 4096
@@ -52,6 +54,7 @@ help:
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
 	@echo "  make config NODE_IMAGE_PULL_MODE=direct Use direct registry pulls on new ACK workers"
 	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
+	@echo "  make config SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB Opt into a qualified cgroup v2 sandbox budget"
 	@echo "  make config JUICEFS_ENABLED=true JUICEFS_STORAGE_CLASS=... Deploy JuiceFS/PostgreSQL/Ceph"
 	@echo "  make config CHECKPOINT_STORAGE_HOST_PATH=/srv/shared Use an existing AFS/JuiceFS mount"
 	@echo "  make config SCHEDULE_PLACEMENT_POLICY=binpack Use compact scheduling"
@@ -105,6 +108,8 @@ config:
 	if [[ -n "$(INSTALL_DRAGONFLY)" ]]; then args+=(--install-dragonfly "$(INSTALL_DRAGONFLY)"); fi; \
 	if [[ -n "$(NODE_IMAGE_PULL_MODE)" ]]; then args+=(--node-image-pull-mode "$(NODE_IMAGE_PULL_MODE)"); fi; \
 	if [[ -n "$(CHUNK_DB_SIZE)" ]]; then args+=(--chunk-db-size "$(CHUNK_DB_SIZE)"); fi; \
+	if [[ -n "$(SANDBOX_MEMORY_LIMIT_ENABLED)" ]]; then args+=(--sandbox-memory-limit-enabled "$(SANDBOX_MEMORY_LIMIT_ENABLED)"); fi; \
+	if [[ -n "$(SANDBOX_MEMORY_TOTAL_RESERVE)" ]]; then args+=(--sandbox-memory-total-reserve "$(SANDBOX_MEMORY_TOTAL_RESERVE)"); fi; \
 	args+=(--juicefs-enabled "$(JUICEFS_ENABLED)"); \
 	args+=(--juicefs-cache-mib "$(JUICEFS_CACHE_MIB)" --juicefs-cache-large-write "$(JUICEFS_CACHE_LARGE_WRITE)"); \
 	if [[ -n "$(JUICEFS_CACHE_HOST_PATH)" ]]; then args+=(--juicefs-cache-host-path "$(JUICEFS_CACHE_HOST_PATH)"); fi; \

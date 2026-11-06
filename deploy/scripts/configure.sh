@@ -32,6 +32,8 @@ install_monitor_override=""
 install_dragonfly_override=""
 node_image_pull_mode_override=""
 chunk_db_size_override=""
+sandbox_memory_limit_enabled_override=""
+sandbox_memory_total_reserve_override=""
 juicefs_enabled="false"
 juicefs_storage_class=""
 juicefs_cache_mib="4096"
@@ -132,6 +134,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --chunk-db-size)
       chunk_db_size_override="$2"
+      shift 2
+      ;;
+    --sandbox-memory-limit-enabled)
+      sandbox_memory_limit_enabled_override="$2"
+      shift 2
+      ;;
+    --sandbox-memory-total-reserve)
+      sandbox_memory_total_reserve_override="$2"
       shift 2
       ;;
     --juicefs-enabled)
@@ -334,6 +344,15 @@ set_or_prompt chunk_db_size "Shared ChunkDB capacity (empty uses distill-fs defa
 if [[ -n "${chunk_db_size}" && ! "${chunk_db_size}" =~ ^[0-9]+(B|KiB|MiB|GiB|TiB)?$ ]]; then
   die "CHUNK_DB_SIZE must be whole bytes or an integer with B/KiB/MiB/GiB/TiB"
 fi
+set_or_prompt sandbox_memory_limit_enabled \
+  "Enable aggregate sandbox memory limit on qualified cgroup v2 nodes (true/false)" \
+  "false" "${sandbox_memory_limit_enabled_override}"
+set_or_prompt sandbox_memory_total_reserve \
+  "Aggregate sandbox memory reserve (effective memory must exceed this when enabled)" \
+  "16GiB" "${sandbox_memory_total_reserve_override}"
+if [[ ! "${sandbox_memory_total_reserve}" =~ ^0*[1-9][0-9]*(B|KiB|MiB|GiB|TiB)?$ ]]; then
+  die "SANDBOX_MEMORY_TOTAL_RESERVE must be positive whole bytes or an integer with B/KiB/MiB/GiB/TiB"
+fi
 set_or_prompt enable_runc "Enable the optional runc runtime (true/false)" "false" "${enable_runc_override}"
 set_or_prompt schedule_placement_policy \
   "YuanRong schedule placement policy (binpack/spread)" "spread" \
@@ -347,6 +366,7 @@ if [[ -z "${grafana_admin_password}" ]]; then
 fi
 install_monitor="$(normalize_bool "${install_monitor}")"
 install_dragonfly="$(normalize_bool "${install_dragonfly}")"
+sandbox_memory_limit_enabled="$(normalize_bool "${sandbox_memory_limit_enabled}")"
 enable_runc="$(normalize_bool "${enable_runc}")"
 schedule_placement_policy="$(normalize_schedule_placement_policy "${schedule_placement_policy}")"
 grafana_public_access="$(normalize_bool "${grafana_public_access}")"
@@ -444,6 +464,8 @@ grafana_admin_password = "${grafana_admin_password}"
 
 install_dragonfly = ${install_dragonfly}
 chunk_db_size     = "${chunk_db_size}"
+sandbox_memory_limit_enabled = ${sandbox_memory_limit_enabled}
+sandbox_memory_total_reserve = "${sandbox_memory_total_reserve}"
 enable_runc       = ${enable_runc}
 schedule_placement_policy = "${schedule_placement_policy}"
 EOF
@@ -490,6 +512,8 @@ grafana_admin_password = "${grafana_admin_password}"
 
 install_dragonfly = ${install_dragonfly}
 chunk_db_size     = "${chunk_db_size}"
+sandbox_memory_limit_enabled = ${sandbox_memory_limit_enabled}
+sandbox_memory_total_reserve = "${sandbox_memory_total_reserve}"
 enable_runc       = ${enable_runc}
 schedule_placement_policy = "${schedule_placement_policy}"
 EOF
@@ -514,6 +538,8 @@ MONITOR_NAMESPACE=akernel-monitor
 INSTALL_DRAGONFLY=${install_dragonfly}
 NODE_IMAGE_PULL_MODE=${node_image_pull_mode}
 CHUNK_DB_SIZE=${chunk_db_size}
+SANDBOX_MEMORY_LIMIT_ENABLED=${sandbox_memory_limit_enabled}
+SANDBOX_MEMORY_TOTAL_RESERVE=${sandbox_memory_total_reserve}
 AKERNEL_ENABLE_RUNC=${enable_runc}
 SCHEDULE_PLACEMENT_POLICY=${schedule_placement_policy}
 EOF

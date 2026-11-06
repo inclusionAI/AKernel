@@ -17,6 +17,91 @@ when a shared filesystem is independently required.
 For one deployment serving both native and E2B SDKs with version-independent
 application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-application-logs.md).
 
+## Aggregate sandbox memory budget
+
+The direct Helm chart enables the cgroup v2 aggregate sandbox memory policy by
+default for the ordinary KVM backend profile:
+
+```toml
+[plugin.resource.memory_limit]
+enabled = true
+total_reserve = "16GiB"
+```
+
+Effective node memory is the minimum of host `MemTotal` and visible finite
+ancestor cgroup limits. Sandboxd subtracts the reserve, rounds the result down
+to a page boundary and preserves any existing stricter `/akernel/memory.max`.
+The sandboxd resource socket is clipped to that effective parent ceiling,
+without subtracting the reserve a second time. Helm and cloud Adxlet configs
+consume that socket. For example, effective memory of 64 GiB and this reserve
+produce a candidate of 48 GiB; an existing 40 GiB cap remains 40 GiB.
+
+Standalone keeps the policy disabled by default, with `total_reserve="16GiB"`
+available for explicit configuration. Its bundled ADX profile retains the
+`auto` resource source, including PVM, trace and shared-storage variants.
+`auto` does not guarantee public scheduling capacity follows the sandbox parent
+ceiling. Before enabling the policy, operators must configure a compatible ADX
+`resource_source` and qualify memory capacity against the parent budget,
+allocation and release after sandbox create/delete, and schedulable CPU. This
+also applies to custom ADX configurations. The disabled default does not repair
+or qualify resource-source behavior; CPU discovery is unchanged by this policy.
+
+Enabling the policy requires cgroup v2 and effective memory greater than the
+reserve, with enough remaining capacity for the requested sandboxes.
+Docker/OrbStack VM limits and visible ancestor limits participate in this
+calculation. Use a matching node image built with the pinned sandboxd's
+`total_reserve` support. On a smaller node, explicitly choose a smaller positive
+`total_reserve` or keep `enabled=false` in the sandboxd TOML before starting.
+Standalone reads its source config template; Helm uses
+`node.config.sandboxd.config` (`core.node.config.sandboxd.config` in the umbrella
+chart). Cloud profiles expose the enabled flag and reserve described below,
+alongside their existing complete-config override. Values use integer bytes or
+`B`, `KiB`, `MiB`, `GiB`, `TiB`; `16G`, percentages and `auto` are not accepted.
+Verify schedulable CPU from the selected resource provider as well as memory
+before rollout, including when using Helm's sandboxd source.
+
+The PVM profile keeps this policy disabled by default because enabled parent
+enforcement has not been qualified on its matching host. Selecting PVM overrides
+the TOML `enabled` value through standalone
+`AKERNEL_PVM_MEMORY_LIMIT_ENABLED=false` or Helm
+`node.config.sandboxd.pvmMemoryLimitEnabled=false` (`core.` prefix in the umbrella
+chart). Explicitly set that switch to `true` and choose a suitable positive
+`total_reserve` in the source TOML or complete Helm config to opt in for host
+qualification. Both switches accept only `true` or `false` and affect only PVM.
+PVM CI retains the disabled policy and does not claim parent-limit coverage.
+
+Both cloud Terraform profiles keep the policy disabled by default. Their
+`sandbox_memory_limit_enabled` input is an explicit opt-in, with
+`sandbox_memory_total_reserve="16GiB"`. Guided profiles expose the same inputs:
+
+```bash
+make config SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB
+```
+
+Select and qualify a cgroup v2 node image before enabling it: the current standard Aliyun
+`node_pool_image_type="AliyunLinux3"` default uses cgroup v1, and Huawei's
+selected node image also needs cgroup-mode verification. These options do not
+change the node operating system or migrate existing nodes to cgroup v2.
+
+This reserve is deployment policy, not a measured component budget or a
+guarantee against host OOM. Distill-fs retains its independent 64 GiB limit and
+is not automatically deducted. Control components, other Pods and host kernel
+memory remain outside the sandbox parent; their limits, reclaim behavior and
+peak demand need separate consideration. In particular, kernel memory excluded
+by a host's `cgroup.memory=nokmem` setting is not covered by the parent limit.
+
+For existing nodes, adding a finite cap to an unlimited parent or lowering a
+cap requires an empty sandbox subtree and residual usage below the new limit.
+An equal or stricter existing cap can be reused with live sandboxes; a larger
+candidate never automatically raises it. Review the rollout before upgrading:
+ConfigMap checksums trigger Pod replacement, and the current chart permits
+200 unavailable nodes. Use a canary or a separately constrained rollout after
+draining, rather than enabling the policy across live nodes together. Custom
+TOML containing the removed reserve fields must be migrated even when the
+policy is disabled. See the pinned sandboxd
+[memory-limit guide](../src/sandboxd/doc/node-memory-limit.md) for migration and
+the complete startup contract.
+
 ## Guided deployment
 
 The image installs the complete gVisor bundle pinned by sandboxd's runtime manifest: runsc, the containerd shim, and adjacent `gvisor-bin/` helpers. Its SHA-512 verifies the archive, not a standalone runsc binary. Keep these executables together when building custom images; replacing only runsc can leave mismatched checkpoint/restore helpers.

@@ -58,6 +58,34 @@ for inspection and retry. Data and credentials survive stopping.
 For an independent data profile, set an absolute `AKERNEL_STANDALONE_DATA_DIR`
 for every command. Only one standalone node can run per Docker daemon.
 
+Standalone keeps the aggregate sandbox memory limit disabled by default, with
+`total_reserve="16GiB"` available for explicit configuration. To enable it, edit
+`[plugin.resource.memory_limit]` in
+`deploy/standalone/config/sandboxd_config.toml` before startup. Qualify cgroup v2
+and effective memory above the selected positive reserve, including any
+Docker/OrbStack VM or visible ancestor limit, with room for sandbox requests.
+Editing only the generated data-directory TOML is insufficient because startup
+regenerates it. This also applies to `make standalone-source-test`. See
+[the memory budget and upgrade contract](../README.md#aggregate-sandbox-memory-budget)
+before enabling the policy on an existing profile.
+
+Selecting `AKERNEL_FIRECRACKER_BACKEND=pvm` keeps the parent limit disabled by
+default, including when the source TOML has `enabled=true`. PVM parent-limit
+enforcement still needs qualification on the matching host. To opt in for that
+qualification, set `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true` and choose a suitable
+positive `total_reserve` in the source TOML before startup. The switch accepts
+only `true` or `false`, defaults to `false`, and affects only PVM. The maintained
+PVM CI fixture keeps it disabled.
+
+The bundled ADX profile retains its `auto` resource source, including PVM and
+trace/shared-storage variants. `auto` does not guarantee that public scheduling
+capacity follows the sandbox parent ceiling. Before enabling the policy,
+operators must configure and qualify a compatible ADX `resource_source`, whether
+using the bundled profile or a custom `AKERNEL_ADX_CONFIG`. Verify memory
+capacity against the parent budget, allocation and release after sandbox
+create/delete, and schedulable CPU from that source. The disabled default does
+not repair or qualify resource-source behavior.
+
 ### Runtime selection
 
 Runsc is the source default. Opt into runc with

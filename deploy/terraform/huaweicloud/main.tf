@@ -87,6 +87,9 @@ locals {
   ]) : local.node_pool_bootstrap_script
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
+    sandbox_memory_limit_enabled = var.sandbox_memory_limit_enabled
+    sandbox_memory_total_reserve = var.sandbox_memory_total_reserve
+
     cluster_name                = var.cluster_name
     adx_public_service_enabled  = var.adx_public_service_enabled
     adx_service_type            = var.adx_service_type
