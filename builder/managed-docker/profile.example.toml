@@ -1,0 +1,19 @@
+# Operator configuration only. Replace placeholders and explicitly enable the
+# private broker service. Do not copy these settings into Harbor jobs.
+[plugin.managed_runtime]
+root = "/home/akernel/managed-runtime"
+
+[plugin.managed_runtime.profiles.harbor-v1]
+image = "registry.example.internal/managed/tools@sha256:REPLACE_WITH_64_HEX_DIGEST"
+bootstrap_root = "/opt/akernel/runtime/akernel-runtime-rootfs.img"
+registry = "registry.example.internal"
+repository_prefix = "managed"
+# Build publisher credentials; the image manager uses its separate pull account.
+registry_auth_file = "/home/akernel/sandboxd/config/build_registry_auths.json"
+registry_insecure = false
+buildkit_endpoint = "tcp://buildkit.example.internal:9094"
+provider_url = "http://runtime-node.example.internal:8840"
+allowed_tenants = ["example-tenant"]
+writable_mb = 4096
+# Total scheduling floor is writable_mb + minimum_root_mb.
+minimum_root_mb = 4096

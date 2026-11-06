@@ -1,0 +1,12 @@
+# Operator overlay for the core chart, not a Harbor job configuration.
+# Explicit budget for the large-catalog preview; this is not a concurrency SLA.
+# For the umbrella chart, nest this mapping under `core`.
+adx:
+  coordinator:
+    resources:
+      requests:
+        cpu: "2"
+        memory: 2Gi
+      limits:
+        cpu: "4"
+        memory: 6Gi
