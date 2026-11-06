@@ -428,11 +428,10 @@ Collector file receiver and normalization processors into Loki, then checks
 WARN/ERROR counts for both clusters and All. Diagnostic counter regressions
 include startup zeros, the first event and an initial burst through Prometheus.
 
-The AMD64 default pins the AFS-enabled ADX release and Execd artifacts from
-[Build 197](https://buildkite.com/agent-dx/agent-dx/builds/197), revision
-`6b342cda054602dae315da8ff7a14c9e83f0a90b` from
-[ADX #132](https://github.com/openJiuwen-ai/agent-dx/pull/132), based on master
-`2ec519fea1b0cce22f3eefd3b207f84f2076e833`. Both archives
-are SHA256-pinned in the builder Dockerfiles. ARM builds require their own
-architecture-matched artifact overrides; this AMD64 candidate does not establish
-ARM compatibility.
+The default AMD64 platform and Execd archive URLs and SHA-256 values are pinned
+in [`builder/node.Dockerfile`](../../builder/node.Dockerfile) and
+[`builder/runtime.Dockerfile`](../../builder/runtime.Dockerfile). Their archive
+manifests identify the packaged binaries. Select both archives from the same ADX
+revision when overriding these inputs. ARM64 builds require architecture-matched
+URL/checksum pairs for both archives; see the
+[release artifact options](../../builder/README.md#release-artifacts).

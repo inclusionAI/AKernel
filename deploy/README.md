@@ -101,6 +101,111 @@ sampling; Collector rate queries override it to 30 seconds. The 200-point target
 is approximate because Grafana rounds query steps to standard durations. Rate
 windows cover the actual step so wide views preserve bursts between samples.
 
+### Runc worker preparation and recovery
+
+With `node.config.sandboxd.enableRunc=true`
+(`core.node.config.sandboxd.enableRunc=true` in the umbrella chart), Helm runs
+`prepare-runc-filesystems` before starting the node services.
+The host kernel must support OverlayFS and EROFS, either built in or through
+modules. Already registered filesystems in `/proc/filesystems` need no module
+loading or module files. The host's `/lib` must resolve to a directory;
+Kubelet resolves the host path on usrmerged systems. It is mounted read-only at
+`/host/lib` in the init container, so absent `/lib/modules` does not prevent the
+already-registered path. Otherwise the host must supply a self-contained
+`/lib/modules/$(uname -r)` tree with matching modules and dependency metadata.
+The init uses `modprobe -d /host`; external absolute `.ko` symlinks are not
+relocated into this mount. The selected node image must provide `/bin/sh`,
+`grep`, `uname`, and a compatible `modprobe` (the bundled image includes kmod).
+Host policy must permit its privileged root process to load modules,
+including any module-signing or lockdown requirements. A privileged Pod cannot
+provide missing kernel support or override the host's module-loading policy.
+
+Preparation fails closed if loading fails or either filesystem remains
+unregistered. Kubernetes retries the init container; the Pod can remain in
+`Init:Error` or `Init:CrashLoopBackOff`. A volume setup failure instead appears
+in Pod events before the command starts. The entire AKernel node Pod is blocked,
+including other runtimes configured in it. A Kubernetes `Ready` node therefore
+does not establish usable AKernel capacity. A fresh worker blocked here has not
+started adxlet to register its resources; an existing worker's retained ADX
+record must not be mistaken for a live, schedulable worker.
+
+Qualify each host image/kernel, node image, and node-pool provisioning profile
+on an idle dedicated deployment before admitting workloads. All probe modes
+require the complete visible running/paused sandbox inventory to be empty.
+Negative mode also requires an empty resource view, including no retained node
+records; it cannot be run against a deployment with other registered workers:
+
+1. Record the candidate and base commits, deployed init/node `imageID` values,
+   component release identities and SDK version. Retain the host kernel,
+   filesystem registration/module availability, Pod UID, observation timestamps,
+   and SHA-256 of the actual rendered init script. Exercise preparation twice,
+   including a filesystem not yet registered when safe on that disposable
+   worker. Real loading must use the selected image's shell, grep, uname, kmod
+   and libraries; substituting host kmod does not qualify those image tools.
+   An already-registered host validates only the skip path.
+2. Use the configured SDK credentials with the maintained probe below. Keep
+   fresh evidence files outside Git. `inventory` records the complete resource
+   view, including nodes filtered out by `ak resources`; match the target's
+   `NodeInfo.id`, status, capacity and allocatable resources. `positive` targets
+   that worker for a real runc command/private write and deletes its sandbox:
+
+   ```bash
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode inventory --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/inventory.json"
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode positive --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/positive.json"
+   ```
+
+3. On the disposable worker, qualify unavailable modules or denied loading while
+   a required filesystem is unregistered. Record Pod events, init status/logs,
+   and the fault source: synthetic injection or a real host/module-policy
+   failure. While the worker is blocked, require a target-specific rejection:
+
+   ```bash
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode negative --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/negative.json"
+   ```
+
+   Only a structured scheduling rejection during sandbox construction is an
+   expected negative result. Communication, command or deletion failures must
+   fail the probe; they do not prove unavailable capacity. Record the resource
+   view as well as the create outcome rather than inferring capacity from Pod
+   status alone.
+4. Restore the supported profile and repeat `positive` with a fresh output path.
+   Record the recovery action and all fixture/sandbox cleanup results. Keep
+   Kind fault-injection/capacity-recovery evidence separate from real first
+   module-loading evidence, with untested boundaries explicit. Shell fixtures
+   do not replace worker qualification. Normal Pod replacement does not qualify
+   hard host-loss detection or recovery.
+
+For detection, compare the expected workers with initialized node Pods and
+usable ADX resources within the operator's provisioning deadline. Monitor
+DaemonSet unavailable Pods and persistent init failures through the cluster's
+monitoring, or inspect them directly (use the selected namespace and Pod):
+
+```bash
+kubectl -n akernel-system get pods -l app=node -o wide
+kubectl -n akernel-system describe pod <node-pod>
+kubectl -n akernel-system logs <node-pod> -c prepare-runc-filesystems
+```
+
+Add `--previous` to retrieve a prior init attempt. The node's own Collector
+cannot report while its main container has not started.
+
+This chart does not install automatic node replacement for init failures.
+Document the selected node pool/autoscaler's actual health signal and timeout:
+a scheduled Pod failing initialization is not an unschedulable Pod waiting for
+CPU or memory, and generic autoscaling or Kubernetes `NodeReady` checks do not
+establish recovery for this condition. The fallback is operator detection and
+repair of the host modules, permissions or selected image, followed by a retry
+and the acceptance probe above; replace an incompatible worker with a qualified
+host profile if repair is unsuitable. Drain existing sandboxes before replacing
+an existing worker. Repeatedly replacing workers from the same incompatible
+profile does not fix the prerequisite.
+
 ### systemd container identity
 
 Helm stops node ADX services with `systemctl stop adx.service` and control
@@ -332,8 +437,10 @@ and persistently revokes removed keys. Tenant keys are preserved. Old keys
 cannot be reused, even after restart. Existing ingress caches remain bounded by
 the configured authentication TTL (10 seconds here); in-flight requests and
 established streams are not canceled by rotation. Keep Redis data during rotation.
-This requires an ADX release containing administrator reconciliation; #71 does
-not contain it. The rollout procedure has not been validated on a live cluster.
+Use an ADX release with administrator reconciliation. Before production rotation,
+qualify the procedure on an isolated deployment using the selected image: verify
+new-key access, old-key rejection after the cache TTL and Coordinator restart,
+and continued tenant-key access. Record that deployment's validation results.
 
 ### Install with managed Redis
 

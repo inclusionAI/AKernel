@@ -187,7 +187,7 @@ Keep official build-download sources as the default and mirror/proxy selection e
 
 PVM is an experimental opt-in node profile. Standalone selects `AKERNEL_FIRECRACKER_BACKEND=pvm`; Helm selects `node.config.sandboxd.firecrackerBackend=pvm`. This selects `firecracker-pvm`, removes Kata from that profile, and requires the validated PVM guest bundle and matched OOT host `kvm.ko`/`kvm-pvm.ko` modules. `deploy/pvm/host-profile.json` is the single versioned host qualification input: source/baseline, target/kernel/compiler identity, build-receipt digest, module pair, provisioning limits and immutable fixtures. `deploy/pvm/oot-host.env` derives compatibility exports from that JSON without another pin copy. Prepare that profile into a fresh export, verify the exact host inputs and build against the existing distribution kernel; do not build or replace the host kernel. The host-only OOT source and PVM guest source are distinct. VMX/SVM is unnecessary on the host/L1, but the other CPU features, supported boot settings and module-loading policy still apply. Sandboxd verifies the actual backend before advertising it. Keep default KVM behavior unchanged; see `deploy/pvm-runtime.md` for module preparation, placement, restore and rollout boundaries.
 
-PVM integration targets `inclusionAI/AKernel:develop` after the sandboxd runtime change targeting `inclusionAI/sandboxd:main`. Fork feature branches provide isolated qualification before upstream review. Keep the sandboxd submodule URL and gitlink consistent. The OOT host profile includes the upstream OSPKE guard fix and NX recovery-worker retry backport; guest TSC changes and the optional DEBUGCTL optimization remain separate. The opt-in PVM bundle is independently pinned by sandboxd in `third_party/firecracker-pvm.json` and consumed without changing ordinary KVM releases. That descriptor selects either a locked Actions candidate or its unchanged promoted public asset; release downloads require neither a GitHub token nor an unexpired Actions artifact. The disposable PVM CI checkout must also clean ignored build files inside the separately initialized sandboxd submodule; cleaning only the parent repository leaves stale staged bundles behind. Keep checksum failures fatal. Strict TSC improves POSIX clock/timer recovery, but raw-TSC continuity and heterogeneous migration remain unqualified. The independent PVM workflow requires a maintainer dispatch, immutable allowed-ref resolution, the committed expected profile and a bounded disposable L1; ordinary hardware-KVM CI does not qualify PVM. See `deploy/pvm-runtime.md` before changing guest pins or CI.
+Keep the sandboxd submodule URL and gitlink consistent with the runtime source compiled into the image. The OOT host profile includes the upstream OSPKE guard fix and NX recovery-worker retry backport; guest TSC changes and the optional DEBUGCTL optimization remain separate. The opt-in PVM bundle is independently pinned by sandboxd in `third_party/firecracker-pvm.json` and consumed without changing ordinary KVM releases. That descriptor selects either a locked Actions candidate or its unchanged promoted public asset; release downloads require neither a GitHub token nor an unexpired Actions artifact. The disposable PVM CI checkout must also clean ignored build files inside the separately initialized sandboxd submodule; cleaning only the parent repository leaves stale staged bundles behind. Keep checksum failures fatal. Strict TSC improves POSIX clock/timer recovery, but raw-TSC continuity and heterogeneous migration remain unqualified. The independent PVM workflow requires a maintainer dispatch, immutable allowed-ref resolution, the committed expected profile and a bounded disposable L1; ordinary hardware-KVM CI does not qualify PVM. See `deploy/pvm-runtime.md` before changing guest pins or CI.
 
 Install the complete checksum-pinned gVisor release archive with sandboxd's
 `third_party/install-gvisor.sh`. Preserve runsc, the containerd shim, and all
@@ -358,6 +358,22 @@ Terraform. Runc uses the host kernel and therefore has a different isolation
 boundary from runsc. It does not support experimental GPU or explicit
 `storage_mb` requests. Its optional `enableKVM` extra configuration requires a
 usable `/dev/kvm` device.
+
+Helm prepares OverlayFS and EROFS before starting an enabled runc node. Preserve
+the already-registered path without requiring module files; loading otherwise
+requires host-matched modules, compatible image tools and host permission.
+Failed preparation blocks the entire node Pod, including its other runtimes.
+Kubernetes NodeReady is not usable ADX capacity, and this chart does not install
+automatic replacement for init failures. Use
+`deploy/tests/kubernetes/runc_filesystems.py` for inventory and targeted positive
+or negative probes; only a structured scheduling rejection during construction
+is an expected negative result. Communication, command and deletion failures
+must fail validation. Record candidate/base commits, image IDs, component/SDK
+versions, kernel, Pod UID, timestamps, init-script digest, fault source and
+recovery/cleanup evidence. Keep synthetic Kind capacity recovery, real first
+module loading with the selected image's tools/libraries, and hard host loss
+as separate qualification boundaries. Keep detection and operator recovery in
+[`deploy/README.md#runc-worker-preparation-and-recovery`](deploy/README.md#runc-worker-preparation-and-recovery).
 
 Standalone configures resolver sources by DNS mode. Enabling runc copies an approved host resolver into the data mount and sets `plugin.runtime.direct_resolv_conf_path`, while `plugin.runtime.resolv_conf_path` remains the node resolver used by managed DNS. `AKERNEL_RUNC_RESOLV_CONF` selects the host source; systemd-resolved hosts require it explicitly because a flat file cannot preserve split DNS. Preserve the direct-resolver marker under `[plugin.runtime]` in custom templates, and drain sandboxes before refreshing the resolver snapshot or replacing the node. See [`deploy/standalone/README.md#dns-resolver-sources`](deploy/standalone/README.md#dns-resolver-sources) for mode selection and reachability requirements.
 
@@ -886,6 +902,10 @@ SDK control-plane access.
   keep dependency pins in package metadata, and record actual tested versions
   and artifact digests in qualification evidence. Avoid temporary publication
   status or repeated version literals in API and qualification instructions.
+- Keep deployment guides focused on current requirements and procedures. Leave
+  one-off CI run links, temporary branch status and historical test results in
+  PR discussions or retained qualification artifacts. Reference version manifests
+  and build receipts rather than duplicating their pins in prose.
 - Do not reintroduce obsolete top-level examples or tests. Maintained SDK
   examples and tests live under `sdk/python/`.
 - When code changes alter source layout, public APIs, build or deployment
