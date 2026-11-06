@@ -66,12 +66,17 @@ data:
 {{- fail "PVM selection requires the standard Firecracker config section and binary entry" }}
 {{- end }}
 {{- $memorySection := regexFind "(?ms)^[\\t ]*\\[plugin\\.resource\\.memory_limit\\][^\\n]*\\n.*?(?:\\n[\\t ]*\\[|\\z)" $sandboxdConfig }}
-{{- $memoryEnabledPattern := "(?m)^[\\t ]*enabled[\\t ]*=[\\t ]*(true|false)[\\t ]*(#[^\\n]*)?$" }}
-{{- if ne (len (regexFindAll $memoryEnabledPattern $memorySection -1)) 1 }}
-{{- fail "PVM selection requires exactly one boolean enabled field under [plugin.resource.memory_limit]" }}
+{{- $memoryEnabledPattern := "(?m)^[\\t ]*(enabled|\"enabled\"|'enabled')[\\t ]*=[\\t ]*(true|false)[\\t ]*(#[^\\n]*)?$" }}
+{{- $memoryEnabledCount := len (regexFindAll $memoryEnabledPattern $memorySection -1) }}
+{{- $memoryEnabledFields := len (regexFindAll "(?m)^[\\t ]*(enabled|\"enabled\"|'enabled')[\\t ]*=" $memorySection -1) }}
+{{- if or (ne $memoryEnabledFields $memoryEnabledCount) (gt $memoryEnabledCount 1) (and (eq $pvmMemoryLimitEnabled "true") (ne $memoryEnabledCount 1)) }}
+{{- fail "PVM selection requires at most one boolean enabled field under [plugin.resource.memory_limit], and exactly one when opting in" }}
 {{- end }}
+{{- /* Older custom profiles may omit the optional, disabled memory policy. */}}
+{{- if eq $memoryEnabledCount 1 }}
 {{- $pvmMemorySection := regexReplaceAll $memoryEnabledPattern $memorySection (printf "enabled = %s" $pvmMemoryLimitEnabled) }}
 {{- $sandboxdConfig = replace $memorySection $pvmMemorySection $sandboxdConfig }}
+{{- end }}
 {{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)firecracker=" $sandboxdConfig "${1}firecracker-pvm=" }}
 {{- $sandboxdConfig = replace "[plugin.runtime.firecracker]" "[plugin.runtime.firecracker_pvm]" $sandboxdConfig }}
 {{- $sandboxdConfig = regexReplaceAll "(?m)^[\\t ]*kata=.*$" $sandboxdConfig "# Kata is disabled on the PVM node profile." }}

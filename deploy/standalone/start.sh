@@ -345,21 +345,23 @@ configure_network() {
             log_error "PVM selection requires the standard Firecracker config section and binary entry"
             exit 1
         fi
-        if ! awk '
+        # Older custom profiles may omit the optional, disabled memory policy.
+        if ! awk -v opt_in="${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}" '
             /^[[:space:]]*\[/ {
                 in_memory = ($0 ~ /^[[:space:]]*\[plugin\.resource\.memory_limit\][[:space:]]*(#.*)?$/)
             }
-            in_memory && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*(true|false)[[:space:]]*(#.*)?$/ { count++ }
-            END { exit !(count == 1) }
+            in_memory && /^[[:space:]]*(enabled|"enabled"|\047enabled\047)[[:space:]]*=/ { fields++ }
+            in_memory && /^[[:space:]]*(enabled|"enabled"|\047enabled\047)[[:space:]]*=[[:space:]]*(true|false)[[:space:]]*(#.*)?$/ { booleans++ }
+            END { exit !(fields == booleans && booleans <= 1 && (opt_in == "false" || booleans == 1)) }
         ' "${CONFIG_DIR}/sandboxd_config.toml"; then
-            log_error "PVM selection requires exactly one boolean enabled field under [plugin.resource.memory_limit]"
+            log_error "PVM selection requires at most one boolean enabled field under [plugin.resource.memory_limit], and exactly one when opting in"
             exit 1
         fi
         sed_args+=(
             -e 's/^firecracker=/firecracker-pvm=/'
             -e 's/^\[plugin.runtime.firecracker\]$/[plugin.runtime.firecracker_pvm]/'
             -e '/^kata=/d'
-            -e "/^[[:space:]]*\[plugin\.resource\.memory_limit\][[:space:]]*(#.*)?$/,/^[[:space:]]*\[/s/^([[:space:]]*)enabled[[:space:]]*=.*/\1enabled = ${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}/"
+            -e "/^[[:space:]]*\[plugin\.resource\.memory_limit\][[:space:]]*(#.*)?$/,/^[[:space:]]*\[/s/^([[:space:]]*)(enabled|\"enabled\"|'enabled')[[:space:]]*=.*/\1enabled = ${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}/"
         )
     fi
 

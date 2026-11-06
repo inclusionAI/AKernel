@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 import tomllib
@@ -77,17 +78,20 @@ class SharedCheckpointStorageTests(unittest.TestCase):
         default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pvm-sandboxd.toml"
-            path.write_text(default.replace('total_reserve = "16GiB"', 'total_reserve = "2GiB"', 1))
-            for enabled in ("false", "true"):
-                with self.subTest(enabled=enabled):
-                    resources = render(
-                        "node.config.sandboxd.firecrackerBackend=pvm",
-                        f"node.config.sandboxd.pvmMemoryLimitEnabled={enabled}",
-                        set_files={"node.config.sandboxd.config": path},
-                    )
-                    config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
-                    self.assert_memory_config(config, enabled == "true", "2GiB")
-                    self.assertIn("firecracker_pvm", config["plugin"]["runtime"])
+            original = default.replace('total_reserve = "16GiB"', 'total_reserve = "2GiB"', 1)
+            for key in ("enabled", '"enabled"', "'enabled'"):
+                for source_enabled in ("false", "true"):
+                    path.write_text(original.replace("enabled = true", f"{key} = {source_enabled}", 1))
+                    for enabled in ("false", "true"):
+                        with self.subTest(key=key, source_enabled=source_enabled, enabled=enabled):
+                            resources = render(
+                                "node.config.sandboxd.firecrackerBackend=pvm",
+                                f"node.config.sandboxd.pvmMemoryLimitEnabled={enabled}",
+                                set_files={"node.config.sandboxd.config": path},
+                            )
+                            config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+                            self.assert_memory_config(config, enabled == "true", "2GiB")
+                            self.assertIn("firecracker_pvm", config["plugin"]["runtime"])
             resources = render("node.config.sandboxd.firecrackerBackend=pvm")
             config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
             self.assert_memory_config(config, False, "16GiB")
@@ -104,19 +108,62 @@ class SharedCheckpointStorageTests(unittest.TestCase):
             config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
             self.assert_memory_config(config, False, "16GiB")
 
-    def test_pvm_rejects_invalid_memory_opt_in_and_missing_memory_section(self):
+    def test_pvm_preserves_omitted_disabled_memory_policy_but_rejects_opt_in(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        without_table = re.sub(
+            r"(?ms)^\[plugin\.resource\.memory_limit\]\n.*?(?=^\[|\Z)",
+            "", default,
+        )
+        without_enabled = default.replace("enabled = true\n", "", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-sandboxd.toml"
+            for custom, has_table in ((without_table, False), (without_enabled, True)):
+                with self.subTest(has_table=has_table):
+                    path.write_text(custom)
+                    resources = render(
+                        "node.config.sandboxd.firecrackerBackend=pvm",
+                        set_files={"node.config.sandboxd.config": path},
+                    )
+                    config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+                    memory = config["plugin"]["resource"].get("memory_limit", {})
+                    self.assertFalse(memory.get("enabled", False))
+                    self.assertEqual("memory_limit" in config["plugin"]["resource"], has_table)
+                    if has_table:
+                        self.assertEqual(memory, {"total_reserve": "16GiB"})
+                    self.assertIn("firecracker_pvm", config["plugin"]["runtime"])
+                    self.assertIn("firecracker-pvm", config["plugin"]["runtime"]["runtime_binary"])
+                    with self.assertRaises(subprocess.CalledProcessError) as error:
+                        render(
+                            "node.config.sandboxd.firecrackerBackend=pvm",
+                            "node.config.sandboxd.pvmMemoryLimitEnabled=true",
+                            set_files={"node.config.sandboxd.config": path},
+                        )
+                    self.assertIn("exactly one when opting in", error.exception.stderr)
+
+    def test_pvm_rejects_invalid_or_duplicate_memory_enabled_fields(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-sandboxd.toml"
+            for field in ('enabled = "true"', "enabled = 1", '"enabled" = "true"', "'enabled' = 1",
+                          "enabled = true\nenabled = false", 'enabled = true\n"enabled" = false',
+                          "enabled = true\n'enabled' = false"):
+                for opt_in in ("false", "true"):
+                    with self.subTest(field=field, opt_in=opt_in):
+                        path.write_text(default.replace("enabled = true", field, 1))
+                        with self.assertRaises(subprocess.CalledProcessError) as error:
+                            render(
+                                "node.config.sandboxd.firecrackerBackend=pvm",
+                                f"node.config.sandboxd.pvmMemoryLimitEnabled={opt_in}",
+                                set_files={"node.config.sandboxd.config": path},
+                            )
+                        self.assertIn("boolean enabled field", error.exception.stderr)
+
+    def test_pvm_rejects_invalid_memory_opt_in(self):
         for value in ("1", "TRUE", "yes", ""):
             with self.subTest(value=value):
                 with self.assertRaises(subprocess.CalledProcessError) as error:
                     render(f"node.config.sandboxd.pvmMemoryLimitEnabled={value}")
                 self.assertIn("pvmMemoryLimitEnabled must be true or false", error.exception.stderr)
-        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "custom-sandboxd.toml"
-            path.write_text(default.replace("[plugin.resource.memory_limit]", "[plugin.resource.other]", 1))
-            with self.assertRaises(subprocess.CalledProcessError) as error:
-                render("node.config.sandboxd.firecrackerBackend=pvm", set_files={"node.config.sandboxd.config": path})
-            self.assertIn("exactly one boolean enabled field", error.exception.stderr)
 
     def test_control_service_budgets_protect_voluntary_disruption(self):
         for replicas in (1, 3):
