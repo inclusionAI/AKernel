@@ -39,8 +39,10 @@ unsafe path/symlink or unexpected existing ownership. The data hostPath uses
 `Directory`, not `DirectoryOrCreate`. Only the initializer sees the host root
 and proc mount: it installs a checked bind and host boot service. The Node Pod
 uses the data disk subPath, and the OCI baseline exposes the same fixed log
-mount to native and E2B sandboxes. The sandboxd pin includes the unique mount-destination fix proposed in [sandboxd#97](https://github.com/inclusionAI/sandboxd/pull/97), so explicit SDK mounts replace the baseline instead of producing conflicting duplicates. Test explicit native read-only mounts as well
-as writable mounts against the exact runtime; JSON rendering alone is insufficient.
+mount to native and E2B sandboxes. Explicit SDK mounts replace the baseline at
+the same destination instead of producing conflicting duplicates. Test explicit
+native read-only mounts as well as writable mounts against the exact runtime;
+JSON rendering alone is insufficient.
 
 New directory ownership defaults to root:1000 and mode2770. Existing file
 owners, modes and xattrs are preserved; no recursive chmod/chown or world
