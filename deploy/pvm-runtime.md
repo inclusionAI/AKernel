@@ -222,12 +222,11 @@ recovery: a failing handler closes that class's advertisement/admission;
 successful polling reopens it. Core metadata/storage failures can still close
 global readiness.
 
-Both image profiles resolve the bundled standalone deployment and select
-sandboxd's resource socket for scheduling capacity. The PVM image additionally
-applies `prepare-adx-config.py --pvm`, setting coordinator/adxlet
-`rpc_timeout_seconds=90`. Custom or external ADX configurations must carry the
-override themselves. The guest-agent startup budget remains 15 seconds;
-extending an RPC cleanup budget does not authorize increasing that deadline.
+The PVM image applies `prepare-adx-config.py --pvm` to its standalone profile,
+setting coordinator/adxlet `rpc_timeout_seconds=90`. Custom or external ADX
+configurations must carry the override themselves. The ordinary KVM profile
+is unchanged and the guest-agent startup budget remains 15 seconds; extending
+an RPC cleanup budget does not authorize increasing the guest startup deadline.
 
 The aggregate sandbox memory policy remains disabled by default for PVM until
 its finite-cap profile is qualified on the matching maintained host. Standalone
@@ -235,9 +234,12 @@ can explicitly select `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true`; Helm uses
 `node.config.sandboxd.pvmMemoryLimitEnabled=true` (under `core` in the umbrella
 chart). Both default to false and apply only to the PVM backend. Select a
 `total_reserve` suitable for the actual L1 in its sandboxd configuration before
-opting in, then run the matching bounded PVM qualification. Ordinary runsc tests
-and static profile checks do not qualify this combination, and the 16 GiB
-deployment reserve is not a universal host OOM safety budget.
+opting in, configure a compatible ADX `resource_source`, and qualify memory
+capacity, allocation/release accounting and schedulable CPU on that host. The
+bundled standalone profile retains `auto`, which does not guarantee capacity
+follows the sandbox parent limit. Ordinary runsc tests and static profile
+checks do not qualify this combination, and the 16 GiB deployment reserve is
+not a universal host OOM safety budget.
 
 ## Isolated qualification workflow
 

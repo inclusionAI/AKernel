@@ -58,17 +58,16 @@ for inspection and retry. Data and credentials survive stopping.
 For an independent data profile, set an absolute `AKERNEL_STANDALONE_DATA_DIR`
 for every command. Only one standalone node can run per Docker daemon.
 
-The ordinary KVM backend profile enables the aggregate sandbox memory limit
-with a 16 GiB reserve.
-It requires cgroup v2 and effective memory above that reserve, including any
-Docker/OrbStack VM or visible ancestor limit. Before starting on a smaller
-machine, edit `[plugin.resource.memory_limit]` in
-`deploy/standalone/config/sandboxd_config.toml` to select a smaller positive
-`total_reserve` or explicitly disable the policy. Editing only the generated
-data-directory TOML is insufficient because startup regenerates it. This also
-applies to `make standalone-source-test`. See
+Standalone keeps the aggregate sandbox memory limit disabled by default, with
+`total_reserve="16GiB"` available for explicit configuration. To enable it, edit
+`[plugin.resource.memory_limit]` in
+`deploy/standalone/config/sandboxd_config.toml` before startup. Qualify cgroup v2
+and effective memory above the selected positive reserve, including any
+Docker/OrbStack VM or visible ancestor limit, with room for sandbox requests.
+Editing only the generated data-directory TOML is insufficient because startup
+regenerates it. This also applies to `make standalone-source-test`. See
 [the memory budget and upgrade contract](../README.md#aggregate-sandbox-memory-budget)
-before applying the new default to an existing profile.
+before enabling the policy on an existing profile.
 
 Selecting `AKERNEL_FIRECRACKER_BACKEND=pvm` keeps the parent limit disabled by
 default, including when the source TOML has `enabled=true`. PVM parent-limit
@@ -78,13 +77,14 @@ positive `total_reserve` in the source TOML before startup. The switch accepts
 only `true` or `false`, defaults to `false`, and affects only PVM. The maintained
 PVM CI fixture keeps it disabled.
 
-The bundled ADX configuration takes scheduling capacity from sandboxd's
-`/var/run/resource.sock`, including PVM and trace/shared-storage variants.
-The image build resolves the default profile before replacing the entire
-capacity source. Custom `AKERNEL_ADX_CONFIG` files retain their selected source;
-operators enabling the parent limit must align custom capacity reporting with
-that limit. Standalone CI checks both the parent/socket budget and public ADX
-capacity, plus resource allocation and release after sandbox create/delete.
+The bundled ADX profile retains its `auto` resource source, including PVM and
+trace/shared-storage variants. `auto` does not guarantee that public scheduling
+capacity follows the sandbox parent ceiling. Before enabling the policy,
+operators must configure and qualify a compatible ADX `resource_source`, whether
+using the bundled profile or a custom `AKERNEL_ADX_CONFIG`. Verify memory
+capacity against the parent budget, allocation and release after sandbox
+create/delete, and schedulable CPU from that source. The disabled default does
+not repair or qualify resource-source behavior.
 
 ### Runtime selection
 

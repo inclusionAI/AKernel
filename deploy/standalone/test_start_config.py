@@ -107,10 +107,10 @@ class StartConfigTest(unittest.TestCase):
         )
         self.assertEqual(config["plugin.image"]["cgroup_memory_limit"], '"64GiB"')
 
-    def test_generated_config_enables_parent_limit_with_16gib_reserve(self):
+    def test_generated_config_disables_parent_limit_with_16gib_reserve(self):
         result = self.generate(AKERNEL_ENABLE_RUNC="false")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_memory_config("true", "16GiB")
+        self.assert_memory_config("false", "16GiB")
 
     def test_generated_config_preserves_explicit_memory_policy_overrides(self):
         original = self.template.read_text()
@@ -144,7 +144,7 @@ class StartConfigTest(unittest.TestCase):
         original = self.template.read_text().replace('total_reserve = "16GiB"', 'total_reserve = "2GiB"')
         for key in ("enabled", '"enabled"', "'enabled'"):
             for source_enabled in ("false", "true"):
-                self.template.write_text(original.replace("enabled = true", f"{key} = {source_enabled}", 1))
+                self.template.write_text(original.replace("enabled = false", f"{key} = {source_enabled}", 1))
                 for enabled in ("false", "true"):
                     with self.subTest(key=key, source_enabled=source_enabled, enabled=enabled):
                         result = self.generate(
@@ -155,10 +155,13 @@ class StartConfigTest(unittest.TestCase):
                         self.assert_memory_config(enabled, "2GiB")
 
     def test_pvm_memory_opt_in_does_not_override_kvm_memory_policy(self):
-        self.template.write_text(self.template.read_text().replace("enabled = true", "enabled = false", 1))
-        result = self.generate(AKERNEL_PVM_MEMORY_LIMIT_ENABLED="true")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assert_memory_config("false", "16GiB")
+        original = self.template.read_text()
+        for enabled in ("false", "true"):
+            with self.subTest(enabled=enabled):
+                self.template.write_text(original.replace("enabled = false", f"enabled = {enabled}", 1))
+                result = self.generate(AKERNEL_PVM_MEMORY_LIMIT_ENABLED="true")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_memory_config(enabled, "16GiB")
 
     def test_pvm_preserves_omitted_disabled_memory_policy_but_rejects_opt_in(self):
         original = self.template.read_text()
@@ -166,7 +169,7 @@ class StartConfigTest(unittest.TestCase):
             r"(?ms)^\[plugin\.resource\.memory_limit\]\n.*?(?=^\[|\Z)",
             "", original,
         )
-        without_enabled = original.replace("enabled = true\n", "", 1)
+        without_enabled = original.replace("enabled = false\n", "", 1)
         for custom, has_table in ((without_table, False), (without_enabled, True)):
             with self.subTest(has_table=has_table):
                 self.template.write_text(custom)
@@ -195,7 +198,7 @@ class StartConfigTest(unittest.TestCase):
                       "enabled = true\n'enabled' = false"):
             for opt_in in ("false", "true"):
                 with self.subTest(field=field, opt_in=opt_in):
-                    self.template.write_text(original.replace("enabled = true", field, 1))
+                    self.template.write_text(original.replace("enabled = false", field, 1))
                     result = self.generate(
                         AKERNEL_FIRECRACKER_BACKEND="pvm",
                         AKERNEL_PVM_MEMORY_LIMIT_ENABLED=opt_in,

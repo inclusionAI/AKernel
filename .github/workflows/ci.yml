@@ -267,23 +267,6 @@ jobs:
               test ! -e /usr/local/bin/runc-shim
             '
 
-      - name: Select the bounded CI memory profile
-        run: |
-          # The runner can have less memory than the deployment's 16 GiB reserve.
-          # Exercise the enabled policy with an explicit smaller test reserve.
-          python3 - <<'PY'
-          from pathlib import Path
-          import tomllib
-          path = Path("deploy/standalone/config/sandboxd_config.toml")
-          text = path.read_text()
-          assert tomllib.loads(text)["plugin"]["resource"]["memory_limit"] == {
-              "enabled": True, "total_reserve": "16GiB"
-          }
-          old = 'total_reserve = "16GiB"'
-          assert text.count(old) == 1
-          path.write_text(text.replace(old, 'total_reserve = "2GiB"', 1))
-          PY
-
       - name: Start standalone AKernel
         run: |
           IMAGE="akernel-ci/all-in-one:${GITHUB_SHA}" \
@@ -291,29 +274,6 @@ jobs:
             AKERNEL_CONTROL_BIND=127.0.0.1 \
             AKERNEL_DATA_BIND=127.0.0.1 \
             ./deploy/standalone/start.sh
-
-      - name: Verify the enabled parent memory policy
-        run: |
-          docker exec -i akernel-node python3 - <<'PY'
-          import json
-          import socket
-          from http.client import HTTPConnection
-          from pathlib import Path
-          maximum = int(Path("/sys/fs/cgroup/akernel/memory.max").read_text())
-          assert maximum > 0
-          connection = HTTPConnection("localhost", timeout=10)
-          connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-          connection.sock.settimeout(10)
-          connection.sock.connect("/var/run/resource.sock")
-          connection.request("GET", "/resource")
-          response = connection.getresponse()
-          assert response.status == 200, response.status
-          capacity = json.load(response)["mem"]
-          connection.close()
-          assert capacity == maximum, (capacity, maximum)
-          print(f"finite parent memory.max and /resource agree: {maximum} bytes")
-          PY
-          echo "AKERNEL_TEST_EXPECT_MEMORY_BYTES=$(docker exec akernel-node cat /sys/fs/cgroup/akernel/memory.max)" >> "${GITHUB_ENV}"
 
       - name: Trust the standalone HTTPS certificate
         run: |

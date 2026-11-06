@@ -29,8 +29,8 @@ max_instance_num=1000
 enable_cache_in_stock_mode=true
 
 [plugin.resource.memory_limit]
-enabled = true
-# Requires effective memory above this reserve; tune for the deployment.
+enabled = false
+# Before enabling, qualify scheduling capacity and tune this deployment reserve.
 total_reserve = "16GiB"
 
 [plugin.runtime]

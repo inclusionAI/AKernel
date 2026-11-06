@@ -19,8 +19,8 @@ application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-applicati
 
 ## Aggregate sandbox memory budget
 
-Standalone and the direct Helm chart enable the cgroup v2 aggregate sandbox
-memory policy by default for the ordinary KVM backend profile:
+The direct Helm chart enables the cgroup v2 aggregate sandbox memory policy by
+default for the ordinary KVM backend profile:
 
 ```toml
 [plugin.resource.memory_limit]
@@ -36,29 +36,29 @@ without subtracting the reserve a second time. Helm and cloud Adxlet configs
 consume that socket. For example, effective memory of 64 GiB and this reserve
 produce a candidate of 48 GiB; an existing 40 GiB cap remains 40 GiB.
 
-The bundled standalone ADX profile is resolved at image build time and its
-complete capacity source is replaced with `kind: sandboxd`, using
-`/var/run/resource.sock`. The PVM, trace and shared-storage variants retain this
-source. Public ADX capacity follows the sandbox budget, while allocatable
-decreases on resource allocation and recovers on deletion. Custom ADX
-configurations with an explicitly selected source remain operator-owned; align
-that source with the effective sandbox budget when enabling a parent limit.
-The public API reports memory in whole MiB rounded down; parent cgroups and the
-sandboxd socket retain byte precision. Compare each interface in its documented
-units, including when a finite ancestor is only page-aligned.
+Standalone keeps the policy disabled by default, with `total_reserve="16GiB"`
+available for explicit configuration. Its bundled ADX profile retains the
+`auto` resource source, including PVM, trace and shared-storage variants.
+`auto` does not guarantee public scheduling capacity follows the sandbox parent
+ceiling. Before enabling the policy, operators must configure a compatible ADX
+`resource_source` and qualify memory capacity against the parent budget,
+allocation and release after sandbox create/delete, and schedulable CPU. This
+also applies to custom ADX configurations. The disabled default does not repair
+or qualify resource-source behavior; CPU discovery is unchanged by this policy.
 
-The default requires cgroup v2 and effective memory greater than 16 GiB, with
-enough remaining capacity for the requested sandboxes. Docker/OrbStack VM limits
-and visible ancestor limits participate in this calculation. Use a matching node
-image built with the pinned sandboxd's `total_reserve` support. On a smaller node,
-explicitly choose a smaller positive `total_reserve` or set `enabled=false` in
-the sandboxd TOML before starting. Standalone reads its source config template;
-Helm uses `node.config.sandboxd.config` (`core.node.config.sandboxd.config` in the
-umbrella chart). Cloud profiles expose the enabled flag and reserve described
-below, alongside their existing complete-config override. Values use integer
-bytes or `B`, `KiB`, `MiB`, `GiB`, `TiB`; `16G`, percentages and `auto` are not
-accepted. Standard CI explicitly uses a 2 GiB reserve while keeping the policy
-enabled.
+Enabling the policy requires cgroup v2 and effective memory greater than the
+reserve, with enough remaining capacity for the requested sandboxes.
+Docker/OrbStack VM limits and visible ancestor limits participate in this
+calculation. Use a matching node image built with the pinned sandboxd's
+`total_reserve` support. On a smaller node, explicitly choose a smaller positive
+`total_reserve` or keep `enabled=false` in the sandboxd TOML before starting.
+Standalone reads its source config template; Helm uses
+`node.config.sandboxd.config` (`core.node.config.sandboxd.config` in the umbrella
+chart). Cloud profiles expose the enabled flag and reserve described below,
+alongside their existing complete-config override. Values use integer bytes or
+`B`, `KiB`, `MiB`, `GiB`, `TiB`; `16G`, percentages and `auto` are not accepted.
+Verify schedulable CPU from the selected resource provider as well as memory
+before rollout, including when using Helm's sandboxd source.
 
 The PVM profile keeps this policy disabled by default because enabled parent
 enforcement has not been qualified on its matching host. Selecting PVM overrides

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the bundled capacity source, PVM, telemetry and checkpoint options."""
+"""Apply PVM, telemetry and mounted checkpoint options to ADX deployments."""
 from __future__ import annotations
 import argparse
 import os
@@ -8,50 +8,6 @@ import re
 import subprocess
 
 import yaml
-
-
-def standalone_sandboxd_capacity(cfg: dict, source: Path, adxctl: Path) -> dict:
-    """Resolve the static bundled profile before replacing its tagged source.
-
-    ADX recursively merges profile overrides, which would retain auto's
-    disk_path when switching to sandboxd. Custom configurations with an
-    explicit source remain caller-owned, including explicit auto/file sources.
-    This build-time conversion does not expand custom runtime expressions.
-    """
-    if cfg.get("profile") != "standalone":
-        return cfg
-    node = cfg.get("service_overrides", {}).get("adxlet", {}).get("config") or {}
-    if "capacity_file" in node or node.get("resource_source") != {
-        "disk_path": "/home/akernel"
-    }:
-        return cfg
-
-    def has_expression(value):
-        if isinstance(value, str):
-            return "$" in value
-        if isinstance(value, dict):
-            return any(has_expression(item) for item in value.values())
-        if isinstance(value, list):
-            return any(has_expression(item) for item in value)
-        return False
-
-    if has_expression(cfg):
-        raise ValueError("bundled capacity conversion requires a static deployment")
-    resolved = yaml.safe_load(subprocess.run(
-        [str(adxctl), "--config", str(source), "config", "dump"],
-        check=True, capture_output=True, text=True,
-    ).stdout)
-    if not isinstance(resolved, dict) or "profile" in resolved:
-        raise ValueError("ADX did not resolve the standalone deployment")
-    workers = [service for service in resolved["services"]
-               if service["role"] == "adxlet"]
-    if len(workers) != 1:
-        raise ValueError("bundled standalone deployment must contain one adxlet")
-    workers[0]["config"]["resource_source"] = {
-        "kind": "sandboxd", "socket": "/var/run/resource.sock",
-        "valid_for_seconds": 30,
-    }
-    return resolved
 
 
 def expand_selector(value: str) -> str:
@@ -96,13 +52,10 @@ def expand_selector(value: str) -> str:
 
 def configure(
     source: Path, destination: Path, mount: Path | None, prefix: str, *, pvm: bool = False,
-    sandboxd_capacity: bool = False, adxctl: Path = Path("/opt/adx/current/bin/adxctl"),
 ) -> None:
     cfg = yaml.safe_load(source.read_text())
     if not isinstance(cfg, dict):
         raise ValueError("deployment must be a mapping")
-    if sandboxd_capacity:
-        cfg = standalone_sandboxd_capacity(cfg, source, adxctl)
     profile_roles = {
         "standalone": ("coordinator", "apiserver", "adxlet", "ingress"),
         "standalone-external-redis": ("coordinator", "apiserver", "adxlet", "ingress"),
@@ -181,11 +134,8 @@ def main() -> None:
     parser.add_argument("--mount", type=Path, default=None)
     parser.add_argument("--prefix", default="akernel/checkpoints")
     parser.add_argument("--pvm", action="store_true", help="use the PVM cleanup RPC budget")
-    parser.add_argument("--sandboxd-capacity", action="store_true",
-                        help="resolve the static bundled profile and use sandboxd capacity")
     args = parser.parse_args()
-    configure(args.source, args.destination, args.mount, args.prefix, pvm=args.pvm,
-              sandboxd_capacity=args.sandboxd_capacity)
+    configure(args.source, args.destination, args.mount, args.prefix, pvm=args.pvm)
 
 
 if __name__ == "__main__":

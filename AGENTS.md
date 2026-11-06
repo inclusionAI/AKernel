@@ -240,28 +240,26 @@ distill-fs release's packaged manifest.
 
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
-Standalone and the direct Helm chart enable the cgroup v2 parent memory policy
-with `total_reserve="16GiB"` for the ordinary KVM profile. PVM keeps it disabled
-until explicitly selected with `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true` in
-standalone or `node.config.sandboxd.pvmMemoryLimitEnabled=true` in Helm. Size
-the reserve for the selected L1 and qualify that finite-cap combination on the
+The direct Helm chart enables the cgroup v2 parent memory policy with
+`total_reserve="16GiB"` for the ordinary KVM profile. Standalone and both cloud
+Terraform profiles keep it disabled by default. Cloud opt-in uses
+`sandbox_memory_limit_enabled`; guided profiles expose
+`SANDBOX_MEMORY_LIMIT_ENABLED` and `SANDBOX_MEMORY_TOTAL_RESERVE`. Qualify cgroup
+v2 and effective memory (host MemTotal clipped by visible ancestor limits)
+above the reserve with room for sandbox requests before enabling the policy.
+The bundled standalone ADX profile retains its `auto` resource source, which
+does not guarantee scheduling capacity follows the sandbox parent ceiling.
+Operators enabling the policy must select and qualify a compatible
+`resource_source`, including memory capacity, allocation/release accounting and
+schedulable CPU. The disabled default does not fix resource-source limitations.
+PVM also keeps the policy disabled until explicitly selected with
+`AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true` in standalone or
+`node.config.sandboxd.pvmMemoryLimitEnabled=true` in Helm. Size the reserve for
+the selected L1 and qualify the finite-cap and scheduling combination on the
 matching PVM host before rollout; ordinary runsc tests do not qualify PVM.
-Both cloud Terraform profiles leave it disabled
-until explicitly enabled with `sandbox_memory_limit_enabled`; their default
-operating-system images have not been qualified for this policy. Guided profiles
-expose `SANDBOX_MEMORY_LIMIT_ENABLED` and `SANDBOX_MEMORY_TOTAL_RESERVE`.
-Effective memory (host MemTotal clipped by visible ancestor limits) must exceed
-that reserve and leave room for sandbox requests.
-Small Docker/OrbStack VMs and CI fixtures must explicitly select a smaller
-reserve or disable the policy in their sandboxd configuration. Keep the budget
-semantics aligned across standalone, Helm and both cloud templates.
-The bundled standalone ADX configuration is resolved at image build time and
-uses sandboxd's resource socket; replace the complete tagged capacity source,
-preserving explicitly selected custom sources. Public scheduling capacity must
-follow the sandbox parent ceiling, with allocatable decreasing and recovering
-as requests are allocated and deleted. Adding or lowering a parent cap requires
-an empty sandbox subtree; an existing stricter cap is retained. This aggregate
-sandbox cap does not bound all node components or guarantee avoidance of host OOM.
+Adding or lowering a parent cap requires an empty sandbox subtree; an existing
+stricter cap is retained. This aggregate sandbox cap does not bound all node
+components or guarantee avoidance of host OOM.
 See `deploy/README.md#aggregate-sandbox-memory-budget` for migration and scope.
 
 The [standalone guide](./deploy/standalone/README.md) owns source startup, supported platforms, runtime selection, and SDK setup. Preserve the source launcher's native-daemon architecture selection, clean sandboxd gitlink check, occupied-name preflight, profile locking, unique source image, and node/gateway health checks. Status and stop must verify recorded container identities, images, and data mounts; stop also requires an empty sandbox inventory. Source management is independent of cloud profiles and must preserve unrelated containers.
@@ -757,14 +755,6 @@ push; superseded commits and reruns of older commits skip publication
 entirely. Do not publish per-commit SHA tags or other historical image tags.
 The job checks the image contains runsc and excludes Kata, Firecracker,
 virtiofsd, and runc before starting standalone E2E.
-
-The bounded standalone CI profile selects a 2 GiB reserve and exports the
-measured parent limit as `AKERNEL_TEST_EXPECT_MEMORY_BYTES`. The SDK E2E
-regression checks public capacity plus allocation and release against that
-single-node budget; retain the parent/socket check as a separate assertion.
-Public memory values round down to whole MiB. Keep page-aligned, non-MiB parent
-fixtures and optional `AKERNEL_TEST_EXPECT_CPU_MILLIS` qualification coverage so
-fractional CPU budgets can be exercised with schedulable requests.
 
 CI explicitly trusts the generated standalone public certificate through
 `SSL_CERT_FILE` and enables `AKERNEL_VERIFY_TLS=1` before SDK examples and

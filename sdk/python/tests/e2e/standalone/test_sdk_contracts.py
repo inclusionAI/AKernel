@@ -16,7 +16,6 @@
 
 import os
 import tempfile
-import time
 import unittest
 import uuid
 from pathlib import Path
@@ -30,76 +29,6 @@ _ENABLED = (
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
 _IMAGE = os.environ.get("AKERNEL_TEST_IMAGE") or None
-_MEMORY_BUDGET = os.environ.get("AKERNEL_TEST_EXPECT_MEMORY_BYTES")
-
-
-@unittest.skipUnless(
-    _ENABLED and _MEMORY_BUDGET,
-    "set the SDK integration environment and AKERNEL_TEST_EXPECT_MEMORY_BYTES",
-)
-class MemoryBudgetIntegrationTest(unittest.TestCase):
-    """Check the public scheduler against a measured single-node parent cap."""
-
-    def test_capacity_and_allocation_follow_the_parent_memory_budget(self):
-        # The public resource API rounds byte capacities down to whole MiB.
-        expected = int(_MEMORY_BUDGET) // (1024 * 1024)
-        self.assertGreater(expected, 0)
-        cpu_budget = os.environ.get("AKERNEL_TEST_EXPECT_CPU_MILLIS")
-        expected_cpu = int(cpu_budget) if cpu_budget else None
-        request_cpu = min(1000, expected_cpu) if expected_cpu is not None else 1000
-        self.assertGreater(request_cpu, 0)
-
-        def wait_for_memory(allocatable=None, allocatable_cpu=None):
-            deadline = time.monotonic() + 60
-            last = []
-            while time.monotonic() < deadline:
-                last = resources()
-                self.assertLessEqual(len(last), 1, "requires an isolated single node")
-                if last:
-                    node = last[0]
-                    capacity = node.capacity.get("Memory", -1)
-                    available = node.allocatable.get("Memory", -1)
-                    cpu_matches = expected_cpu is None or (
-                        node.capacity.get("CPU", -1) == expected_cpu
-                        and (
-                            allocatable_cpu is None
-                            or node.allocatable.get("CPU", -1) == allocatable_cpu
-                        )
-                    )
-                    if abs(capacity - expected) < 0.000001 and (
-                        allocatable is None
-                        or abs(available - allocatable) < 0.000001
-                    ) and cpu_matches:
-                        return node
-                time.sleep(0.5)
-            self.fail(
-                f"expected memory capacity={expected}, allocatable={allocatable}; "
-                f"CPU capacity={expected_cpu}, allocatable={allocatable_cpu}; "
-                f"last resource view: {last}"
-            )
-
-        before = wait_for_memory()
-        available = before.allocatable["Memory"]
-        self.assertGreaterEqual(available, 1024)
-        available_cpu = (
-            before.allocatable["CPU"] if expected_cpu is not None else None
-        )
-        if available_cpu is not None:
-            self.assertGreaterEqual(available_cpu, request_cpu)
-        sandbox = Sandbox(cpu=request_cpu, memory=1024, runtime=_RUNTIME, image=_IMAGE)
-        try:
-            self.assertEqual(
-                sandbox.commands.run("printf memory-budget").stdout, "memory-budget"
-            )
-            running = wait_for_memory(
-                available - 1024,
-                available_cpu - request_cpu if available_cpu is not None else None,
-            )
-            self.assertEqual(running.id, before.id)
-        finally:
-            sandbox.kill()
-        released = wait_for_memory(available, available_cpu)
-        self.assertEqual(released.id, before.id)
 
 
 @unittest.skipUnless(
