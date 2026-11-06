@@ -2,6 +2,7 @@
 """Check the maintained profile and Bash compatibility exports without builds."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import unittest
@@ -43,6 +44,47 @@ class HostProfileTest(unittest.TestCase):
                                  str(ROOT / "deploy/pvm/oot-host.env")],
                                 text=True, capture_output=True, check=True, timeout=10)
         self.assertEqual(result.stdout.splitlines(), list(expected.values()))
+
+
+class CiMemoryBudgetTest(unittest.TestCase):
+    def measured_budget(self, value, docker_status=0):
+        script = (ROOT / "deploy/pvm/run-adx-ci.sh").read_text()
+        after_start = script.split(
+            'bash deploy/standalone/start.sh > "${out}/standalone-start.log" 2>&1\n', 1
+        )[1]
+        preparation = after_start.split("export AKERNEL_TEST_NETWORK_BLOCKED_HOST=", 1)[0]
+        environment = dict(os.environ)
+        environment.pop("AKERNEL_TEST_EXPECT_MEMORY_BYTES", None)
+        environment.update(MEASURED_MEMORY_BYTES=value, DOCKER_STATUS=str(docker_status))
+        return subprocess.run(
+            ["bash", "-euc", '''
+docker() {
+  [[ "$*" == "exec akernel-node cat /sys/fs/cgroup/akernel/memory.max" ]] || return 99
+  printf '%s\\n' "${MEASURED_MEMORY_BYTES}"
+  return "${DOCKER_STATUS}"
+}
+''' + preparation + '''
+python3 -c 'import os; print(os.environ["AKERNEL_TEST_EXPECT_MEMORY_BYTES"])'
+'''],
+            text=True, capture_output=True, env=environment, timeout=10,
+        )
+
+    def test_pvm_sdk_tests_inherit_the_measured_parent_limit(self):
+        maximum = str(6 * 1024**3 + 4096)
+        result = self.measured_budget(maximum)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), maximum)
+
+    def test_pvm_qualification_rejects_missing_or_unlimited_parent_caps(self):
+        for value in ("max", "0", "-1", ""):
+            with self.subTest(value=value):
+                result = self.measured_budget(value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("finite positive sandbox parent memory limit", result.stderr)
+
+    def test_pvm_qualification_preserves_parent_probe_failures(self):
+        result = self.measured_budget(str(6 * 1024**3), docker_status=17)
+        self.assertEqual(result.returncode, 17)
 
 
 if __name__ == "__main__":

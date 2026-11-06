@@ -134,6 +134,12 @@ RESOLVER
 python3 deploy/pvm/dns-fixture.py > "${out}/dns-fixture.log" 2>&1 &
 printf '%s\n' "$!" > "${out}/dns-fixture.pid"
 bash deploy/standalone/start.sh > "${out}/standalone-start.log" 2>&1
+AKERNEL_TEST_EXPECT_MEMORY_BYTES=$(docker exec akernel-node cat /sys/fs/cgroup/akernel/memory.max)
+[[ "${AKERNEL_TEST_EXPECT_MEMORY_BYTES}" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'PVM qualification requires a finite positive sandbox parent memory limit' >&2
+  exit 1
+}
+export AKERNEL_TEST_EXPECT_MEMORY_BYTES
 export AKERNEL_TEST_NETWORK_BLOCKED_HOST=blocked.pvm-ci.test
 export AKERNEL_TEST_NETWORK_ALLOWED_HOST=allowed.pvm-ci.test
 export AKERNEL_TEST_NETWORK_WILDCARD_HOST=child.blocked.pvm-ci.test

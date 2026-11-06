@@ -11,7 +11,6 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
-import tomllib
 import unittest
 from pathlib import Path
 
@@ -20,6 +19,9 @@ MEMORY_INPUTS = ("sandbox_memory_limit_enabled", "sandbox_memory_total_reserve")
 
 
 def sandboxd_config(values):
+    # ACK's Python 3.10 tests share evaluate_fixture without parsing TOML.
+    import tomllib
+
     block = re.search(r"(?ms)^      config: \|-\n(.*?)(?=^ {0,6}\S|\Z)", values)
     if block is None:
         raise AssertionError("sandboxd TOML missing from generated cloud values")
@@ -47,7 +49,7 @@ class SandboxMemoryPolicyValidationTest(unittest.TestCase):
             booleans = {
                 "acr_secret_enabled", "enable_kruise", "install_monitor",
                 "adx_public_service_enabled", "enable_runc", "native_filestore",
-                "node_home_use_csi_ephemeral", "node_secret_create",
+                "node_home_use_csi_ephemeral", "node_secret_create", "node_image_pull_auto",
             }
 
             def fixture_input(match):
@@ -119,6 +121,9 @@ class GuidedMemoryPolicyTest(unittest.TestCase):
         for name in ("configure.sh", "common.sh", "shared_storage_config.py"):
             shutil.copy2(ROOT.parent / "scripts" / name, scripts)
         shutil.copy2(ROOT.parents[1] / "Makefile", self.fixture)
+        policy = self.fixture / "deploy/terraform/aliyun/node-image-pull-policy.json"
+        policy.parent.mkdir(parents=True)
+        shutil.copy2(ROOT / "aliyun" / policy.name, policy)
         commands = self.fixture / "bin"
         commands.mkdir()
         formatter = commands / "terraform"
