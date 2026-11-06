@@ -741,6 +741,9 @@ The bounded standalone CI profile selects a 2 GiB reserve and exports the
 measured parent limit as `AKERNEL_TEST_EXPECT_MEMORY_BYTES`. The SDK E2E
 regression checks public capacity plus allocation and release against that
 single-node budget; retain the parent/socket check as a separate assertion.
+Public memory values round down to whole MiB. Keep page-aligned, non-MiB parent
+fixtures and optional `AKERNEL_TEST_EXPECT_CPU_MILLIS` qualification coverage so
+fractional CPU budgets can be exercised with schedulable requests.
 
 CI explicitly trusts the generated standalone public certificate through
 `SSL_CERT_FILE` and enables `AKERNEL_VERIFY_TLS=1` before SDK examples and

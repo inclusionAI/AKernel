@@ -43,6 +43,9 @@ source. Public ADX capacity follows the sandbox budget, while allocatable
 decreases on resource allocation and recovers on deletion. Custom ADX
 configurations with an explicitly selected source remain operator-owned; align
 that source with the effective sandbox budget when enabling a parent limit.
+The public API reports memory in whole MiB rounded down; parent cgroups and the
+sandboxd socket retain byte precision. Compare each interface in its documented
+units, including when a finite ancestor is only page-aligned.
 
 The default requires cgroup v2 and effective memory greater than 16 GiB, with
 enough remaining capacity for the requested sandboxes. Docker/OrbStack VM limits
