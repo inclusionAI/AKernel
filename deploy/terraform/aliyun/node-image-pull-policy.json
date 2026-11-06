@@ -1,0 +1,5 @@
+{
+  "repository_pattern": "^(registry(-vpc)?\\.[a-z0-9-]+\\.aliyuncs\\.com|[a-z0-9-]+\\.[a-z0-9-]+\\.cr\\.aliyuncs\\.com)/[a-zA-Z0-9_./-]+$",
+  "supported_image_types": ["AliyunLinux3", "AliyunLinux3ContainerOptimized"],
+  "official_image_id_pattern": "^aliyun_3_x64_20G_(container_optimized_)?alibase_[0-9]{8}\\.vhd$"
+}

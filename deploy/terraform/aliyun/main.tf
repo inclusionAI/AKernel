@@ -40,6 +40,41 @@ resource "null_resource" "input_validation" {
       condition     = length(var.master_image_tag) > 0 && length(var.node_image_tag) > 0
       error_message = "master_image_tag and node_image_tag must be set to a published AKernel image tag."
     }
+    precondition {
+      condition     = var.node_image_pull_mode != "auto" || var.create_cluster
+      error_message = "auto image pulls only support Terraform-created ACK clusters; existing nodes require a separate migration."
+    }
+    precondition {
+      condition = !local.node_image_pull_auto || (
+        length(var.node_pool_image_id) > 0 ? can(regex(local.node_image_pull_policy.official_image_id_pattern, var.node_pool_image_id)) :
+        contains(local.node_image_pull_policy.supported_image_types, var.node_pool_image_type)
+      )
+      error_message = "auto image pulls require a supported official Aliyun Linux 3 ACK image."
+    }
+    precondition {
+      condition     = !local.node_image_pull_auto || can(regex(local.node_image_pull_policy.repository_pattern, local.node_image_repo))
+      error_message = "auto image pulls require node_image_repository to be an ACR repository without a scheme, tag or digest."
+    }
+    precondition {
+      condition     = !local.node_image_pull_auto || (length(var.dragonfly_namespace) <= 63 && can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.dragonfly_namespace)))
+      error_message = "auto image pulls require dragonfly_namespace to be a DNS label of at most 63 characters."
+    }
+    precondition {
+      condition = !local.node_image_pull_auto || (
+        (length(var.acr_username) > 0) == (length(var.acr_password) > 0) &&
+        (!local.acr_secret_enabled || local.node_image_pull_registry == local.acr_host)
+      )
+      error_message = "Supply both ACR credentials or neither; supplied imagePullSecret credentials must match the node image registry host."
+    }
+    precondition {
+      condition = !local.node_image_pull_auto || alltrue([for pool in var.extra_node_pools : !pool.node_image_pull_worker || (
+        !contains(["dragonfly-seed", "dragonfly-server", "akernel-control-plane", "control-plane", "akernel-storage", "storage"], lookup(pool.labels, "node-role", "")) &&
+        lookup(pool.labels, var.dragonfly_seed_node_pool.node_label_key, "") != var.dragonfly_seed_node_pool.node_label_value &&
+        lookup(pool.labels, var.dragonfly_server_node_pool.node_label_key, "") != var.dragonfly_server_node_pool.node_label_value &&
+        alltrue([for key in keys(local.node_image_pull_labels) : !contains(keys(pool.labels), key)])
+      )])
+      error_message = "Only compute pools may opt into image-pull initialization; do not override its reserved labels."
+    }
     # Skipped: DescribeAvailableResource API is unreliable in some regions (e.g. ap-southeast-3),
     # reporting types as unavailable when they can actually be provisioned via console/ACK.
     # precondition {
@@ -95,6 +130,11 @@ locals {
     local.node_pool_bootstrap_base,
     templatefile("${path.module}/../shared/node-pid-budget.sh.tftpl", {}),
   ])
+  node_pool_original_user_data = length(var.node_pool_user_data) == 0 ? local.node_pool_bootstrap_user_data : join("\n", [
+    local.node_pool_bootstrap_user_data,
+    "/bin/bash <(printf '%s' '${base64encode(var.node_pool_user_data)}' | base64 --decode)",
+  ])
+  dragonfly_seed_domain = "dragonfly-seed-client.${var.dragonfly_namespace}.svc.cluster.local"
   dragonfly_seed_user_data = var.dragonfly_seed_node_pool.mount_local_nvme ? join("\n", [
     local.node_pool_bootstrap_base,
     templatefile("${path.module}/../shared/local-nvme-mount.sh.tftpl", {
@@ -134,6 +174,7 @@ locals {
   master_image_repo = length(var.master_image_repository) > 0 ? var.master_image_repository : "${local.acr_registry}/all-in-one"
   node_image_repo   = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
 
+  core_chart_hash = sha256(join("", [for f in fileset("${path.module}/../../akernel/charts/core", "**") : filesha256("${path.module}/../../akernel/charts/core/${f}")]))
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
     cluster_name                = var.cluster_name
     adx_public_service_enabled  = var.adx_public_service_enabled
@@ -153,6 +194,7 @@ locals {
     schedule_placement_policy   = var.schedule_placement_policy
     node_image_repository       = local.node_image_repo
     node_image_tag              = var.node_image_tag
+    node_image_pull_auto        = local.node_image_pull_auto
     enable_kruise               = var.install_prereqs
     sandboxd_nat_backend        = var.sandboxd_nat_backend
     chunk_db_size               = var.chunk_db_size
@@ -181,7 +223,7 @@ locals {
     oss_access_key_secret = var.oss_access_key_secret
     oss_bucket            = var.oss_bucket
     oss_object_prefix     = var.oss_object_prefix
-    oss_proxy_url         = length(var.oss_proxy_url) > 0 ? var.oss_proxy_url : (var.install_dragonfly ? "http://dragonfly-seed-client.${var.dragonfly_namespace}.svc.cluster.local:4001" : "")
+    oss_proxy_url         = length(var.oss_proxy_url) > 0 ? var.oss_proxy_url : (var.install_dragonfly ? "http://${local.dragonfly_seed_domain}:4001" : "")
 
     install_monitor   = var.install_monitor
     monitor_namespace = var.monitor_namespace
@@ -233,14 +275,17 @@ locals {
 
   # Dragonfly server pool (manager + scheduler) — fixed size, goes through extra node pools
   dragonfly_server_pool = var.install_dragonfly && var.dragonfly_server_node_pool.enabled ? [{
-    name                  = var.dragonfly_server_node_pool.name
-    size                  = var.dragonfly_server_node_pool.size
-    instance_types        = var.dragonfly_server_node_pool.instance_types
-    system_disk_size      = var.dragonfly_server_node_pool.system_disk_size
-    data_disk_enabled     = true
-    data_disk_size        = var.dragonfly_server_node_pool.data_disk_size
-    use_akernel_data_disk = false
-    pod_pids_limit        = null
+    name                   = var.dragonfly_server_node_pool.name
+    size                   = var.dragonfly_server_node_pool.size
+    instance_types         = var.dragonfly_server_node_pool.instance_types
+    system_disk_size       = var.dragonfly_server_node_pool.system_disk_size
+    data_disk_enabled      = true
+    data_disk_size         = var.dragonfly_server_node_pool.data_disk_size
+    use_akernel_data_disk  = false
+    pod_pids_limit         = null
+    node_image_pull_worker = false
+    pre_user_data          = ""
+    user_data              = ""
     labels = {
       (var.dragonfly_server_node_pool.node_label_key) = var.dragonfly_server_node_pool.node_label_value
     }
@@ -292,6 +337,43 @@ locals {
     server_taint_effect        = var.dragonfly_server_node_pool.taint_effect
   }) : ""
 
+}
+
+# Shared by all opted-in worker pools; no node-pool resource IDs appear here.
+locals {
+  node_image_pull_auto     = var.node_image_pull_mode == "auto" && var.create_cluster
+  node_image_pull_policy   = jsondecode(file("${path.module}/node-image-pull-policy.json"))
+  node_image_pull_registry = split("/", local.node_image_repo)[0]
+  node_image_pull_labels = {
+    "akernel.io/image-pull-profile" = "ack-dragonfly-v1"
+    "akernel.io/image-pull-ready"   = "false"
+    "akernel.io/image-pull-pool"    = "default"
+  }
+  # Logical markers avoid a pool ID -> its own User Data dependency cycle.
+  node_image_pull_workers = merge({ default = { marker = "default", user_data = var.node_pool_user_data } }, {
+    for pool in var.extra_node_pools : "extra/${pool.name}" => { marker = "pool-${substr(sha256(pool.name), 0, 16)}", user_data = pool.user_data }
+    if pool.node_image_pull_worker
+  })
+  node_image_pull_unit = file("${path.module}/node-image-pull.service")
+  node_image_pull_profile = {
+    cluster_id    = var.create_cluster ? alicloud_cs_managed_kubernetes.ack[0].id : ""
+    region        = var.region
+    registry      = local.node_image_pull_registry
+    domain        = local.dragonfly_seed_domain
+    service_cidr  = var.service_cidr
+    helper_sha256 = filesha256("${path.module}/node-image-pull.py")
+  }
+  node_image_pull_user_data = local.node_image_pull_auto ? {
+    for key, worker in local.node_image_pull_workers : key => templatefile("${path.module}/node-image-pull.sh.tftpl", {
+      bundle_gzip_b64 = base64gzip(jsonencode({
+        helper    = file("${path.module}/node-image-pull.py")
+        profile   = merge(local.node_image_pull_profile, { pool_marker = worker.marker })
+        bootstrap = local.node_pool_bootstrap_user_data
+        user_data = worker.user_data
+        unit      = local.node_image_pull_unit
+      }))
+    })
+  } : {}
 }
 
 resource "alicloud_vpc" "this" {
@@ -434,15 +516,23 @@ resource "alicloud_cs_kubernetes_node_pool" "default_with_key" {
     }
   }
 
-  key_name  = var.node_pool_key_name
-  user_data = local.node_pool_bootstrap_user_data
-  tags      = var.tags
+  key_name      = var.node_pool_key_name
+  pre_user_data = length(var.node_pool_pre_user_data) > 0 ? base64encode(var.node_pool_pre_user_data) : null
+  user_data     = local.node_image_pull_auto ? base64encode(local.node_image_pull_user_data.default) : local.node_pool_original_user_data
+  update_nodes  = false # ACK synchronizes pool labels/taints only when explicitly requested.
+  tags          = var.tags
 
   dynamic "labels" {
-    for_each = var.node_pool_exclusive_eni ? [1] : []
+    for_each = merge(var.node_pool_exclusive_eni ? { "k8s.aliyun.com/exclusive-mode-eni-type" = "eniOnly" } : {}, local.node_image_pull_auto ? local.node_image_pull_labels : {})
     content {
-      key   = "k8s.aliyun.com/exclusive-mode-eni-type"
-      value = "eniOnly"
+      key   = labels.key
+      value = labels.value
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = !local.node_image_pull_auto || length(try(local.node_image_pull_user_data.default, "")) <= 16384
+      error_message = "Decoded ACK User Data exceeds 16 KiB; reduce custom initialization."
     }
   }
 }
@@ -483,15 +573,23 @@ resource "alicloud_cs_kubernetes_node_pool" "default_with_password" {
     }
   }
 
-  password  = length(var.node_pool_login_password) > 0 ? var.node_pool_login_password : null
-  user_data = local.node_pool_bootstrap_user_data
-  tags      = var.tags
+  password      = length(var.node_pool_login_password) > 0 ? var.node_pool_login_password : null
+  pre_user_data = length(var.node_pool_pre_user_data) > 0 ? base64encode(var.node_pool_pre_user_data) : null
+  user_data     = local.node_image_pull_auto ? base64encode(local.node_image_pull_user_data.default) : local.node_pool_original_user_data
+  update_nodes  = false
+  tags          = var.tags
 
   dynamic "labels" {
-    for_each = var.node_pool_exclusive_eni ? [1] : []
+    for_each = merge(var.node_pool_exclusive_eni ? { "k8s.aliyun.com/exclusive-mode-eni-type" = "eniOnly" } : {}, local.node_image_pull_auto ? local.node_image_pull_labels : {})
     content {
-      key   = "k8s.aliyun.com/exclusive-mode-eni-type"
-      value = "eniOnly"
+      key   = labels.key
+      value = labels.value
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = !local.node_image_pull_auto || length(try(local.node_image_pull_user_data.default, "")) <= 16384
+      error_message = "Decoded ACK User Data exceeds 16 KiB; reduce custom initialization."
     }
   }
 }
@@ -539,12 +637,17 @@ resource "alicloud_cs_kubernetes_node_pool" "extra" {
     }
   }
 
-  key_name = length(var.node_pool_key_name) > 0 ? var.node_pool_key_name : null
-  password = length(var.node_pool_key_name) == 0 && length(var.node_pool_login_password) > 0 ? var.node_pool_login_password : null
-  tags     = var.tags
+  key_name      = length(var.node_pool_key_name) > 0 ? var.node_pool_key_name : null
+  password      = length(var.node_pool_key_name) == 0 && length(var.node_pool_login_password) > 0 ? var.node_pool_login_password : null
+  pre_user_data = length(each.value.pre_user_data) > 0 ? base64encode(each.value.pre_user_data) : null
+  user_data = local.node_image_pull_auto && each.value.node_image_pull_worker ? base64encode(local.node_image_pull_user_data["extra/${each.key}"]) : (
+    length(each.value.user_data) > 0 ? each.value.user_data : null
+  )
+  update_nodes = false
+  tags         = var.tags
 
   dynamic "labels" {
-    for_each = each.value.labels
+    for_each = merge(each.value.labels, local.node_image_pull_auto && each.value.node_image_pull_worker ? merge(local.node_image_pull_labels, { "akernel.io/image-pull-pool" = local.node_image_pull_workers["extra/${each.key}"].marker }) : {})
     content {
       key   = labels.key
       value = labels.value
@@ -557,6 +660,12 @@ resource "alicloud_cs_kubernetes_node_pool" "extra" {
       key    = taints.value.key
       value  = taints.value.value
       effect = taints.value.effect
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = !local.node_image_pull_auto || !each.value.node_image_pull_worker || length(try(local.node_image_pull_user_data["extra/${each.key}"], "")) <= 16384
+      error_message = "Decoded ACK User Data exceeds 16 KiB; reduce custom initialization."
     }
   }
 }
@@ -792,7 +901,62 @@ module "shared_storage" {
   depends_on           = [null_resource.ensure_core_namespace]
 }
 
+# Run before the entire core release: its init/control Pods can share the node
+# image. Never silently migrate an existing pool whose nodes lack this profile.
+resource "null_resource" "node_image_pull_ready" {
+  count = local.node_image_pull_auto ? 1 : 0
+  triggers = {
+    always = timestamp()
+  }
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    environment = {
+      KUBECONFIG = local.kubeconfig_path
+      # ACK resource id is cluster_id:node_pool_id; Node labels use node_pool_id.
+      POOLS = jsonencode(merge(
+        { for pool in concat(alicloud_cs_kubernetes_node_pool.default_with_key, alicloud_cs_kubernetes_node_pool.default_with_password) : pool.node_pool_id => var.node_pool_size },
+        { for name, pool in alicloud_cs_kubernetes_node_pool.extra : pool.node_pool_id => tonumber(pool.desired_size) if contains(keys(local.node_image_pull_workers), "extra/${name}") }
+      ))
+    }
+    command = <<-EOT
+      set -euo pipefail
+      python3 - <<'PY'
+      import json, os, subprocess, time
+      expected = json.loads(os.environ['POOLS'])
+      deadline = time.monotonic() + 720
+      while time.monotonic() < deadline:
+          try:
+              result = subprocess.run(['kubectl', '--request-timeout=15s', 'get', 'nodes', '-o', 'json'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+              if result.returncode == 0:
+                  nodes = json.loads(result.stdout)['items']
+                  groups = {pool: [n for n in nodes if n['metadata'].get('labels', {}).get('alibabacloud.com/nodepool-id') == pool] for pool in expected}
+                  def initialized(node):
+                      labels = node['metadata'].get('labels', {})
+                      return (labels.get('akernel.io/image-pull-profile') == 'ack-dragonfly-v1' and
+                              labels.get('akernel.io/image-pull-ready') == 'true' and
+                              any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', [])))
+                  if all(len(groups[pool]) >= size and all(initialized(n) for n in groups[pool]) for pool, size in expected.items()):
+                      break
+          except (subprocess.TimeoutExpired, ValueError):
+              pass
+          time.sleep(5)
+      else:
+          raise SystemExit('ACK worker image-pull bootstrap is not ready; existing nodes require a separate migration')
+      PY
+    EOT
+  }
+  # Bootstrap itself allows an absent Service; installed Dragonfly must be ready
+  # before core's first shared-image pull.
+  depends_on = [alicloud_cs_kubernetes_node_pool.default_with_key, alicloud_cs_kubernetes_node_pool.default_with_password, alicloud_cs_kubernetes_node_pool.extra, helm_release.dragonfly]
+}
+
+moved {
+  from = helm_release.akernel_core
+  to   = helm_release.akernel_core[0]
+}
+
 resource "helm_release" "akernel_core" {
+  count                      = local.node_image_pull_auto ? 0 : 1
   name                       = "akernel-core"
   chart                      = "${path.module}/../../akernel/charts/core"
   namespace                  = var.core_namespace
@@ -805,10 +969,29 @@ resource "helm_release" "akernel_core" {
   # Force Terraform to detect changes in chart files (templates, configs, etc.)
   set {
     name  = "chartContentHash"
-    value = sha256(join("", [for f in fileset("${path.module}/../../akernel/charts/core", "**") : filesha256("${path.module}/../../akernel/charts/core/${f}")]))
+    value = local.core_chart_hash
   }
 
   depends_on = [module.shared_storage, data.alicloud_cs_cluster_credential.ack, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.create_storage_class]
+}
+
+# Separate DAG branches keep direct deployments independent of optional DF.
+resource "helm_release" "akernel_core_dragonfly" {
+  count                      = local.node_image_pull_auto ? 1 : 0
+  name                       = "akernel-core"
+  chart                      = "${path.module}/../../akernel/charts/core"
+  namespace                  = var.core_namespace
+  create_namespace           = false
+  timeout                    = 900
+  disable_openapi_validation = true
+  values                     = concat([local.core_values], [for f in var.core_values_override_files : file(f)])
+
+  set {
+    name  = "chartContentHash"
+    value = local.core_chart_hash
+  }
+
+  depends_on = [module.shared_storage, data.alicloud_cs_cluster_credential.ack, helm_release.prereq_openkruise, null_resource.ensure_core_namespace, null_resource.ensure_adx_secret, null_resource.create_storage_class, null_resource.node_image_pull_ready]
 }
 
 resource "helm_release" "akernel_monitor" {

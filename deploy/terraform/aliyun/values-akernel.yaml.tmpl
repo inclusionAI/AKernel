@@ -79,6 +79,14 @@ node:
             values:
             - dragonfly-seed
             - dragonfly-server
+%{ if node_image_pull_auto ~}
+          - key: akernel.io/image-pull-profile
+            operator: In
+            values: ["ack-dragonfly-v1"]
+          - key: akernel.io/image-pull-ready
+            operator: In
+            values: ["true"]
+%{ endif ~}
   image:
     repository: "${node_image_repository}"
     tag: "${node_image_tag}"

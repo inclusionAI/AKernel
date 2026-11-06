@@ -46,6 +46,15 @@ node_pool_exclusive_eni = true
 #   node_pool_instance_types = ["ecs.r9i.4xlarge", "ecs.r5.8xlarge", "ecs.se1ne.8xlarge"]
 node_pool_instance_types       = ["ecs.c7.3xlarge"]
 node_pool_image_type           = "AliyunLinux3"
+# auto: initialize only new workers with a Dragonfly Service-domain mirror and ACR fallback.
+# Requires official AliyunLinux3/ContainerOptimized and an ACR node image repository.
+node_image_pull_mode           = "direct"
+# Optional raw Bash hooks; pre runs in ACK's pre-join phase, post follows built-in runtime/PID initialization.
+# node_pool_pre_user_data      = file("worker-pre.sh")
+# node_pool_user_data          = file("worker-post.sh")
+# Additional workers must opt in; retain their complete existing host/runtime setup in these hooks.
+# extra_node_pools = [{ name = "workers", size = 1, node_image_pull_worker = true,
+#   labels = { node-role = "akernel-compute" }, pre_user_data = file("worker-pre.sh"), user_data = file("worker-post.sh") }]
 # Optional: pin ACK node image to a specific official/custom image ID.
 # node_pool_image_id           = "aliyun_3_x64_20G_alibase_20230110.vhd"
 # Optional: pin node pool to one zone in zone_ids.
