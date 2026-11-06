@@ -15,6 +15,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
+def evaluate_fixture(main, inputs, files=None):
+    """Evaluate real Terraform expressions without cloud resources or credentials."""
+    with tempfile.TemporaryDirectory() as directory:
+        fixture = Path(directory)
+        (fixture / "main.tf").write_text(main)
+        (fixture / "inputs.tfvars.json").write_text(json.dumps(inputs))
+        for name, contents in (files or {}).items():
+            (fixture / name).write_text(contents)
+        subprocess.run(["terraform", "init", "-backend=false", "-input=false", "-no-color"],
+                       cwd=fixture, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            ["terraform", "plan", "-input=false", "-lock=false", "-refresh=false", "-no-color",
+             "-var-file=inputs.tfvars.json", "-out=plan"],
+            cwd=fixture, capture_output=True, text=True, check=False)
+        if result.returncode:
+            return result, None
+        plan = subprocess.run(["terraform", "show", "-json", "plan"],
+                              cwd=fixture, capture_output=True, text=True, check=True)
+        return result, {key: item["value"] for key, item in
+                        json.loads(plan.stdout)["planned_values"]["outputs"].items()}
+
+
 @unittest.skipUnless(
     shutil.which("terraform"), "Terraform is required for evaluated storage validation"
 )
@@ -36,62 +58,16 @@ class CheckpointStorageValidationTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def run_plan(self, provider, storage, juicefs=None):
-        with tempfile.TemporaryDirectory() as directory:
-            fixture = Path(directory)
-            variables = (ROOT / provider / "variables.tf").read_text()
-            # Evaluate the real provider input validation and shared module
-            # output preconditions without cloud resources or credentials.
-            blocks = [
-                re.search(rf'(?ms)^variable "{name}" {{.*?^}}', variables).group()
-                for name in ("checkpoint_storage", "juicefs")
-            ]
-            shared = (ROOT / "shared-storage/main.tf").read_text()
-            blocks.append(re.search(r"(?ms)^locals {.*?^}", shared).group())
-            blocks.append((ROOT / "shared-storage/outputs.tf").read_text())
-            (fixture / "main.tf").write_text("\n".join(blocks))
-            (fixture / "inputs.tfvars.json").write_text(
-                json.dumps(
-                    {
-                        "checkpoint_storage": storage,
-                        "juicefs": juicefs or {},
-                    }
-                )
-            )
-            subprocess.run(
-                ["terraform", "init", "-backend=false", "-input=false", "-no-color"],
-                cwd=fixture,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            result = subprocess.run(
-                [
-                    "terraform",
-                    "plan",
-                    "-input=false",
-                    "-lock=false",
-                    "-refresh=false",
-                    "-no-color",
-                    "-var-file=inputs.tfvars.json",
-                    "-out=plan",
-                ],
-                cwd=fixture,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode:
-                return result, None
-            plan = subprocess.run(
-                ["terraform", "show", "-json", "plan"],
-                cwd=fixture,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return result, json.loads(plan.stdout)["planned_values"]["outputs"][
-                "helm_values"
-            ]["value"]
+        variables = (ROOT / provider / "variables.tf").read_text()
+        # Evaluate the real input validation and shared output preconditions.
+        blocks = [re.search(rf'(?ms)^variable "{name}" {{.*?^}}', variables).group()
+                  for name in ("checkpoint_storage", "juicefs")]
+        shared = (ROOT / "shared-storage/main.tf").read_text()
+        blocks.append(re.search(r"(?ms)^locals {.*?^}", shared).group())
+        blocks.append((ROOT / "shared-storage/outputs.tf").read_text())
+        result, outputs = evaluate_fixture("\n".join(blocks),
+                                           {"checkpoint_storage": storage, "juicefs": juicefs or {}})
+        return result, outputs["helm_values"] if outputs else None
 
     def test_alias_validation_in_both_provider_roots_and_effective_modes(self):
         for provider in ("aliyun", "huaweicloud"):
