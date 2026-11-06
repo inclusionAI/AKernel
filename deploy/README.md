@@ -101,6 +101,92 @@ sampling; Collector rate queries override it to 30 seconds. The 200-point target
 is approximate because Grafana rounds query steps to standard durations. Rate
 windows cover the actual step so wide views preserve bursts between samples.
 
+### Runc worker preparation and recovery
+
+With `node.config.sandboxd.enableRunc=true`
+(`core.node.config.sandboxd.enableRunc=true` in the umbrella chart), Helm runs
+`prepare-runc-filesystems` before starting the node services.
+The host kernel must support OverlayFS and EROFS, either built in or through
+modules. Already registered filesystems in `/proc/filesystems` need no module
+loading or module files. The host's `/lib` must resolve to a directory;
+Kubelet resolves the host path on usrmerged systems. It is mounted read-only at
+`/host/lib` in the init container, so absent `/lib/modules` does not prevent the
+already-registered path. Otherwise the host must supply a self-contained
+`/lib/modules/$(uname -r)` tree with matching modules and dependency metadata.
+The init uses `modprobe -d /host`; external absolute `.ko` symlinks are not
+relocated into this mount. The selected node image must provide `/bin/sh`,
+`grep`, `uname`, and a compatible `modprobe` (the bundled image includes kmod).
+Host policy must permit its privileged root process to load modules,
+including any module-signing or lockdown requirements. A privileged Pod cannot
+provide missing kernel support or override the host's module-loading policy.
+
+Preparation fails closed if loading fails or either filesystem remains
+unregistered. Kubernetes retries the init container; the Pod can remain in
+`Init:Error` or `Init:CrashLoopBackOff`. A volume setup failure instead appears
+in Pod events before the command starts. The entire AKernel node Pod is blocked,
+including other runtimes configured in it. A Kubernetes `Ready` node therefore
+does not establish usable AKernel capacity. A fresh worker blocked here has not
+started adxlet to register its resources; an existing worker's retained ADX
+record must not be mistaken for a live, schedulable worker.
+
+Qualify each host image/kernel, node image, and node-pool provisioning profile
+on a dedicated worker before admitting workloads:
+
+1. Record the worker's kernel, filesystem registration and module availability.
+   Exercise successful preparation twice, including a filesystem not yet
+   registered when safe on that disposable worker. A host where both are
+   already registered validates only the skip path, not real module loading.
+2. Record the Pod events and init exit status, then inspect AKernel's resource
+   view using the configured SDK credentials. `ak resources` is convenient;
+   Python `resources()` includes nodes the CLI omits when CPU capacity is below
+   one core. Match the target's `NodeInfo.id`, status, capacity and allocatable
+   resources rather than using Kubernetes node counts.
+3. Target that worker explicitly for a real runc command and private write:
+
+   ```python
+   from akernel_sdk import Sandbox, resources
+
+   for node in resources():
+       print(node.id, node.status, node.capacity, node.allocatable)
+   with Sandbox(node_id="<target-node-id>", runtime="runc",
+                cpu=1000, memory=256, schedule_timeout=10) as sandbox:
+       result = sandbox.commands.run("printf runc-ready > /tmp/runc-probe && cat /tmp/runc-probe")
+       assert result.exit_code == 0 and result.stdout == "runc-ready"
+   ```
+
+4. On the disposable worker, also qualify an unavailable-module or denied-load
+   case while a required filesystem is unregistered. Record the failing init,
+   its logs, the resource view and the target-specific create failure. Confirm
+   that the worker contributes no usable AKernel capacity; do not infer this
+   from Pod status alone. Restore the supported profile and repeat the success
+   probe. Shell fixtures cover failure branches but do not replace this worker
+   qualification; record any untested real-loading or recovery boundary.
+
+For detection, compare the expected workers with initialized node Pods and
+usable ADX resources within the operator's provisioning deadline. Monitor
+DaemonSet unavailable Pods and persistent init failures through the cluster's
+monitoring, or inspect them directly (use the selected namespace and Pod):
+
+```bash
+kubectl -n akernel-system get pods -l app=node -o wide
+kubectl -n akernel-system describe pod <node-pod>
+kubectl -n akernel-system logs <node-pod> -c prepare-runc-filesystems
+```
+
+Add `--previous` to retrieve a prior init attempt. The node's own Collector
+cannot report while its main container has not started.
+
+This chart does not install automatic node replacement for init failures.
+Document the selected node pool/autoscaler's actual health signal and timeout:
+a scheduled Pod failing initialization is not an unschedulable Pod waiting for
+CPU or memory, and generic autoscaling or Kubernetes `NodeReady` checks do not
+establish recovery for this condition. The fallback is operator detection and
+repair of the host modules, permissions or selected image, followed by a retry
+and the acceptance probe above; replace an incompatible worker with a qualified
+host profile if repair is unsuitable. Drain existing sandboxes before replacing
+an existing worker. Repeatedly replacing workers from the same incompatible
+profile does not fix the prerequisite.
+
 ### systemd container identity
 
 Helm stops node ADX services with `systemctl stop adx.service` and control
@@ -332,8 +418,10 @@ and persistently revokes removed keys. Tenant keys are preserved. Old keys
 cannot be reused, even after restart. Existing ingress caches remain bounded by
 the configured authentication TTL (10 seconds here); in-flight requests and
 established streams are not canceled by rotation. Keep Redis data during rotation.
-This requires an ADX release containing administrator reconciliation; #71 does
-not contain it. The rollout procedure has not been validated on a live cluster.
+Use an ADX release with administrator reconciliation. Before production rotation,
+qualify the procedure on an isolated deployment using the selected image: verify
+new-key access, old-key rejection after the cache TTL and Coordinator restart,
+and continued tenant-key access. Record that deployment's validation results.
 
 ### Install with managed Redis
 

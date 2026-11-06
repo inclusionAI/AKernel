@@ -82,16 +82,26 @@ spec:
             - -ec
             - |
               for filesystem in overlay erofs; do
-                if ! grep -Eq "(^|[[:space:]])${filesystem}$" /proc/filesystems; then
-                  modprobe "${filesystem}"
+                if grep -Eq "(^|[[:space:]])${filesystem}$" /proc/filesystems; then
+                  continue
+                fi
+                kernel_release=$(uname -r)
+                modules_dir="/host/lib/modules/${kernel_release}"
+                if [ ! -d "${modules_dir}" ]; then
+                  echo "runc cannot prepare host filesystem ${filesystem} for kernel ${kernel_release}: missing module directory ${modules_dir}" >&2
+                  exit 1
+                fi
+                if ! modprobe -d /host "${filesystem}"; then
+                  echo "runc failed to load host filesystem ${filesystem} for kernel ${kernel_release}" >&2
+                  exit 1
                 fi
                 if ! grep -Eq "(^|[[:space:]])${filesystem}$" /proc/filesystems; then
-                  echo "runc requires host filesystem ${filesystem}" >&2
+                  echo "runc requires host filesystem ${filesystem} for kernel ${kernel_release}: module load did not register it" >&2
                   exit 1
                 fi
               done
           volumeMounts:
-            - {name: runc-host-modules, mountPath: /lib/modules, readOnly: true}
+            - {name: runc-host-modules, mountPath: /host/lib, readOnly: true}
         {{- end }}
         {{- if or (has .Values.adx.checkpointStorage.kind (list "s3" "distributed_fs")) (eq .Values.node.config.sandboxd.runscCheckpointMode "reflink") }}
         - name: prepare-checkpoint-storage
@@ -323,7 +333,7 @@ spec:
       volumes:
       {{- if .Values.node.config.sandboxd.enableRunc }}
       - name: runc-host-modules
-        hostPath: {path: /lib/modules, type: Directory}
+        hostPath: {path: /lib, type: Directory}
       {{- end }}
       {{- if .Values.node.applicationLogs.enabled }}
       - name: application-logs-disk
