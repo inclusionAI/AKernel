@@ -505,6 +505,9 @@ node:
       # pvm selects firecracker-pvm and removes Kata from this node profile.
       # The image must contain the validated PVM guest bundle.
       firecrackerBackend: kvm
+      # PVM parent memory enforcement requires separate host qualification.
+      # Explicit opt-in overrides memory_limit.enabled; set an appropriate reserve in config.
+      pvmMemoryLimitEnabled: false
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
       config: |-

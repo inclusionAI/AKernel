@@ -241,7 +241,12 @@ distill-fs release's packaged manifest.
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
 Standalone and the direct Helm chart enable the cgroup v2 parent memory policy
-with `total_reserve="16GiB"`. Both cloud Terraform profiles leave it disabled
+with `total_reserve="16GiB"` for the ordinary KVM profile. PVM keeps it disabled
+until explicitly selected with `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true` in
+standalone or `node.config.sandboxd.pvmMemoryLimitEnabled=true` in Helm. Size
+the reserve for the selected L1 and qualify that finite-cap combination on the
+matching PVM host before rollout; ordinary runsc tests do not qualify PVM.
+Both cloud Terraform profiles leave it disabled
 until explicitly enabled with `sandbox_memory_limit_enabled`; their default
 operating-system images have not been qualified for this policy. Guided profiles
 expose `SANDBOX_MEMORY_LIMIT_ENABLED` and `SANDBOX_MEMORY_TOTAL_RESERVE`.

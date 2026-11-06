@@ -64,6 +64,9 @@ for name,section,key in [('firecracker','vmm','binary_sha256'),('vmlinux','guest
 PAYLOAD
 docker image inspect --format '{{.Id}}' "$IMAGE" > "${out}/image-id.txt"
 export AKERNEL_FIRECRACKER_BACKEND=pvm AKERNEL_CHUNK_DB_SIZE=1GiB
+# Aggregate parent enforcement remains outside the qualified PVM profile.
+export AKERNEL_PVM_MEMORY_LIMIT_ENABLED=false
+unset AKERNEL_TEST_EXPECT_MEMORY_BYTES AKERNEL_TEST_EXPECT_CPU_MILLIS
 export AKERNEL_CONTAINER_PROXY=http://10.0.2.2:3128
 export AKERNEL_CONTAINER_NO_PROXY=localhost,127.0.0.1,172.17.0.1,10.88.0.1
 # Keep Redis AOF/control writes on the L1 root disk while snapshot writes use XFS.
@@ -119,10 +122,6 @@ assert text.count(old)==1
 text=text.replace(old,'resolv_conf_path="/home/akernel/sandboxd/config/pvm-ci-resolv.conf"')
 text=text.replace('filestore_dir_size="50G"','filestore_dir_size=""')
 text=text.replace('filestore_xfs_enabled=false','filestore_xfs_enabled=true')
-# The dedicated qualification L1 has 8 GiB; keep the parent policy enabled
-# with an explicit test reserve instead of the 16 GiB deployment default.
-assert text.count('total_reserve = "16GiB"')==1
-text=text.replace('total_reserve = "16GiB"','total_reserve = "2GiB"',1)
 # OCI and Nydus directory roots require an explicitly selected virtio-fs
 # profile; the maintained standalone default remains EROFS.
 assert text.count('virtiofs_enabled=false')==1
@@ -134,12 +133,6 @@ RESOLVER
 python3 deploy/pvm/dns-fixture.py > "${out}/dns-fixture.log" 2>&1 &
 printf '%s\n' "$!" > "${out}/dns-fixture.pid"
 bash deploy/standalone/start.sh > "${out}/standalone-start.log" 2>&1
-AKERNEL_TEST_EXPECT_MEMORY_BYTES=$(docker exec akernel-node cat /sys/fs/cgroup/akernel/memory.max)
-[[ "${AKERNEL_TEST_EXPECT_MEMORY_BYTES}" =~ ^[1-9][0-9]*$ ]] || {
-  echo 'PVM qualification requires a finite positive sandbox parent memory limit' >&2
-  exit 1
-}
-export AKERNEL_TEST_EXPECT_MEMORY_BYTES
 export AKERNEL_TEST_NETWORK_BLOCKED_HOST=blocked.pvm-ci.test
 export AKERNEL_TEST_NETWORK_ALLOWED_HOST=allowed.pvm-ci.test
 export AKERNEL_TEST_NETWORK_WILDCARD_HOST=child.blocked.pvm-ci.test
@@ -154,7 +147,7 @@ export AKERNEL_TEST_CHECKPOINT_MEMORY_MIB=2048
 python3 - "$out" <<'SETTINGS'
 import json,sys
 from pathlib import Path
-(Path(sys.argv[1])/'qualification-settings.json').write_text(json.dumps({'runtime':'firecracker-pvm','virtiofs_enabled':True,'checkpoint_memory_mib':2048,'other_sdk_memory_mib':2048,'checkpoint_snapshot_type':'Full (requested explicitly by ADX)','debugctl_applied':False,'dedicated_pvm_profile':True},indent=2))
+(Path(sys.argv[1])/'qualification-settings.json').write_text(json.dumps({'runtime':'firecracker-pvm','virtiofs_enabled':True,'checkpoint_memory_mib':2048,'other_sdk_memory_mib':2048,'checkpoint_snapshot_type':'Full (requested explicitly by ADX)','debugctl_applied':False,'dedicated_pvm_profile':True,'sandbox_parent_memory_limit_enabled':False,'sandbox_parent_memory_limit_qualified':False},indent=2))
 SETTINGS
 export PYTHONPATH="${root}/sdk/python"
 export AKERNEL_TEST_IMAGE=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["oci"])' "$fixtures")

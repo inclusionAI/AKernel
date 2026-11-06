@@ -230,11 +230,14 @@ override themselves. The guest-agent startup budget remains 15 seconds;
 extending an RPC cleanup budget does not authorize increasing that deadline.
 
 The aggregate sandbox memory policy remains disabled by default for PVM until
-its finite-cap profile is qualified on the matching maintained host. Ordinary
-runsc tests and static PVM profile checks do not qualify this combination.
-Explicitly enabling it requires a reserve sized for the selected L1 and a
-separate bounded PVM qualification; the 16 GiB deployment reserve is not a
-universal host OOM safety budget.
+its finite-cap profile is qualified on the matching maintained host. Standalone
+can explicitly select `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true`; Helm uses
+`node.config.sandboxd.pvmMemoryLimitEnabled=true` (under `core` in the umbrella
+chart). Both default to false and apply only to the PVM backend. Select a
+`total_reserve` suitable for the actual L1 in its sandboxd configuration before
+opting in, then run the matching bounded PVM qualification. Ordinary runsc tests
+and static profile checks do not qualify this combination, and the 16 GiB
+deployment reserve is not a universal host OOM safety budget.
 
 ## Isolated qualification workflow
 

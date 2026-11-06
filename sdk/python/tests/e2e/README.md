@@ -17,6 +17,14 @@ A public SDK Full run is not the entire platform deployment acceptance suite.
 Most cases request 1 CPU / 2 GiB per Sandbox; concurrent fixtures need capacity
 for multiple instances.
 
+The `sdk-contracts` group runs `SandboxPublicContractIntegrationTest` for every
+runtime. Parent memory-budget qualification is a separate
+`MemoryBudgetIntegrationTest` in the same module, discovered by standard CI's
+standalone unittest command with `AKERNEL_TEST_EXPECT_MEMORY_BYTES` set to the
+measured finite parent limit. It also checks CPU when
+`AKERNEL_TEST_EXPECT_CPU_MILLIS` is set. The PVM fixture leaves parent enforcement
+disabled and does not include this qualification in its SDK smoke coverage.
+
 ## Run
 
 Install the SDK from this checkout and configure its

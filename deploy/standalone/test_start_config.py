@@ -57,6 +57,7 @@ class StartConfigTest(unittest.TestCase):
             AKERNEL_NAT_BACKEND="iptables",
             AKERNEL_ENABLE_RUNC="true",
             AKERNEL_FIRECRACKER_BACKEND="kvm",
+            AKERNEL_PVM_MEMORY_LIMIT_ENABLED="false",
             AKERNEL_RUNC_RESOLV_CONF=str(self.source),
             AKERNEL_CHUNK_DB_SIZE="",
         )
@@ -137,6 +138,42 @@ class StartConfigTest(unittest.TestCase):
         self.assertNotIn("firecracker", config["plugin.runtime.runtime_binary"])
         self.assertNotIn("kata", config["plugin.runtime.runtime_binary"])
         self.assertEqual(self.resolver_output.read_text(), self.resolver_content)
+        self.assert_memory_config("false", "16GiB")
+
+    def test_pvm_parent_limit_requires_explicit_opt_in_and_preserves_reserve(self):
+        self.template.write_text(
+            self.template.read_text().replace('total_reserve = "16GiB"', 'total_reserve = "2GiB"')
+        )
+        for enabled in ("false", "true"):
+            with self.subTest(enabled=enabled):
+                result = self.generate(
+                    AKERNEL_FIRECRACKER_BACKEND="pvm",
+                    AKERNEL_PVM_MEMORY_LIMIT_ENABLED=enabled,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assert_memory_config(enabled, "2GiB")
+
+    def test_pvm_memory_opt_in_does_not_override_kvm_memory_policy(self):
+        self.template.write_text(self.template.read_text().replace("enabled = true", "enabled = false", 1))
+        result = self.generate(AKERNEL_PVM_MEMORY_LIMIT_ENABLED="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_memory_config("false", "16GiB")
+
+    def test_pvm_rejects_invalid_memory_opt_in_and_missing_memory_section(self):
+        for value in ("", "1", "TRUE", "yes", "true; false"):
+            with self.subTest(value=value):
+                result = self.generate(
+                    AKERNEL_FIRECRACKER_BACKEND="pvm",
+                    AKERNEL_PVM_MEMORY_LIMIT_ENABLED=value,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("AKERNEL_PVM_MEMORY_LIMIT_ENABLED must be true or false", result.stderr)
+                self.assertFalse(self.config_output.exists())
+        self.template.write_text(self.template.read_text().replace("[plugin.resource.memory_limit]", "[plugin.resource.other]", 1))
+        result = self.generate(AKERNEL_FIRECRACKER_BACKEND="pvm")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one boolean enabled field", result.stderr)
+        self.assertFalse(self.config_output.exists())
 
     def test_direct_source_is_under_runtime_and_node_source_is_preserved(self):
         for backend in ("iptables", "bpfnat"):

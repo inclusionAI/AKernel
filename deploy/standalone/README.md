@@ -58,7 +58,8 @@ for inspection and retry. Data and credentials survive stopping.
 For an independent data profile, set an absolute `AKERNEL_STANDALONE_DATA_DIR`
 for every command. Only one standalone node can run per Docker daemon.
 
-Standalone enables the aggregate sandbox memory limit with a 16 GiB reserve.
+The ordinary KVM backend profile enables the aggregate sandbox memory limit
+with a 16 GiB reserve.
 It requires cgroup v2 and effective memory above that reserve, including any
 Docker/OrbStack VM or visible ancestor limit. Before starting on a smaller
 machine, edit `[plugin.resource.memory_limit]` in
@@ -68,6 +69,14 @@ data-directory TOML is insufficient because startup regenerates it. This also
 applies to `make standalone-source-test`. See
 [the memory budget and upgrade contract](../README.md#aggregate-sandbox-memory-budget)
 before applying the new default to an existing profile.
+
+Selecting `AKERNEL_FIRECRACKER_BACKEND=pvm` keeps the parent limit disabled by
+default, including when the source TOML has `enabled=true`. PVM parent-limit
+enforcement still needs qualification on the matching host. To opt in for that
+qualification, set `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true` and choose a suitable
+positive `total_reserve` in the source TOML before startup. The switch accepts
+only `true` or `false`, defaults to `false`, and affects only PVM. The maintained
+PVM CI fixture keeps it disabled.
 
 The bundled ADX configuration takes scheduling capacity from sandboxd's
 `/var/run/resource.sock`, including PVM and trace/shared-storage variants.

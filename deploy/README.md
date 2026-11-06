@@ -20,7 +20,7 @@ application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-applicati
 ## Aggregate sandbox memory budget
 
 Standalone and the direct Helm chart enable the cgroup v2 aggregate sandbox
-memory policy by default:
+memory policy by default for the ordinary KVM backend profile:
 
 ```toml
 [plugin.resource.memory_limit]
@@ -57,8 +57,18 @@ Helm uses `node.config.sandboxd.config` (`core.node.config.sandboxd.config` in t
 umbrella chart). Cloud profiles expose the enabled flag and reserve described
 below, alongside their existing complete-config override. Values use integer
 bytes or `B`, `KiB`, `MiB`, `GiB`, `TiB`; `16G`, percentages and `auto` are not
-accepted. Standard and PVM CI fixtures explicitly use a 2 GiB reserve while
-keeping the policy enabled.
+accepted. Standard CI explicitly uses a 2 GiB reserve while keeping the policy
+enabled.
+
+The PVM profile keeps this policy disabled by default because enabled parent
+enforcement has not been qualified on its matching host. Selecting PVM overrides
+the TOML `enabled` value through standalone
+`AKERNEL_PVM_MEMORY_LIMIT_ENABLED=false` or Helm
+`node.config.sandboxd.pvmMemoryLimitEnabled=false` (`core.` prefix in the umbrella
+chart). Explicitly set that switch to `true` and choose a suitable positive
+`total_reserve` in the source TOML or complete Helm config to opt in for host
+qualification. Both switches accept only `true` or `false` and affect only PVM.
+PVM CI retains the disabled policy and does not claim parent-limit coverage.
 
 Both cloud Terraform profiles keep the policy disabled by default. Their
 `sandbox_memory_limit_enabled` input is an explicit opt-in, with

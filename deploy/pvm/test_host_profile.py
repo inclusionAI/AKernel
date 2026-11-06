@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,45 +47,30 @@ class HostProfileTest(unittest.TestCase):
         self.assertEqual(result.stdout.splitlines(), list(expected.values()))
 
 
-class CiMemoryBudgetTest(unittest.TestCase):
-    def measured_budget(self, value, docker_status=0):
+class CiMemoryPolicyTest(unittest.TestCase):
+    def test_pvm_ci_keeps_parent_enforcement_disabled_even_if_inherited_enabled(self):
         script = (ROOT / "deploy/pvm/run-adx-ci.sh").read_text()
-        after_start = script.split(
-            'bash deploy/standalone/start.sh > "${out}/standalone-start.log" 2>&1\n', 1
-        )[1]
-        preparation = after_start.split("export AKERNEL_TEST_NETWORK_BLOCKED_HOST=", 1)[0]
-        environment = dict(os.environ)
-        environment.pop("AKERNEL_TEST_EXPECT_MEMORY_BYTES", None)
-        environment.update(MEASURED_MEMORY_BYTES=value, DOCKER_STATUS=str(docker_status))
-        return subprocess.run(
-            ["bash", "-euc", '''
-docker() {
-  [[ "$*" == "exec akernel-node cat /sys/fs/cgroup/akernel/memory.max" ]] || return 99
-  printf '%s\\n' "${MEASURED_MEMORY_BYTES}"
-  return "${DOCKER_STATUS}"
-}
-''' + preparation + '''
-python3 -c 'import os; print(os.environ["AKERNEL_TEST_EXPECT_MEMORY_BYTES"])'
-'''],
-            text=True, capture_output=True, env=environment, timeout=10,
+        preparation = "export AKERNEL_FIRECRACKER_BACKEND=pvm" + script.split(
+            "export AKERNEL_FIRECRACKER_BACKEND=pvm", 1
+        )[1].split("export AKERNEL_CONTAINER_PROXY=", 1)[0]
+        result = subprocess.run(
+            ["bash", "-euc", preparation + '\npython3 -c \'import os; print(os.environ["AKERNEL_PVM_MEMORY_LIMIT_ENABLED"]); assert "AKERNEL_TEST_EXPECT_MEMORY_BYTES" not in os.environ; assert "AKERNEL_TEST_EXPECT_CPU_MILLIS" not in os.environ\''],
+            text=True, capture_output=True,
+            env=dict(os.environ, AKERNEL_PVM_MEMORY_LIMIT_ENABLED="true",
+                     AKERNEL_TEST_EXPECT_MEMORY_BYTES="6442450944",
+                     AKERNEL_TEST_EXPECT_CPU_MILLIS="1000"), timeout=10,
         )
-
-    def test_pvm_sdk_tests_inherit_the_measured_parent_limit(self):
-        maximum = str(6 * 1024**3 + 4096)
-        result = self.measured_budget(maximum)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), maximum)
+        self.assertEqual(result.stdout.strip(), "false")
 
-    def test_pvm_qualification_rejects_missing_or_unlimited_parent_caps(self):
-        for value in ("max", "0", "-1", ""):
-            with self.subTest(value=value):
-                result = self.measured_budget(value)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("finite positive sandbox parent memory limit", result.stderr)
-
-    def test_pvm_qualification_preserves_parent_probe_failures(self):
-        result = self.measured_budget(str(6 * 1024**3), docker_status=17)
-        self.assertEqual(result.returncode, 17)
+    def test_pvm_qualification_settings_do_not_claim_parent_limit_coverage(self):
+        script = (ROOT / "deploy/pvm/run-adx-ci.sh").read_text()
+        settings = script.split("<<'SETTINGS'\n", 1)[1].split("\nSETTINGS", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(["python3", "-c", settings, directory], check=True, timeout=10)
+            recorded = json.loads((Path(directory) / "qualification-settings.json").read_text())
+        self.assertFalse(recorded["sandbox_parent_memory_limit_enabled"])
+        self.assertFalse(recorded["sandbox_parent_memory_limit_qualified"])
 
 
 if __name__ == "__main__":

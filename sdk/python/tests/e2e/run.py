@@ -31,7 +31,7 @@ CASES = (
     Case(
         "sdk-contracts",
         "l0",
-        ("-m", "unittest", "-v", "tests.e2e.standalone.test_sdk_contracts"),
+        ("-m", "unittest", "-v", "tests.e2e.standalone.test_sdk_contracts.SandboxPublicContractIntegrationTest"),
         300,
     ),
     Case(
