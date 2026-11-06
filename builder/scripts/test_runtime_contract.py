@@ -78,9 +78,9 @@ class RuntimeContractTest(unittest.TestCase):
         normalized = {item.split("=", 1)[0].lower() for item in requirements}
         self.assertNotIn("openyuanrong-sdk", normalized)
 
-    def test_sdk_uses_the_environment_rc3_dependency(self) -> None:
+    def test_sdk_uses_the_environment_rc4_dependency(self) -> None:
         metadata = tomllib.loads((ROOT / "sdk/python/pyproject.toml").read_text())
-        self.assertIn("adx-environment==0.1.0rc3", metadata["project"]["dependencies"])
+        self.assertIn("adx-environment==0.1.0rc4", metadata["project"]["dependencies"])
 
     def test_actor_backend_sources_are_absent(self) -> None:
         backend = ROOT / "sdk/python/akernel_sdk/_backends"
