@@ -43,9 +43,7 @@ class CommandHandle:
         """Stable command ID fixed at attachment, independent of later PID reuse."""
         return self._command_id
 
-    def wait(
-        self, timeout: int | None = None, *, check: bool = False
-    ) -> CommandResult:
+    def wait(self, timeout: int | None = None, *, check: bool = False) -> CommandResult:
         """Wait for completion; check=True raises on nonzero or unfinished exit.
 
         The default preserves CommandResult behavior. An unfinished wait only
@@ -167,6 +165,7 @@ def _checked_result(result: CommandResult, check: bool) -> CommandResult:
                 result.error_message
                 or "command wait timed out; the command may still run",
                 code=result.error_code or "WAIT_TIMEOUT",
+                command_result=result,
             )
         if result.exit_code != 0:
             raise CommandExitException(result.stdout, result.stderr, result.exit_code)

@@ -17,10 +17,13 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import threading
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from concurrent.futures import Future
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 import adx_environment
@@ -31,6 +34,7 @@ from adx_environment.commands import CommandNotFound as NativeCommandNotFound
 from adx_environment.tunnel_client import TunnelClient
 
 from .._fork import ForkCleanupError, retain_fork_failure
+from .._resource_api import RESOURCE_PATH, parse_resource_nodes
 from .._sandboxes import SandboxQuery
 from .._timeouts import resolve_create_timeout
 from ..types import (
@@ -42,6 +46,7 @@ from ..types import (
     Mount,
     NetworkPolicy,
     NetworkRule,
+    NodeInfo,
     PortRange,
     SandboxInfo,
     SnapshotInfo,
@@ -73,6 +78,7 @@ from .errors import (
 
 _NAMESPACE = "default"
 _DEFAULT_LISTEN_PORT = 8766
+_MANAGED_PROFILE_LABEL = "AKERNEL_RUNTIME_PROFILE_"
 logger = logging.getLogger(__name__)
 
 
@@ -135,7 +141,11 @@ def _log_creation_budgets(
     logger.debug(
         "sandbox lifecycle budgets operation=%s schedule_timeout=%s "
         "init_timeout=%s create_timeout=%s idle_timeout=%s policy_source=request",
-        operation, spec.schedule_timeout, spec.init_timeout, timeout, spec.idle_timeout,
+        operation,
+        spec.schedule_timeout,
+        spec.init_timeout,
+        timeout,
+        spec.idle_timeout,
     )
 
 
@@ -304,6 +314,8 @@ def _convert_error(operation: str, error: Exception) -> BackendOperationError:
         request_forwarded=getattr(error, "request_forwarded", None),
         cleanup_errors=getattr(error, "cleanup_errors", ()) or (),
         command_id=getattr(error, "command_id", None),
+        first_error=getattr(error, "first_error", None),
+        command_result=getattr(error, "command_result", None),
     )
 
 
@@ -345,9 +357,13 @@ def _command_timeout_message(value: Any, timeout: int) -> str | None:
         )
     ):
         return None
-    return str(getattr(value, "error_message", None) or stderr).strip() or (
-        f"Command timed out after {timeout} seconds"
+    message = str(getattr(value, "error_message", None) or "").strip()
+    label = (
+        f"Command wait timed out after {timeout} seconds"
+        if error_code == "WAIT_TIMEOUT"
+        else f"Command timed out after {timeout} seconds"
     )
+    return label + (": " + message if message else "")
 
 
 def _command_info(value: Any) -> CommandInfo:
@@ -387,7 +403,8 @@ class _CommandsDriver:
     def _handle(self, command: str | int) -> Any:
         handle = (
             self._command_handles.get(command)
-            if isinstance(command, str) else self._handles.get(command)
+            if isinstance(command, str)
+            else self._handles.get(command)
         )
         if handle is None:
             raise NotFoundException(f"no connected command for {command!r}")
@@ -431,8 +448,12 @@ class _CommandsDriver:
                 timeout=timeout,
             )
             if timeout_message := _command_timeout_message(value, timeout):
-                raise BackendOperationError(
-                    f"command execution failed: {timeout_message}"
+                raise TimeoutException(
+                    timeout_message,
+                    code=getattr(value, "error_code", None) or "COMMAND_TIMEOUT",
+                    retry=getattr(value, "retry", None),
+                    outcome=getattr(value, "outcome", None),
+                    command_result=_command_result(value),
                 )
             result = _command_result(value)
         except Exception as error:
@@ -739,7 +760,9 @@ class _Session:
             self._spec.init_timeout if init_timeout is None else init_timeout
         )
         timeout = resolve_create_timeout(
-            self._spec.schedule_timeout, child_init_timeout, restore_timeout,
+            self._spec.schedule_timeout,
+            child_init_timeout,
+            restore_timeout,
             name="restore_timeout",
         )
         # The pinned ADX API has snapshot/create/delete primitives, not a batch
@@ -760,6 +783,7 @@ class _Session:
                 command_cwd=self._spec.command_cwd,
                 port_forwardings=self._spec.port_forwardings,
                 mounts=self._spec.mounts,
+                extra_config=self._spec.extra_config,
                 reverse_tunnel=self._spec.reverse_tunnel,
                 detached=False,
                 failover=self._spec.failover,
@@ -786,7 +810,8 @@ class _Session:
                     and error.outcome == "not_started"
                 ):
                     lease = _ForkSnapshotLease(
-                        snapshot.snapshot_id, {child.id for child in children},
+                        snapshot.snapshot_id,
+                        {child.id for child in children},
                         self._connection,
                     )
                     for child in children:
@@ -828,7 +853,8 @@ class _Session:
                 pending.append(child)
                 errors.append(error)
                 logger.warning(
-                    "failed to clean interrupted fork child %s", child.id,
+                    "failed to clean interrupted fork child %s",
+                    child.id,
                     exc_info=True,
                 )
         try:
@@ -836,7 +862,8 @@ class _Session:
         except BaseException as error:
             errors.append(error)
         retain_fork_failure(
-            failure, snapshot_id=snapshot_id,
+            failure,
+            snapshot_id=snapshot_id,
             created_environment_ids=tuple(
                 child.id for child in (*children, *unreturned)
             ),
@@ -1061,7 +1088,10 @@ class _OwnedSandbox(adx_environment.Environment):
                     )
             if identity and not deleted:
                 _retain_pending_creation(
-                    error, self, kwargs.get("connection"), None,
+                    error,
+                    self,
+                    kwargs.get("connection"),
+                    None,
                     closed=getattr(self, "_closed", False) is True,
                 )
             raise
@@ -1125,15 +1155,21 @@ def _rollback_created(
 
 
 def _retain_pending_creation(
-    failure: BaseException, sandbox: Any, connection: Any,
-    session: BackendSession | None, *, closed: bool,
+    failure: BaseException,
+    sandbox: Any,
+    connection: Any,
+    session: BackendSession | None,
+    *,
+    closed: bool,
 ) -> None:
     """Keep a known bootstrap resource without inferring ownership from errors."""
     context: Any = failure
     pending = tuple(getattr(failure, "_fork_pending_sessions", ()))
     if all(child.id != str(sandbox.id) for child in pending):
-        handle = session if session is not None else _Session._cleanup_handle(
-            sandbox, connection, closed=closed
+        handle = (
+            session
+            if session is not None
+            else _Session._cleanup_handle(sandbox, connection, closed=closed)
         )
         context._fork_pending_sessions = (*pending, handle)
 
@@ -1159,6 +1195,51 @@ class AdxBackend:
             gateway_use_tls=config.gateway_endpoint.use_tls,
             verify_tls=config.verify_tls,
         )
+        self._reset_managed_resource_probe()
+
+    def _reset_managed_resource_probe(self) -> None:
+        self._managed_resource_lock = threading.Lock()
+        self._managed_resource_cache: tuple[float, list[NodeInfo]] | None = None
+        self._managed_resource_pending: Future[list[NodeInfo]] | None = None
+        self._managed_resource_pid = os.getpid()
+
+    def _managed_resource_nodes(self) -> list[NodeInfo]:
+        # This advisory geometry view is scoped to one authenticated backend.
+        # Do not send one identical TCP/TLS resource query per concurrent create.
+        # Scheduling and node authorization remain authoritative on every create.
+        if self._managed_resource_pid != os.getpid():
+            self._reset_managed_resource_probe()
+        with self._managed_resource_lock:
+            cached = self._managed_resource_cache
+            if cached is not None and time.monotonic() < cached[0]:
+                return cached[1]
+            pending = self._managed_resource_pending
+            leader = pending is None
+            if pending is None:
+                pending = Future()
+                self._managed_resource_pending = pending
+        if not leader:
+            return pending.result()
+        try:
+            client = EnvironmentClient(connection=self._connection)
+            try:
+                response = client._http.get(client._origin + RESOURCE_PATH, timeout=15)
+                if response.status_code >= 400:
+                    raise client._http_error(response)
+                nodes = parse_resource_nodes(response.json())
+            finally:
+                client.close()
+            with self._managed_resource_lock:
+                self._managed_resource_cache = (time.monotonic() + 1.0, nodes)
+            pending.set_result(nodes)
+            return nodes
+        except BaseException as error:
+            pending.set_exception(error)
+            raise
+        finally:
+            with self._managed_resource_lock:
+                if self._managed_resource_pending is pending:
+                    self._managed_resource_pending = None
 
     def pty_for(self, instance_id: str) -> Any:
         """Attach a PTY to an existing sandbox with the backend connection."""
@@ -1326,6 +1407,68 @@ class AdxBackend:
                 "Backend 'adx' requires reverse_port to equal listen_port - 1."
             )
 
+    def _managed_storage(
+        self, spec: SandboxSpec
+    ) -> tuple[SandboxSpec, list[dict[str, Any]] | None]:
+        profile = spec.extra_config.get("managedRuntimeProfile")
+        if profile is None:
+            return spec, None
+        if (
+            not isinstance(profile, str)
+            or re.fullmatch(r"[a-z][a-z0-9-]{0,62}", profile) is None
+        ):
+            raise ValueError("Invalid managed runtime profile")
+        key = _MANAGED_PROFILE_LABEL + profile
+        try:
+            nodes = self._managed_resource_nodes()
+        except Exception as error:
+            raise _convert_error("resolve managed runtime resources", error) from error
+        floors: set[int] = set()
+        for node in nodes:
+            if node.status != 0 or (spec.node_id and node.id != spec.node_id):
+                continue
+            for value in node.labels.get(key, []):
+                if (
+                    len(value) <= 14
+                    and value.isdecimal()
+                    and 0 < int(value) <= (1 << 44) - 1
+                ):
+                    floors.add(int(value))
+        if not floors:
+            raise ValueError(
+                f"Managed runtime profile {profile!r} "
+                "has no ready node resource contract"
+            )
+        eligible = sorted(
+            floor
+            for floor in floors
+            if (spec.storage_mb is None or spec.storage_mb >= floor)
+            and (spec.storage_limit_mb == 0 or spec.storage_limit_mb >= floor)
+        )
+        if not eligible:
+            raise ValueError(
+                f"Managed runtime profile {profile!r} "
+                f"requires at least {min(floors)} MiB "
+                "reserved and total writable storage (upper plus root)"
+            )
+        # Reserve the platform floor before scheduling; constrain placement to
+        # workers with compatible geometry. Ordinary image sandboxes are unchanged.
+        budget = spec.storage_mb if spec.storage_mb is not None else eligible[0]
+        spec = replace(spec, storage_mb=budget)
+        return spec, [
+            {
+                "kind": 0,
+                "affinity": 2,
+                "labelOps": [
+                    {
+                        "type": 0,
+                        "labelKey": key,
+                        "labelValues": [str(v) for v in eligible if v <= budget],
+                    }
+                ],
+            }
+        ]
+
     def create(self, spec: SandboxSpec) -> BackendSession:
         self._validate(spec)
         create_timeout = resolve_create_timeout(
@@ -1333,6 +1476,7 @@ class AdxBackend:
         )
         _log_creation_budgets("create", spec, create_timeout)
         create_started = time.monotonic()
+        spec, affinities = self._managed_storage(spec)
         rootfs = None
         if spec.rootfs is not None:
             rootfs = adx_environment.S3Config(
@@ -1391,6 +1535,8 @@ class AdxBackend:
             ),
             connection=self._connection,
         )
+        if affinities is not None:
+            create_args["schedule_affinities"] = affinities
         try:
             sandbox = _OwnedSandbox(**create_args)
         except UnsupportedBackendFeatureError:
@@ -1457,6 +1603,7 @@ class AdxBackend:
                 cwd=spec.command_cwd,
                 port_forwardings=list(spec.port_forwardings),
                 mounts=[_native_mount(mount) for mount in spec.mounts],
+                extra_config=dict(spec.extra_config),
                 upstream=tunnel.target if tunnel else None,
                 proxy_port=tunnel.listen_port if tunnel else _DEFAULT_LISTEN_PORT,
                 tunnel_connect_timeout=tunnel.connect_timeout if tunnel else None,
@@ -1473,7 +1620,7 @@ class AdxBackend:
                     port_forward_mode="tls",
                 ),
                 connection=connection,
-                )
+            )
         except UnsupportedBackendFeatureError:
             raise
         except Exception as error:

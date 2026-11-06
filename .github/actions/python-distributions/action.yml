@@ -60,6 +60,12 @@ runs:
 
         import adx_environment
         import akernel_sdk
+        from akernel_sdk import ComposeProject, DockerRuntime, ServiceHandle, ServiceProcessHandle
+        from importlib.resources import files
+
+        assert all(callable(value) for value in (ComposeProject, DockerRuntime, ServiceHandle, ServiceProcessHandle))
+        for helper in ("_image_bridge_guest.py", "_docker_network_guest.py", "_service_process_guest.py"):
+            assert files("akernel_sdk").joinpath(helper).read_text()
 
         assert version("akernel-sdk") == os.environ["EXPECTED_VERSION"]
         assert any(

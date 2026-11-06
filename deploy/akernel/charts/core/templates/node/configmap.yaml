@@ -101,6 +101,11 @@ data:
 
   prepare_checkpoint_storage.py: |
 {{ .Files.Get "scripts/prepare_checkpoint_storage.py" | indent 4 }}
+{{- if (.Values.node.runtimeRootfsPin | default dict).enabled }}
+
+  pin-runtime-rootfs.py: |
+{{ .Files.Get "scripts/pin-runtime-rootfs.py" | indent 4 }}
+{{- end }}
 
 {{- if .Values.node.applicationLogs.enabled }}
 

@@ -212,6 +212,18 @@
             "source": "tmpfs"
         },
         {
+            "destination": "/dev/shm",
+            "type": "tmpfs",
+            "source": "shm",
+            "options": [
+                "nosuid",
+                "nodev",
+                "noexec",
+                "mode=1777",
+                "size=65536k"
+            ]
+        },
+        {
             "destination": "/sys",
             "type": "sysfs",
             "source": "sysfs",

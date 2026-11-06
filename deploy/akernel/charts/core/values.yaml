@@ -174,6 +174,18 @@ node:
   # Operator-managed preparation; see deploy/docs/node-local-directories.md
   # and deploy/akernel/examples/node-local-directories.yaml. Lists replace on merge.
   initContainers: []
+  # Keep guest runtime bytes fixed while updating control/worker executables.
+  # The source image must be qualified, digest-pinned and contain the standard
+  # runtime rootfs and static Execd paths. Changing this pin requires separate
+  # snapshot compatibility qualification; cached files are not auto-collected.
+  runtimeRootfsPin:
+    enabled: false
+    sourceImage: ""
+    sha256: ""
+    execdSha256: ""
+    # Defaults to execdSha256. A different carrier executable requires explicit
+    # old-guest/new-platform C/R qualification; the pinned guest stays unchanged.
+    currentExecdSha256: ""
   directoryHelper:
     # Package the script for the init-container example without invoking it.
     # Disabled by default to preserve the node rollout checksum.
@@ -411,6 +423,18 @@ node:
                   "destination": "/dev",
                   "type": "tmpfs",
                   "source": "tmpfs"
+              },
+              {
+                  "destination": "/dev/shm",
+                  "type": "tmpfs",
+                  "source": "shm",
+                  "options": [
+                      "nosuid",
+                      "nodev",
+                      "noexec",
+                      "mode=1777",
+                      "size=65536k"
+                  ]
               },
               {
                   "destination": "/sys",

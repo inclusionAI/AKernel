@@ -15,6 +15,15 @@
 """Public API for the AKernel Python SDK."""
 
 import importlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._compose import ComposeOperationError, ComposeProject, ServiceHandle
+    from ._docker_runtime import DockerRuntime
+    from ._image_plan import ImageMountPlan
+    from ._image_resolver import prepare_compose_images
+    from ._managed_build import BuiltImage, build_image
+    from ._service_process import ServiceProcessHandle
 
 from ._backends.errors import (
     AuthenticationException,
@@ -106,9 +115,27 @@ __all__ = [
     "DockerfileBuildError",
     "DockerfileParseError",
     "BuildInstruction",
+    "ComposeProject",
+    "ComposeOperationError",
+    "ServiceHandle",
+    "ServiceProcessHandle",
+    "DockerRuntime",
+    "ImageMountPlan",
+    "prepare_compose_images",
+    "BuiltImage",
+    "build_image",
 ]
 
 _LAZY_IMPORTS = {
+    "BuiltImage": ("._managed_build", "BuiltImage"),
+    "build_image": ("._managed_build", "build_image"),
+    "ComposeProject": ("._compose", "ComposeProject"),
+    "ComposeOperationError": ("._compose", "ComposeOperationError"),
+    "ServiceHandle": ("._compose", "ServiceHandle"),
+    "ServiceProcessHandle": ("._service_process", "ServiceProcessHandle"),
+    "DockerRuntime": ("._docker_runtime", "DockerRuntime"),
+    "ImageMountPlan": ("._image_plan", "ImageMountPlan"),
+    "prepare_compose_images": ("._image_resolver", "prepare_compose_images"),
     "Client": ("._client", "Client"),
     "Sandbox": (".sandbox", "Sandbox"),
     "CommandHandle": (".commands", "CommandHandle"),
