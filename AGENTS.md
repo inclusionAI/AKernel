@@ -364,8 +364,15 @@ the already-registered path without requiring module files; loading otherwise
 requires host-matched modules, compatible image tools and host permission.
 Failed preparation blocks the entire node Pod, including its other runtimes.
 Kubernetes NodeReady is not usable ADX capacity, and this chart does not install
-automatic replacement for init failures. Keep host qualification, capacity and
-targeted scheduling checks, detection and operator recovery documented in
+automatic replacement for init failures. Use
+`deploy/tests/kubernetes/runc_filesystems.py` for inventory and targeted positive
+or negative probes; only a structured scheduling rejection during construction
+is an expected negative result. Communication, command and deletion failures
+must fail validation. Record candidate/base commits, image IDs, component/SDK
+versions, kernel, Pod UID, timestamps, init-script digest, fault source and
+recovery/cleanup evidence. Keep synthetic Kind capacity recovery, real first
+module loading with the selected image's tools/libraries, and hard host loss
+as separate qualification boundaries. Keep detection and operator recovery in
 [`deploy/README.md#runc-worker-preparation-and-recovery`](deploy/README.md#runc-worker-preparation-and-recovery).
 
 Standalone configures resolver sources by DNS mode. Enabling runc copies an approved host resolver into the data mount and sets `plugin.runtime.direct_resolv_conf_path`, while `plugin.runtime.resolv_conf_path` remains the node resolver used by managed DNS. `AKERNEL_RUNC_RESOLV_CONF` selects the host source; systemd-resolved hosts require it explicitly because a flat file cannot preserve split DNS. Preserve the direct-resolver marker under `[plugin.runtime]` in custom templates, and drain sandboxes before refreshing the resolver snapshot or replacing the node. See [`deploy/standalone/README.md#dns-resolver-sources`](deploy/standalone/README.md#dns-resolver-sources) for mode selection and reachability requirements.

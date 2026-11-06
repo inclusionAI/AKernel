@@ -132,35 +132,51 @@ record must not be mistaken for a live, schedulable worker.
 Qualify each host image/kernel, node image, and node-pool provisioning profile
 on a dedicated worker before admitting workloads:
 
-1. Record the worker's kernel, filesystem registration and module availability.
-   Exercise successful preparation twice, including a filesystem not yet
-   registered when safe on that disposable worker. A host where both are
-   already registered validates only the skip path, not real module loading.
-2. Record the Pod events and init exit status, then inspect AKernel's resource
-   view using the configured SDK credentials. `ak resources` is convenient;
-   Python `resources()` includes nodes the CLI omits when CPU capacity is below
-   one core. Match the target's `NodeInfo.id`, status, capacity and allocatable
-   resources rather than using Kubernetes node counts.
-3. Target that worker explicitly for a real runc command and private write:
+1. Record the candidate and base commits, deployed init/node `imageID` values,
+   component release identities and SDK version. Retain the host kernel,
+   filesystem registration/module availability, Pod UID, observation timestamps,
+   and SHA-256 of the actual rendered init script. Exercise preparation twice,
+   including a filesystem not yet registered when safe on that disposable
+   worker. Real loading must use the selected image's shell, grep, uname, kmod
+   and libraries; substituting host kmod does not qualify those image tools.
+   An already-registered host validates only the skip path.
+2. Use the configured SDK credentials with the maintained probe below. Keep
+   fresh evidence files outside Git. `inventory` records the complete resource
+   view, including nodes filtered out by `ak resources`; match the target's
+   `NodeInfo.id`, status, capacity and allocatable resources. `positive` targets
+   that worker for a real runc command/private write and deletes its sandbox:
 
-   ```python
-   from akernel_sdk import Sandbox, resources
-
-   for node in resources():
-       print(node.id, node.status, node.capacity, node.allocatable)
-   with Sandbox(node_id="<target-node-id>", runtime="runc",
-                cpu=1000, memory=256, schedule_timeout=10) as sandbox:
-       result = sandbox.commands.run("printf runc-ready > /tmp/runc-probe && cat /tmp/runc-probe")
-       assert result.exit_code == 0 and result.stdout == "runc-ready"
+   ```bash
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode inventory --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/inventory.json"
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode positive --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/positive.json"
    ```
 
-4. On the disposable worker, also qualify an unavailable-module or denied-load
-   case while a required filesystem is unregistered. Record the failing init,
-   its logs, the resource view and the target-specific create failure. Confirm
-   that the worker contributes no usable AKernel capacity; do not infer this
-   from Pod status alone. Restore the supported profile and repeat the success
-   probe. Shell fixtures cover failure branches but do not replace this worker
-   qualification; record any untested real-loading or recovery boundary.
+3. On the disposable worker, qualify unavailable modules or denied loading while
+   a required filesystem is unregistered. Record Pod events, init status/logs,
+   and the fault source: synthetic injection or a real host/module-policy
+   failure. While the worker is blocked, require a target-specific rejection:
+
+   ```bash
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode negative --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/negative.json"
+   ```
+
+   Only a structured scheduling rejection during sandbox construction is an
+   expected negative result. Communication, command or deletion failures must
+   fail the probe; they do not prove unavailable capacity. Record the resource
+   view as well as the create outcome rather than inferring capacity from Pod
+   status alone.
+4. Restore the supported profile and repeat `positive` with a fresh output path.
+   Record the recovery action and all fixture/sandbox cleanup results. Keep
+   Kind fault-injection/capacity-recovery evidence separate from real first
+   module-loading evidence, with untested boundaries explicit. Shell fixtures
+   do not replace worker qualification. Normal Pod replacement does not qualify
+   hard host-loss detection or recovery.
 
 For detection, compare the expected workers with initialized node Pods and
 usable ADX resources within the operator's provisioning deadline. Monitor
