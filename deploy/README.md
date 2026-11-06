@@ -130,7 +130,10 @@ started adxlet to register its resources; an existing worker's retained ADX
 record must not be mistaken for a live, schedulable worker.
 
 Qualify each host image/kernel, node image, and node-pool provisioning profile
-on a dedicated worker before admitting workloads:
+on an idle dedicated deployment before admitting workloads. All probe modes
+require the complete visible running/paused sandbox inventory to be empty.
+Negative mode also requires an empty resource view, including no retained node
+records; it cannot be run against a deployment with other registered workers:
 
 1. Record the candidate and base commits, deployed init/node `imageID` values,
    component release identities and SDK version. Retain the host kernel,

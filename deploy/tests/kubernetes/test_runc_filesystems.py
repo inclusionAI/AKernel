@@ -236,6 +236,35 @@ class ProbeTest(unittest.TestCase):
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)
             self.assertNotIn(json.dumps(secret)[1:-1], captured.getvalue())
 
+    def test_short_tokens_preserve_success_booleans_and_scheduling_numbers(self):
+        for token in ("true", "0", "123"):
+            with self.subTest(token=token), tempfile.TemporaryDirectory() as directory:
+                failure = copy.deepcopy(EMPTY_SCHEDULING)
+                failure["detail"] = {"credential": token, "boolean": True, "number": 123}
+                sdk = self.sdk(creation=BackendError(scheduling_failure=failure))
+                output = Path(directory) / "report.json"
+                arguments = ["probe", "--mode", "negative", "--node-id", "worker-a",
+                             "--output", str(output)]
+                captured = io.StringIO()
+                with patch.object(probe, "load_sdk", return_value=sdk), \
+                        patch("sys.argv", arguments), patch.dict(os.environ, AKERNEL_TOKEN=token), \
+                        contextlib.redirect_stdout(captured):
+                    status = probe.main()
+                report = json.loads(output.read_text())
+                self.assertEqual(json.loads(captured.getvalue()), report)
+                self.assertEqual(status, 0)
+                self.assertIs(report["passed"], True)
+                error = report["expected_create_failure"]
+                self.assertEqual(error["code"], "DEADLINE_EXCEEDED")
+                self.assertEqual(error["status_code"], 504)
+                scheduling = error["scheduling_failure"]
+                self.assertEqual(scheduling["nodeCount"], 0)
+                self.assertEqual(scheduling["maxCapacity"], EMPTY_SCHEDULING["maxCapacity"])
+                self.assertEqual(scheduling["maxAvailable"], EMPTY_SCHEDULING["maxAvailable"])
+                self.assertEqual(scheduling["detail"]["credential"], "<redacted>")
+                self.assertIs(scheduling["detail"]["boolean"], True)
+                self.assertEqual(scheduling["detail"]["number"], 123)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,9 @@
 Use the installed SDK and its AKERNEL_SERVER_ADDRESS/AKERNEL_TOKEN environment.
 Cluster setup, filesystem fault injection and port forwarding belong to the
 caller. Negative mode requires an empty deployment with no available workers.
+Every mode requires the complete visible running/paused inventory to be empty.
+Negative mode also requires an empty resource view, including residual or
+unavailable worker records.
 """
 from __future__ import annotations
 
@@ -43,6 +46,17 @@ def error_details(error):
     return {"type": type(error).__name__,
             **{name: getattr(error, name, None) for name in
                ("code", "status_code", "scheduling_failure")}}
+
+
+def redact(value, token):
+    """Redact credentials in text without changing JSON booleans or numbers."""
+    if isinstance(value, str):
+        return value.replace(token, "<redacted>") if token else value
+    if isinstance(value, dict):
+        return {redact(key, token): redact(item, token) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact(item, token) for item in value]
+    return value
 
 
 class Probe:
@@ -176,10 +190,7 @@ def main():
         probe.run()
     except Exception:
         pass  # Failure details and the incomplete phase are retained below.
-    raw = json.dumps(probe.report, indent=2)
-    token = os.environ.get("AKERNEL_TOKEN", "")
-    if token:
-        raw = raw.replace(json.dumps(token)[1:-1], "<redacted>")
+    raw = json.dumps(redact(probe.report, os.environ.get("AKERNEL_TOKEN", "")), indent=2)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w") as stream:
         os.fchmod(stream.fileno(), 0o600)
