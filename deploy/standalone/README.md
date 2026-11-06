@@ -69,6 +69,14 @@ applies to `make standalone-source-test`. See
 [the memory budget and upgrade contract](../README.md#aggregate-sandbox-memory-budget)
 before applying the new default to an existing profile.
 
+The bundled ADX configuration takes scheduling capacity from sandboxd's
+`/var/run/resource.sock`, including PVM and trace/shared-storage variants.
+The image build resolves the default profile before replacing the entire
+capacity source. Custom `AKERNEL_ADX_CONFIG` files retain their selected source;
+operators enabling the parent limit must align custom capacity reporting with
+that limit. Standalone CI checks both the parent/socket budget and public ADX
+capacity, plus resource allocation and release after sandbox create/delete.
+
 ### Runtime selection
 
 Runsc is the source default. Opt into runc with

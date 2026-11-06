@@ -240,12 +240,21 @@ distill-fs release's packaged manifest.
 
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
-AKernel's maintained node templates enable the cgroup v2 parent memory policy
-with `total_reserve="16GiB"`. Effective memory (host MemTotal clipped by visible
-ancestor limits) must exceed that reserve and leave room for sandbox requests.
+Standalone and the direct Helm chart enable the cgroup v2 parent memory policy
+with `total_reserve="16GiB"`. Both cloud Terraform profiles leave it disabled
+until explicitly enabled with `sandbox_memory_limit_enabled`; their default
+operating-system images have not been qualified for this policy. Guided profiles
+expose `SANDBOX_MEMORY_LIMIT_ENABLED` and `SANDBOX_MEMORY_TOTAL_RESERVE`.
+Effective memory (host MemTotal clipped by visible ancestor limits) must exceed
+that reserve and leave room for sandbox requests.
 Small Docker/OrbStack VMs and CI fixtures must explicitly select a smaller
-reserve or disable the policy in their sandboxd configuration. Keep standalone,
-Helm and both cloud templates aligned. Adding or lowering a parent cap requires
+reserve or disable the policy in their sandboxd configuration. Keep the budget
+semantics aligned across standalone, Helm and both cloud templates.
+The bundled standalone ADX configuration is resolved at image build time and
+uses sandboxd's resource socket; replace the complete tagged capacity source,
+preserving explicitly selected custom sources. Public scheduling capacity must
+follow the sandbox parent ceiling, with allocatable decreasing and recovering
+as requests are allocated and deleted. Adding or lowering a parent cap requires
 an empty sandbox subtree; an existing stricter cap is retained. This aggregate
 sandbox cap does not bound all node components or guarantee avoidance of host OOM.
 See `deploy/README.md#aggregate-sandbox-memory-budget` for migration and scope.
@@ -724,6 +733,11 @@ push; superseded commits and reruns of older commits skip publication
 entirely. Do not publish per-commit SHA tags or other historical image tags.
 The job checks the image contains runsc and excludes Kata, Firecracker,
 virtiofsd, and runc before starting standalone E2E.
+
+The bounded standalone CI profile selects a 2 GiB reserve and exports the
+measured parent limit as `AKERNEL_TEST_EXPECT_MEMORY_BYTES`. The SDK E2E
+regression checks public capacity plus allocation and release against that
+single-node budget; retain the parent/socket check as a separate assertion.
 
 CI explicitly trusts the generated standalone public certificate through
 `SSL_CERT_FILE` and enables `AKERNEL_VERIFY_TLS=1` before SDK examples and

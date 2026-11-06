@@ -16,6 +16,7 @@
 
 import os
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -29,6 +30,55 @@ _ENABLED = (
 )
 _RUNTIME = os.environ.get("AKERNEL_TEST_RUNTIME", "runsc")
 _IMAGE = os.environ.get("AKERNEL_TEST_IMAGE") or None
+_MEMORY_BUDGET = os.environ.get("AKERNEL_TEST_EXPECT_MEMORY_BYTES")
+
+
+@unittest.skipUnless(
+    _ENABLED and _MEMORY_BUDGET,
+    "set the SDK integration environment and AKERNEL_TEST_EXPECT_MEMORY_BYTES",
+)
+class MemoryBudgetIntegrationTest(unittest.TestCase):
+    """Check the public scheduler against a measured single-node parent cap."""
+
+    def test_capacity_and_allocation_follow_the_parent_memory_budget(self):
+        expected = int(_MEMORY_BUDGET) / (1024 * 1024)
+        self.assertGreater(expected, 0)
+
+        def wait_for_memory(allocatable=None):
+            deadline = time.monotonic() + 60
+            last = []
+            while time.monotonic() < deadline:
+                last = resources()
+                self.assertLessEqual(len(last), 1, "requires an isolated single node")
+                if last:
+                    node = last[0]
+                    capacity = node.capacity.get("Memory", -1)
+                    available = node.allocatable.get("Memory", -1)
+                    if abs(capacity - expected) < 0.000001 and (
+                        allocatable is None
+                        or abs(available - allocatable) < 0.000001
+                    ):
+                        return node
+                time.sleep(0.5)
+            self.fail(
+                f"expected memory capacity={expected}, allocatable={allocatable}; "
+                f"last resource view: {last}"
+            )
+
+        before = wait_for_memory()
+        available = before.allocatable["Memory"]
+        self.assertGreaterEqual(available, 1024)
+        sandbox = Sandbox(cpu=1000, memory=1024, runtime=_RUNTIME, image=_IMAGE)
+        try:
+            self.assertEqual(
+                sandbox.commands.run("printf memory-budget").stdout, "memory-budget"
+            )
+            running = wait_for_memory(available - 1024)
+            self.assertEqual(running.id, before.id)
+        finally:
+            sandbox.kill()
+        released = wait_for_memory(available)
+        self.assertEqual(released.id, before.id)
 
 
 @unittest.skipUnless(

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,6 +16,164 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+MEMORY_INPUTS = ("sandbox_memory_limit_enabled", "sandbox_memory_total_reserve")
+
+
+def sandboxd_config(values):
+    block = re.search(r"(?ms)^      config: \|-\n(.*?)(?=^ {0,6}\S|\Z)", values)
+    if block is None:
+        raise AssertionError("sandboxd TOML missing from generated cloud values")
+    return tomllib.loads(textwrap.dedent(block.group(1)))
+
+
+@unittest.skipUnless(shutil.which("terraform"), "Terraform is required for template evaluation")
+class SandboxMemoryPolicyValidationTest(unittest.TestCase):
+    def render(self, provider, inputs):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            variables = (ROOT / provider / "variables.tf").read_text()
+            blocks = [
+                re.search(rf'(?ms)^variable "{name}" {{.*?^}}', variables).group()
+                for name in MEMORY_INPUTS
+            ]
+            main = (ROOT / provider / "main.tf").read_text()
+            mapping = re.search(
+                r'(?ms)^  core_values = templatefile\("\$\{path.module\}/values-akernel.yaml.tmpl", \{.*?^  \}\)',
+                main,
+            ).group()
+            # Keep the production templatefile call and memory-input wiring.
+            # Other deployment inputs use inert fixtures: no cloud providers,
+            # credentials, node pools or Helm releases participate in the plan.
+            booleans = {
+                "acr_secret_enabled", "enable_kruise", "install_monitor",
+                "adx_public_service_enabled", "enable_runc", "native_filestore",
+                "node_home_use_csi_ephemeral", "node_secret_create",
+            }
+
+            def fixture_input(match):
+                key = match.group(1)
+                if key in MEMORY_INPUTS:
+                    return match.group()
+                value = False if key in booleans else ""
+                return f"    {key} = {json.dumps(value)}"
+
+            mapping = re.sub(r"(?m)^    (\w+)\s+= .*?$", fixture_input, mapping)
+            blocks.append("locals {\n" + mapping + "\n}")
+            blocks.append('output "rendered" { value = local.core_values }')
+            (fixture / "main.tf").write_text("\n".join(blocks))
+            shutil.copy2(ROOT / provider / "values-akernel.yaml.tmpl", fixture)
+            (fixture / "inputs.tfvars.json").write_text(json.dumps(inputs))
+            subprocess.run(
+                ["terraform", "init", "-backend=false", "-input=false", "-no-color"],
+                cwd=fixture, capture_output=True, text=True, check=True,
+            )
+            result = subprocess.run(
+                ["terraform", "plan", "-input=false", "-lock=false", "-refresh=false",
+                 "-no-color", "-var-file=inputs.tfvars.json", "-out=plan"],
+                cwd=fixture, capture_output=True, text=True,
+            )
+            if result.returncode:
+                return result, None
+            plan = subprocess.run(
+                ["terraform", "show", "-json", "plan"],
+                cwd=fixture, capture_output=True, text=True, check=True,
+            )
+            rendered = json.loads(plan.stdout)["planned_values"]["outputs"]["rendered"]["value"]
+            return result, sandboxd_config(rendered)
+
+    def test_cloud_defaults_and_explicit_memory_policy_overrides(self):
+        for provider in ("aliyun", "huaweicloud"):
+            for inputs, enabled, reserve in (
+                ({}, False, "16GiB"),
+                ({"sandbox_memory_limit_enabled": True}, True, "16GiB"),
+                ({"sandbox_memory_limit_enabled": True, "sandbox_memory_total_reserve": "2GiB"}, True, "2GiB"),
+                ({"sandbox_memory_limit_enabled": False, "sandbox_memory_total_reserve": "2GiB"}, False, "2GiB"),
+            ):
+                with self.subTest(provider=provider, inputs=inputs):
+                    result, config = self.render(provider, inputs)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    resource = config["plugin"]["resource"]
+                    self.assertEqual(resource["memory_limit"], {"enabled": enabled, "total_reserve": reserve})
+                    self.assertIs(resource["memory_limit"]["enabled"], enabled)
+                    self.assertEqual(resource["cgroup_root_name"], "/akernel")
+                    self.assertEqual(resource["max_instance_num"], 1000)
+                    self.assertIs(resource["enable_cache_in_stock_mode"], True)
+                    self.assertEqual(config["plugin"]["image"]["cgroup_memory_limit"], "64GiB")
+
+    def test_invalid_reserves_fail_before_deployment(self):
+        for provider in ("aliyun", "huaweicloud"):
+            for reserve in ("", "0", "0GiB", "16G", "auto", "-1GiB", "16GiB\"\nenabled=true"):
+                with self.subTest(provider=provider, reserve=reserve):
+                    result, _ = self.render(provider, {"sandbox_memory_total_reserve": reserve})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("sandbox_memory_total_reserve", result.stderr)
+
+
+class GuidedMemoryPolicyTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.fixture = Path(self.temporary.name)
+        scripts = self.fixture / "deploy/scripts"
+        scripts.mkdir(parents=True)
+        for name in ("configure.sh", "common.sh", "shared_storage_config.py"):
+            shutil.copy2(ROOT.parent / "scripts" / name, scripts)
+        shutil.copy2(ROOT.parents[1] / "Makefile", self.fixture)
+        commands = self.fixture / "bin"
+        commands.mkdir()
+        formatter = commands / "terraform"
+        # Profile generation only calls terraform fmt; evaluated rendering and
+        # validation are covered separately with the real Terraform CLI above.
+        formatter.write_text('#!/bin/sh\n[ "$1" = fmt ]\n')
+        formatter.chmod(0o755)
+        self.environment = dict(os.environ, PATH=str(commands) + os.pathsep + os.environ["PATH"])
+        for name in ("SANDBOX_MEMORY_LIMIT_ENABLED", "SANDBOX_MEMORY_TOTAL_RESERVE", "FORCE"):
+            self.environment.pop(name, None)
+
+    def generate(self, provider, name, *settings):
+        return subprocess.run(
+            ["make", "config", f"VENDOR={provider}", f"ENV={name}", "NON_INTERACTIVE=1",
+             "NODE_POOL_KEY_NAME=fixture", "IMAGE_REPOSITORY=example.invalid/fixture",
+             "IMAGE_TAG=fixture", *settings],
+            cwd=self.fixture, env=self.environment, capture_output=True, text=True,
+        )
+
+    def test_generated_profiles_default_to_opt_out_and_preserve_explicit_opt_in(self):
+        for provider in ("aliyun", "huaweicloud"):
+            for name, settings, enabled, reserve in (
+                ("default", (), "false", "16GiB"),
+                ("enabled", ("SANDBOX_MEMORY_LIMIT_ENABLED=true",), "true", "16GiB"),
+                ("small", ("SANDBOX_MEMORY_LIMIT_ENABLED=true", "SANDBOX_MEMORY_TOTAL_RESERVE=2GiB"), "true", "2GiB"),
+            ):
+                profile_name = f"{provider}-{name}"
+                with self.subTest(provider=provider, profile=name):
+                    result = self.generate(provider, profile_name, *settings)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    profile = self.fixture / ".akernel" / profile_name
+                    tfvars = (profile / "terraform.tfvars").read_text()
+                    config = (profile / "config.env").read_text()
+                    self.assertIn(f"sandbox_memory_limit_enabled = {enabled}\n", tfvars)
+                    self.assertIn(f'sandbox_memory_total_reserve = "{reserve}"\n', tfvars)
+                    self.assertIn(f"SANDBOX_MEMORY_LIMIT_ENABLED={enabled}\n", config)
+                    self.assertIn(f"SANDBOX_MEMORY_TOTAL_RESERVE={reserve}\n", config)
+
+    def test_invalid_input_and_existing_profiles_are_not_replaced(self):
+        for provider in ("aliyun", "huaweicloud"):
+            with self.subTest(provider=provider):
+                result = self.generate(provider, provider)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                profile = self.fixture / ".akernel" / provider
+                original = {name: (profile / name).read_bytes() for name in ("config.env", "terraform.tfvars")}
+                for settings in (
+                    ("SANDBOX_MEMORY_LIMIT_ENABLED=maybe",),
+                    ("SANDBOX_MEMORY_TOTAL_RESERVE=0GiB",),
+                    ("SANDBOX_MEMORY_TOTAL_RESERVE=16G",),
+                    ("SANDBOX_MEMORY_LIMIT_ENABLED=true",),
+                ):
+                    result = self.generate(provider, provider, *settings)
+                    self.assertNotEqual(result.returncode, 0)
+                    for name, data in original.items():
+                        self.assertEqual((profile / name).read_bytes(), data)
 
 
 @unittest.skipUnless(
@@ -178,21 +337,26 @@ class CheckpointStorageValidationTest(unittest.TestCase):
 
 
 class AdxTerraformContractTest(unittest.TestCase):
-    def test_each_provider_enables_parent_limit_with_16gib_total_reserve(self):
+    def test_cloud_memory_policy_is_explicitly_wired_and_defaults_off(self):
         for provider in ("aliyun", "huaweicloud"):
             with self.subTest(provider=provider):
                 values = (ROOT / provider / "values-akernel.yaml.tmpl").read_text()
-                block = re.search(
-                    r"(?ms)^      config: \|-\n(.*?)(?=^ {0,6}\S|\Z)", values
-                )
-                self.assertIsNotNone(block)
-                config = tomllib.loads(textwrap.dedent(block.group(1)))
+                main = (ROOT / provider / "main.tf").read_text()
+                variables = (ROOT / provider / "variables.tf").read_text()
+                for name, default in zip(MEMORY_INPUTS, ("false", '"16GiB"')):
+                    self.assertRegex(main, rf"{name}\s*= var\.{name}")
+                    variable = re.search(rf'(?ms)^variable "{name}" {{.*?^}}', variables).group()
+                    self.assertRegex(variable, rf"default\s*= {default}")
+                self.assertIn("enabled = ${sandbox_memory_limit_enabled}", values)
+                self.assertIn("total_reserve = ${jsonencode(sandbox_memory_total_reserve)}", values)
+                config = sandboxd_config(values.replace("${sandbox_memory_limit_enabled}", "false").replace(
+                    "${jsonencode(sandbox_memory_total_reserve)}", '"16GiB"'))
                 resource = config["plugin"]["resource"]
                 self.assertEqual(
                     resource["memory_limit"],
-                    {"enabled": True, "total_reserve": "16GiB"},
+                    {"enabled": False, "total_reserve": "16GiB"},
                 )
-                self.assertIs(resource["memory_limit"]["enabled"], True)
+                self.assertIs(resource["memory_limit"]["enabled"], False)
                 self.assertEqual(resource["cgroup_root_name"], "/akernel")
                 self.assertEqual(resource["max_instance_num"], 1000)
                 self.assertIs(resource["enable_cache_in_stock_mode"], True)

@@ -303,6 +303,7 @@ jobs:
           assert capacity == maximum, (capacity, maximum)
           print(f"finite parent memory.max and /resource agree: {maximum} bytes")
           PY
+          echo "AKERNEL_TEST_EXPECT_MEMORY_BYTES=$(docker exec akernel-node cat /sys/fs/cgroup/akernel/memory.max)" >> "${GITHUB_ENV}"
 
       - name: Trust the standalone HTTPS certificate
         run: |

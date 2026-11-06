@@ -10,6 +10,27 @@ It installs:
 - Optional Dragonfly to `dragonfly_namespace` (controlled by `install_dragonfly`)
 - Optional prereq `openkruise` to `prereq_namespace` (controlled by `install_prereqs`)
 
+## Aggregate sandbox memory budget
+
+The cloud profile leaves the parent memory policy disabled by default and
+retains its existing OS selection. Standard `AliyunLinux3` uses cgroup v1;
+the policy requires cgroup v2. Before opting in, select and qualify a v2 node
+image, verify the actual node/container cgroup mode, and size the reserve for
+that profile. The module does not convert an existing node's cgroup mode.
+
+Set `sandbox_memory_limit_enabled=true` and
+`sandbox_memory_total_reserve="16GiB"` in `terraform.tfvars`, or pass
+`SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB` to
+`make config`. Effective memory, including finite ancestors, must exceed the
+reserve and leave room for sandbox requests. Smaller nodes require an explicit
+smaller positive reserve. These settings also apply when reusing a cluster;
+complete TOML overrides remain responsible for their own memory policy.
+
+Adding or lowering a parent cap requires drained sandboxes. The reserve is
+deployment policy rather than a host-OOM guarantee; distill-fs has an independent
+limit. See [the memory budget and upgrade contract](../../README.md#aggregate-sandbox-memory-budget)
+before enabling the policy on existing nodes.
+
 ## Pod PID budget
 
 `node_pool_pids_limit` defaults to `1620780` for the default pool and all

@@ -476,11 +476,13 @@ COPY ./builder/scripts/sandboxd_network_prepare.sh /usr/local/bin/sandboxd-netwo
 ARG FIRECRACKER_KERNEL_PROFILE
 COPY ./builder/config/adx-standalone.yaml /etc/akernel/adx-standalone.yaml
 RUN case "${FIRECRACKER_KERNEL_PROFILE}" in \
-      pvm) python3 /usr/local/libexec/prepare-adx-config.py \
-        /etc/akernel/adx-standalone.yaml /etc/akernel/adx-standalone.yaml --pvm ;; \
-      kvm) ;; \
+      pvm) set -- --pvm ;; \
+      kvm) set -- ;; \
       *) echo "invalid Firecracker kernel profile" >&2; exit 1 ;; \
-    esac
+    esac; \
+    python3 /usr/local/libexec/prepare-adx-config.py \
+      /etc/akernel/adx-standalone.yaml /etc/akernel/adx-standalone.yaml \
+      --sandboxd-capacity "$@"
 RUN chmod 0755 \
         /usr/local/bin/runsc \
         /usr/local/bin/sandboxd \

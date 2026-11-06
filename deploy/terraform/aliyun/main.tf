@@ -135,6 +135,9 @@ locals {
   node_image_repo   = length(var.node_image_repository) > 0 ? var.node_image_repository : "${local.acr_registry}/all-in-one"
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
+    sandbox_memory_limit_enabled = var.sandbox_memory_limit_enabled
+    sandbox_memory_total_reserve = var.sandbox_memory_total_reserve
+
     cluster_name                = var.cluster_name
     adx_public_service_enabled  = var.adx_public_service_enabled
     adx_service_type            = var.adx_service_type

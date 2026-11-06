@@ -191,7 +191,13 @@ Use XFS for the actual writable filestore and checkpoint paths. In the qualifica
 
 The dedicated PVM qualification omits runsc and Kata runtime entries from its temporary configuration and explicitly enables `plugin.runtime.firecracker.virtiofs_enabled=true` for OCI/Nydus directory roots. The maintained standalone default uses EROFS and leaves virtio-fs disabled. A deployment that needs to reproduce this qualification must explicitly select `firecracker-pvm`, enable the compatible virtio-fs profile for directory roots, and configure only the qualified handlers. The original mixed-runtime qualification observed a `runsc list` timeout extending housekeeping beyond its five-second process-health threshold, rejecting PVM reloads. The follow-up sandboxd change polls handlers concurrently with independent deadlines and closes only the failed class's admission/advertisement; successful polls reopen it and deletion remains available. Local storage stalls and other core-module failures still affect process readiness. Mixed-runtime acceptance must distinguish backend inventory failures from shared storage/control-plane pressure.
 
-The PVM image applies `prepare-adx-config.py --pvm` to the shared standalone profile, setting coordinator and adxlet `rpc_timeout_seconds` to 90. Custom/externally supplied ADX configurations must carry these overrides themselves. The ordinary KVM image keeps its original ADX profile. This is a bounded runtime cleanup/reload budget: a recorded cleanup took 30.63 seconds and exceeded the old 30-second limit. The guest-agent startup budget stays at 15 seconds.
+Both image profiles resolve the bundled standalone deployment and select
+sandboxd's resource socket for scheduling capacity. The PVM image additionally
+applies `prepare-adx-config.py --pvm`, setting coordinator and adxlet
+`rpc_timeout_seconds` to 90. Custom/externally supplied ADX configurations must
+carry these overrides themselves. This is a bounded runtime cleanup/reload
+budget: a recorded cleanup took 30.63 seconds and exceeded the old 30-second
+limit. The guest-agent startup budget stays at 15 seconds.
 
 The maintained PVM CI fixture selects a 2 GiB aggregate sandbox memory reserve
 for its 8 GiB L1, keeping the memory policy enabled. This explicit qualification

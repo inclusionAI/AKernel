@@ -19,8 +19,8 @@ application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-applicati
 
 ## Aggregate sandbox memory budget
 
-The standalone, Helm and both cloud templates enable the cgroup v2 aggregate
-sandbox memory policy by default:
+Standalone and the direct Helm chart enable the cgroup v2 aggregate sandbox
+memory policy by default:
 
 ```toml
 [plugin.resource.memory_limit]
@@ -36,11 +36,13 @@ without subtracting the reserve a second time. Helm and cloud Adxlet configs
 consume that socket. For example, effective memory of 64 GiB and this reserve
 produce a candidate of 48 GiB; an existing 40 GiB cap remains 40 GiB.
 
-Standalone currently inherits ADX's `auto` capacity source, which observes the
-Adxlet's own cgroup rather than the sandbox parent. Its public scheduling
-capacity can therefore exceed the parent cap even when `/resource` is correct.
-The standalone capacity source must be wired to sandboxd and verified before
-relying on the public scheduling capacity to match the new limit.
+The bundled standalone ADX profile is resolved at image build time and its
+complete capacity source is replaced with `kind: sandboxd`, using
+`/var/run/resource.sock`. The PVM, trace and shared-storage variants retain this
+source. Public ADX capacity follows the sandbox budget, while allocatable
+decreases on resource allocation and recovers on deletion. Custom ADX
+configurations with an explicitly selected source remain operator-owned; align
+that source with the effective sandbox budget when enabling a parent limit.
 
 The default requires cgroup v2 and effective memory greater than 16 GiB, with
 enough remaining capacity for the requested sandboxes. Docker/OrbStack VM limits
@@ -49,16 +51,24 @@ image built with the pinned sandboxd's `total_reserve` support. On a smaller nod
 explicitly choose a smaller positive `total_reserve` or set `enabled=false` in
 the sandboxd TOML before starting. Standalone reads its source config template;
 Helm uses `node.config.sandboxd.config` (`core.node.config.sandboxd.config` in the
-umbrella chart). Cloud templates provide the complete TOML and must be adjusted
-there or through the existing complete-config override. Values use integer
+umbrella chart). Cloud profiles expose the enabled flag and reserve described
+below, alongside their existing complete-config override. Values use integer
 bytes or `B`, `KiB`, `MiB`, `GiB`, `TiB`; `16G`, percentages and `auto` are not
 accepted. Standard and PVM CI fixtures explicitly use a 2 GiB reserve while
 keeping the policy enabled.
 
-Verify the operating-system choice for cloud profiles as well. The current
-Aliyun `node_pool_image_type="AliyunLinux3"` default is the standard image,
-which uses cgroup v1; select and qualify a cgroup v2 image before enabling this
-policy. Huawei's selected node image also requires cgroup-mode verification.
+Both cloud Terraform profiles keep the policy disabled by default. Their
+`sandbox_memory_limit_enabled` input is an explicit opt-in, with
+`sandbox_memory_total_reserve="16GiB"`. Guided profiles expose the same inputs:
+
+```bash
+make config SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB
+```
+
+Select and qualify a cgroup v2 node image before enabling it: the current standard Aliyun
+`node_pool_image_type="AliyunLinux3"` default uses cgroup v1, and Huawei's
+selected node image also needs cgroup-mode verification. These options do not
+change the node operating system or migrate existing nodes to cgroup v2.
 
 This reserve is deployment policy, not a measured component budget or a
 guarantee against host OOM. Distill-fs retains its independent 64 GiB limit and

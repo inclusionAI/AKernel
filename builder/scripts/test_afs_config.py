@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """AFS mount readiness and shared checkpoint profile regression tests."""
+import copy
 import importlib.util
 import os
 from pathlib import Path
@@ -22,6 +23,126 @@ def load(name, path):
 
 HOST = load("afs_host", ROOT / "deploy/standalone/validate-afs.py")
 CONFIG = load("afs_config", ROOT / "builder/scripts/prepare-adx-config.py")
+
+
+class StandaloneCapacityTest(unittest.TestCase):
+    def test_default_source_is_replaced_after_full_profile_resolution(self):
+        original = {
+            "schema_version": 1,
+            "services": [{"id": "worker", "role": "adxlet", "config": {
+                "resource_source": {"kind": "auto", "disk_path": "/home/akernel",
+                                    "valid_for_seconds": 30},
+                "preserved": "value",
+            }}],
+        }
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"ENABLE_TRACE": "false"}):
+            source = ROOT / "builder/config/adx-standalone.yaml"
+            target = Path(directory) / "resolved.yaml"
+            with patch.object(CONFIG.subprocess, "run") as run:
+                run.return_value.stdout = yaml.safe_dump(original)
+                CONFIG.configure(source, target, None, "unused", sandboxd_capacity=True)
+                run.assert_called_once_with(
+                    ["/opt/adx/current/bin/adxctl", "--config", str(source), "config", "dump"],
+                    check=True, capture_output=True, text=True,
+                )
+            result = yaml.safe_load(target.read_text())
+            expected = copy.deepcopy(original)
+            expected["services"][0]["config"]["resource_source"] = {
+                "kind": "sandboxd", "socket": "/var/run/resource.sock",
+                "valid_for_seconds": 30,
+            }
+            self.assertEqual(result, expected)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def test_custom_capacity_sources_are_preserved_without_resolving(self):
+        sources = ({"resource_source": {"kind": "auto", "disk_path": "/custom",
+                                        "valid_for_seconds": 7}},
+                   {"resource_source": {"kind": "file", "path": "/custom/capacity.json"}},
+                   {"resource_source": {"kind": "sandboxd", "socket": "/custom.sock",
+                                        "valid_for_seconds": 9}},
+                   {"capacity_file": "/custom/capacity.json"})
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"ENABLE_TRACE": "false"}):
+            source = Path(directory) / "custom.yaml"
+            for explicit in (False, True):
+                for node in sources:
+                    with self.subTest(explicit=explicit, node=node):
+                        original = {"schema_version": 1}
+                        if explicit:
+                            original["services"] = [{"id": "worker", "role": "adxlet", "config": node}]
+                        else:
+                            original.update({"profile": "standalone", "service_overrides": {
+                                "adxlet": {"config": node}}})
+                        source.write_text(yaml.safe_dump(original))
+                        with patch.object(CONFIG.subprocess, "run") as run:
+                            CONFIG.configure(source, source, None, "unused", sandboxd_capacity=True)
+                            run.assert_not_called()
+                        self.assertEqual(yaml.safe_load(source.read_text()), original)
+
+    def test_resolution_failure_preserves_in_place_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            original = (ROOT / "builder/config/adx-standalone.yaml").read_text()
+            source.write_text(original)
+            with patch.object(CONFIG.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "adxctl")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    CONFIG.configure(source, source, None, "unused", sandboxd_capacity=True)
+            self.assertEqual(source.read_text(), original)
+
+    def test_build_time_conversion_does_not_freeze_runtime_expressions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            original = yaml.safe_load((ROOT / "builder/config/adx-standalone.yaml").read_text())
+            original["namespace"] = "${CUSTOM_NAMESPACE:-akernel}"
+            source.write_text(yaml.safe_dump(original))
+            with patch.object(CONFIG.subprocess, "run") as run:
+                with self.assertRaisesRegex(ValueError, "static deployment"):
+                    CONFIG.configure(source, source, None, "unused", sandboxd_capacity=True)
+                run.assert_not_called()
+            self.assertEqual(yaml.safe_load(source.read_text()), original)
+
+    @unittest.skipUnless(os.environ.get("AKERNEL_TEST_ADXCTL"), "requires packaged ADX CLI")
+    def test_packaged_cli_resolves_default_pvm_trace_and_afs_to_sandboxd(self):
+        binary = Path(os.environ["AKERNEL_TEST_ADXCTL"])
+        source = ROOT / "builder/config/adx-standalone.yaml"
+
+        def resolved(path):
+            return yaml.safe_load(subprocess.run(
+                [str(binary), "--config", str(path), "config", "dump"],
+                check=True, capture_output=True, text=True,
+            ).stdout)
+
+        for pvm in (False, True):
+            for trace, mount in ((False, None), (True, None),
+                                 (True, Path("/mnt/akernel-shared"))):
+                with self.subTest(pvm=pvm, trace=trace, mount=mount), tempfile.TemporaryDirectory() as directory:
+                    target = Path(directory) / "prepared.yaml"
+                    baseline = Path(directory) / "baseline.yaml"
+                    # Mock only host mount inspection; the real packaged CLI
+                    # resolves and validates each complete deployment below.
+                    run = subprocess.run
+
+                    def mounted(command, **kwargs):
+                        if command[0] == "findmnt":
+                            return subprocess.CompletedProcess(command, 0, "afs-dfs fuse rw\n", "")
+                        return run(command, **kwargs)
+
+                    with patch.dict(os.environ, {"ENABLE_TRACE": str(trace).lower()}), patch.object(CONFIG.subprocess, "run", side_effect=mounted):
+                        CONFIG.configure(source, baseline, mount, "test/checkpoints", pvm=pvm)
+                        before = resolved(baseline)
+                        CONFIG.configure(source, target, mount, "test/checkpoints", pvm=pvm,
+                                         sandboxd_capacity=True, adxctl=binary)
+                        after = resolved(target)
+                    self.assertNotIn("profile", yaml.safe_load(target.read_text()))
+                    worker = next(service for service in after["services"] if service["role"] == "adxlet")
+                    self.assertEqual(worker["config"].pop("resource_source"), {
+                        "kind": "sandboxd", "socket": "/var/run/resource.sock",
+                        "valid_for_seconds": 30,
+                    })
+                    old_worker = next(service for service in before["services"] if service["role"] == "adxlet")
+                    self.assertEqual(old_worker["config"].pop("resource_source")["kind"], "auto")
+                    self.assertEqual(after, before)
+                    subprocess.run([str(binary), "--config", str(target), "validate"],
+                                   check=True, capture_output=True, text=True)
 
 
 class AfsConfigTest(unittest.TestCase):
