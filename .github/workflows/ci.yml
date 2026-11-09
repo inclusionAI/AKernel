@@ -153,6 +153,7 @@ jobs:
 
       - name: Test standalone deployment helpers
         run: |
+          python3 -m pip install 'tomli>=2,<3'
           make deploy-standalone-test
           make build-helper-test
   adx-integration-contracts:

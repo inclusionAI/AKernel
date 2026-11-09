@@ -11,6 +11,11 @@ import subprocess
 import tempfile
 import unittest
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 
 STANDALONE_DIR = Path(__file__).resolve().parent
 DIRECT_MARKER = "# AKERNEL_DIRECT_RESOLVER"
@@ -96,10 +101,9 @@ class StartConfigTest(unittest.TestCase):
 
     def assert_memory_config(self, enabled, reserve):
         config = self.read_sections()
-        self.assertEqual(
-            dict(config["plugin.resource.memory_limit"]),
-            {"enabled": enabled, "total_reserve": f'"{reserve}"'},
-        )
+        policy = tomllib.loads(self.config_output.read_text())["plugin"]["resource"]["memory_limit"]
+        self.assertEqual(policy, {"enabled": enabled == "true", "total_reserve": reserve})
+        self.assertIs(policy["enabled"], enabled == "true")
         self.assertEqual(config["plugin.resource"]["cgroup_root_name"], '"/akernel"')
         self.assertEqual(config["plugin.resource"]["max_instance_num"], "1000")
         self.assertEqual(
@@ -163,6 +167,45 @@ class StartConfigTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assert_memory_config(enabled, "16GiB")
 
+    def test_pvm_rejects_policy_rewrites_without_a_standard_memory_table(self):
+        original = self.template.read_text()
+        header = "[plugin.resource.memory_limit]"
+        for form in ("quoted", "inline", "escaped", "dotted"):
+            for enabled, source in (("false", "true"), ("true", "false")):
+                with self.subTest(form=form, enabled=enabled):
+                    canonical = original.replace("enabled = false", f"enabled = {source}", 1)
+                    if form == "quoted":
+                        custom = canonical.replace(header, '[plugin."resource".memory_limit]')
+                    elif form == "escaped":
+                        custom = canonical.replace(header, r'[plugin."res\u006furce".memory_limit]')
+                    else:
+                        if form == "inline":
+                            policy = f'memory_limit = {{ enabled = {source}, total_reserve = "16GiB" }}'
+                        else:
+                            policy = f'memory_limit.enabled = {source}\nmemory_limit.total_reserve = "16GiB"'
+                        custom = re.sub(
+                            r"(?ms)^\[plugin\.resource\.memory_limit\]\n.*?(?=^\[|\Z)",
+                            policy + "\n\n", canonical,
+                        )
+                    self.assertEqual(tomllib.loads(custom), tomllib.loads(canonical))
+                    self.template.write_text(custom)
+                    self.config_output.write_text("existing config\n")
+                    result = self.generate(
+                        AKERNEL_FIRECRACKER_BACKEND="pvm",
+                        AKERNEL_PVM_MEMORY_LIMIT_ENABLED=enabled,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Use [plugin.resource.memory_limit]", result.stderr)
+                    self.assertEqual(self.config_output.read_text(), "existing config\n")
+                    self.assertFalse(self.resolver_output.exists())
+                    result = self.generate(
+                        AKERNEL_FIRECRACKER_BACKEND="pvm",
+                        AKERNEL_PVM_MEMORY_LIMIT_ENABLED=source,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assert_memory_config(source, "16GiB")
+                    self.resolver_output.unlink()
+
     def test_pvm_preserves_omitted_disabled_memory_policy_but_rejects_opt_in(self):
         original = self.template.read_text()
         without_table = re.sub(
@@ -188,7 +231,7 @@ class StartConfigTest(unittest.TestCase):
                     AKERNEL_PVM_MEMORY_LIMIT_ENABLED="true",
                 )
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("exactly one when opting in", result.stderr)
+                self.assertIn("boolean enabled field when opting in", result.stderr)
                 self.assertEqual(self.config_output.read_text(), generated)
 
     def test_pvm_rejects_invalid_or_duplicate_memory_enabled_fields(self):
@@ -204,7 +247,7 @@ class StartConfigTest(unittest.TestCase):
                         AKERNEL_PVM_MEMORY_LIMIT_ENABLED=opt_in,
                     )
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("boolean enabled field", result.stderr)
+                    self.assertRegex(result.stderr, "boolean enabled field|duplicate fields")
                     self.assertFalse(self.config_output.exists())
 
     def test_pvm_rejects_invalid_memory_opt_in(self):

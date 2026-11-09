@@ -65,18 +65,6 @@ data:
 {{- if not (and (contains "[plugin.runtime.firecracker]" $sandboxdConfig) (contains "firecracker=\"/usr/local/bin/firecracker\"" $sandboxdConfig)) }}
 {{- fail "PVM selection requires the standard Firecracker config section and binary entry" }}
 {{- end }}
-{{- $memorySection := regexFind "(?ms)^[\\t ]*\\[plugin\\.resource\\.memory_limit\\][^\\n]*\\n.*?(?:\\n[\\t ]*\\[|\\z)" $sandboxdConfig }}
-{{- $memoryEnabledPattern := "(?m)^[\\t ]*(enabled|\"enabled\"|'enabled')[\\t ]*=[\\t ]*(true|false)[\\t ]*(#[^\\n]*)?$" }}
-{{- $memoryEnabledCount := len (regexFindAll $memoryEnabledPattern $memorySection -1) }}
-{{- $memoryEnabledFields := len (regexFindAll "(?m)^[\\t ]*(enabled|\"enabled\"|'enabled')[\\t ]*=" $memorySection -1) }}
-{{- if or (ne $memoryEnabledFields $memoryEnabledCount) (gt $memoryEnabledCount 1) (and (eq $pvmMemoryLimitEnabled "true") (ne $memoryEnabledCount 1)) }}
-{{- fail "PVM selection requires at most one boolean enabled field under [plugin.resource.memory_limit], and exactly one when opting in" }}
-{{- end }}
-{{- /* Older custom profiles may omit the optional, disabled memory policy. */}}
-{{- if eq $memoryEnabledCount 1 }}
-{{- $pvmMemorySection := regexReplaceAll $memoryEnabledPattern $memorySection (printf "enabled = %s" $pvmMemoryLimitEnabled) }}
-{{- $sandboxdConfig = replace $memorySection $pvmMemorySection $sandboxdConfig }}
-{{- end }}
 {{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)firecracker=" $sandboxdConfig "${1}firecracker-pvm=" }}
 {{- $sandboxdConfig = replace "[plugin.runtime.firecracker]" "[plugin.runtime.firecracker_pvm]" $sandboxdConfig }}
 {{- $sandboxdConfig = regexReplaceAll "(?m)^[\\t ]*kata=.*$" $sandboxdConfig "# Kata is disabled on the PVM node profile." }}
@@ -98,6 +86,13 @@ data:
 {{- fail "node.config.sandboxd.chunkDbSize requires the # AKERNEL_CHUNK_DB_SIZE marker in node.config.sandboxd.config" }}
 {{- end }}
 {{- $sandboxdConfig = replace $chunkDbMarker (printf "chunk_db_size=%s" ($chunkDbSize | quote)) $sandboxdConfig }}
+{{- end }}
+{{- if eq $firecrackerBackend "pvm" }}
+{{- if not (semverCompare ">=3.17.0" .Capabilities.HelmVersion.Version) }}
+{{- fail "PVM configuration requires Helm 3.17 or newer for TOML validation" }}
+{{- end }}
+{{- /* Parse after consuming template markers. Bind fromToml only on the PVM path. */}}
+{{- $sandboxdConfig = tpl (.Files.Get "scripts/pvm-memory-limit.tpl") (dict "Template" .Template "config" $sandboxdConfig "enabled" (eq $pvmMemoryLimitEnabled "true")) }}
 {{- end }}
 {{ $sandboxdConfig | indent 4 }}
 

@@ -264,6 +264,10 @@ PVM also keeps the policy disabled until explicitly selected with
 `node.config.sandboxd.pvmMemoryLimitEnabled=true` in Helm. Size the reserve for
 the selected L1 and qualify the finite-cap and scheduling combination on the
 matching PVM host before rollout; ordinary runsc tests do not qualify PVM.
+Validate PVM memory switches against parsed TOML. PVM chart rendering requires
+Helm 3.17 or newer, and standalone uses Python 3.11 or Python 3.10 with
+`tomli`. Reject a standalone rewrite unless the parsed configuration matches
+the requested policy and preserves the other fields.
 Adding or lowering a parent cap requires an empty sandbox subtree; an existing
 stricter cap is retained. This aggregate sandbox cap does not bound all node
 components or guarantee avoidance of host OOM.

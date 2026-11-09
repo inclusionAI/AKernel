@@ -108,6 +108,46 @@ class SharedCheckpointStorageTests(unittest.TestCase):
             config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
             self.assert_memory_config(config, False, "16GiB")
 
+    def test_pvm_parent_switch_accepts_equivalent_toml_policy_forms(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        header = "[plugin.resource.memory_limit]"
+        section = r"(?ms)^\[plugin\.resource\.memory_limit\]\n.*?(?=^\[|\Z)"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pvm-sandboxd.toml"
+            for enabled, source in (("false", "true"), ("true", "false")):
+                canonical = default.replace("enabled = true", f"enabled = {source}", 1)
+                forms = {
+                    "canonical": canonical,
+                    "quoted": canonical.replace(header, '[plugin."resource".memory_limit]'),
+                    "escaped": canonical.replace(header, r'[plugin."res\u006furce".memory_limit]'),
+                    "inline": re.sub(
+                        section,
+                        f'memory_limit = {{ enabled = {source}, total_reserve = "16GiB" }}\n\n',
+                        canonical,
+                    ),
+                    "dotted": re.sub(
+                        section,
+                        f'memory_limit.enabled = {source}\nmemory_limit.total_reserve = "16GiB"\n\n',
+                        canonical,
+                    ),
+                }
+                expected = None
+                for form, candidate in forms.items():
+                    with self.subTest(enabled=enabled, form=form):
+                        self.assertEqual(tomllib.loads(candidate), tomllib.loads(canonical))
+                        path.write_text(candidate)
+                        resources = render(
+                            "node.config.sandboxd.firecrackerBackend=pvm",
+                            f"node.config.sandboxd.pvmMemoryLimitEnabled={enabled}",
+                            set_files={"node.config.sandboxd.config": path},
+                        )
+                        config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+                        self.assert_memory_config(config, enabled == "true", "16GiB")
+                        if expected is None:
+                            expected = config
+                        else:
+                            self.assertEqual(config, expected)
+
     def test_pvm_preserves_omitted_disabled_memory_policy_but_rejects_opt_in(self):
         default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
         without_table = re.sub(
@@ -138,7 +178,7 @@ class SharedCheckpointStorageTests(unittest.TestCase):
                             "node.config.sandboxd.pvmMemoryLimitEnabled=true",
                             set_files={"node.config.sandboxd.config": path},
                         )
-                    self.assertIn("exactly one when opting in", error.exception.stderr)
+                    self.assertIn("boolean enabled field when opting in", error.exception.stderr)
 
     def test_pvm_rejects_invalid_or_duplicate_memory_enabled_fields(self):
         default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
@@ -156,7 +196,7 @@ class SharedCheckpointStorageTests(unittest.TestCase):
                                 f"node.config.sandboxd.pvmMemoryLimitEnabled={opt_in}",
                                 set_files={"node.config.sandboxd.config": path},
                             )
-                        self.assertIn("boolean enabled field", error.exception.stderr)
+                        self.assertRegex(error.exception.stderr, "boolean enabled field|duplicate fields")
 
     def test_pvm_rejects_invalid_memory_opt_in(self):
         for value in ("1", "TRUE", "yes", ""):

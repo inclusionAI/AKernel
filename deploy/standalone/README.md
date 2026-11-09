@@ -77,6 +77,11 @@ positive `total_reserve` in the source TOML before startup. The switch accepts
 only `true` or `false`, defaults to `false`, and affects only PVM. The maintained
 PVM CI fixture keeps it disabled.
 
+For PVM, use Python 3.11 or newer, or install `tomli` in the Python 3.10
+environment used by the launcher. To override a custom memory policy, put its
+boolean `enabled` field in the standard `[plugin.resource.memory_limit]`
+section. See the [PVM deployment guide](../pvm-runtime.md#deployment-and-storage-profile).
+
 The bundled ADX profile retains its `auto` resource source, including PVM and
 trace/shared-storage variants. `auto` does not guarantee that public scheduling
 capacity follows the sandbox parent ceiling. Before enabling the policy,
