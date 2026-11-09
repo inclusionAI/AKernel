@@ -1,0 +1,15 @@
+[Unit]
+Description=AKernel managed Docker image collection broker (opt-in)
+After=sandboxd.service
+Requires=sandboxd.service
+PartOf=sandboxd.service
+ConditionPathExists=/etc/akernel/managed-runtime.env
+
+[Service]
+EnvironmentFile=/etc/akernel/managed-runtime.env
+ExecStart=/usr/bin/python3 /usr/local/lib/akernel/managed-docker/provider_service.py --root ${MANAGED_RUNTIME_ROOT} --image-socket ${MANAGED_IMAGE_SOCKET} --port ${MANAGED_IMAGE_PORT}
+Restart=on-failure
+UMask=0077
+
+[Install]
+WantedBy=sandboxd.service

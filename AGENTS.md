@@ -196,6 +196,13 @@ covers the archive, not a bare runsc binary. Keep CI's final-image payload
 checks synchronized; do not mix helper versions or fetch them at runtime.
 
 The sandboxd submodule supplies the source compiled by `make build`.
+For native Kubernetes snapshots spanning control/worker upgrades, preserve the
+qualified EROFS runtime bytes independently of the platform image. The opt-in
+`node.runtimeRootfsPin` stages a digest-pinned source runtime on the existing
+node data disk and verifies the source/current static Execd hashes before a
+read-only mount. Keep the pin unchanged during control-only upgrades and retain
+referenced cache files; do not relax runsc superblock checks or claim arbitrary
+guest-runtime migration. See `deploy/docs/runtime-rootfs-pinning.md`.
 Helm and standalone enable `runsc.background_restore` and `checkpoint_sync.sync_output`;
 runtime files and private writable layers remain on node-local storage.
 AKernel's `builder/distill-fs-versions.env` fixes the distill-fs release URL
@@ -985,3 +992,50 @@ ADX profile, applying patches only to present roles. Resolve profile/role
 selectors with ADX's single-pass environment/default/escape rules while
 preserving source expressions for the authoritative loader. Severity queries consume
 Collector-normalized log metadata and plain bodies.
+
+
+## Managed Docker runtime
+
+`build_image()` accepts optional preparation CPU/memory scheduling requests while retaining its existing 1000 millicore/2048 MiB limits. Validate requests before creation and retain cleanup on all submission outcomes. Reservation overrides are explicit load-test inputs, not additional runtime capacity; ordinary callers keep the existing defaults.
+
+Managed profile storage metadata is derived by `builder/managed-docker/profile_metadata.py` from the same Sandboxd profile and advertised through ordinary ADXlet node labels. The ADX backend reserves the profile floor and constrains placement before creation; node-side authorization and storage checks remain authoritative. Managed YAML must reach official Compose unchanged, including native merge tags. Service handles become available after runtime service discovery. Keep authorization allowlists outside the snapshot compatibility fingerprint, while checking current authorization on every restore.
+
+Coalesce managed resource probes within the authenticated backend and bound
+successful advisory views to one second. Do not cache failures or share views
+across backend credentials; discard inherited process state before locking.
+This does not limit concurrent creates or replace fresh server authorization.
+
+Foreground command deadlines raise TimeoutException with an explicit timeout
+label and available partial command_result. Preserve its native error code and
+retry/outcome guidance; application stderr is output, not the timeout reason.
+Build/Compose logs retain that partial output without replaying commands or
+replacing the primary error when local log persistence fails.
+
+Publish native builds under fresh invocation tags. Reconcile only the known
+post-publication Buildx history error, using official Docker inspection and
+verified immutable manifests for every planned output. Preserve the original
+error and fail on partial publication; do not replay an unknown build outcome.
+The exact post-publication internal deadline additionally requires every fresh
+target's completed push acknowledgement to match its inspected manifest digest;
+explicit attestations require native completion. Exit 100 alone proves neither
+history failure nor publication. Default optional metadata provenance to Docker's
+supported disabled mode while preserving operator overrides; do not claim this
+repairs the BuildKit server's history or storage paths.
+
+The experimental remote-build path in `builder/managed-docker` delegates Dockerfile and Compose parsing/builds to the official Docker CLI, Compose, and Buildx remote driver. Connect to an operator-provided BuildKit service; its native Nydus exporter publishes to the configured internal Distribution Registry. Single-image builds use the broker's metadata-only `/describe` result and leave final rootfs acquisition to the final sandbox; never mount a task image on a disposable build helper just to read its process defaults. Compose image preparation uses sandboxd's existing image manager and Dragonfly/ROFS cache, with a private, operator-authorized image collection. Keep the broker's explicit owner and collection-flock protocol synchronized with Sandboxd's node-local live/checkpoint leases; missing/copied lease markers fail closed, and unknown legacy collections require an operator drain. Neither local mount release nor an expired capability authorizes Registry artifact deletion. Cross-node reconstruction, per-tenant Registry authorization and artifact GC remain separate release requirements. Do not add Dockerfile instructions to the legacy SDK interpreter for this path. `ComposeProject.bind_runtime()` accepts a fresh runtime-prepared opaque descriptor without remote startup; checkpoint recovery must continue using pure `attach()` and captured tunnel descriptors.
+
+Client-managed DockerRuntime owns image discovery/OCI metadata validation, ROFS mount plans and guest daemon startup. With an opt-in platform-managed profile, the node supplies the pinned tool/bootstrap image, authorized collection, credentials and startup parameters; the SDK transfers task files and invokes runtime operations. Sources live in `builder/image-bridge`, `builder/dind`, and `sdk/python/akernel_sdk/_docker_runtime.py`. Callers supply original project files and keep service orchestration in their adapter. Snapshot restore must rebind mounts, runtime extra_config and local tunnels without rerunning startup. Reuse the existing sandboxd image provider; do not add a parallel layer cache or modify deployment/runtime pins for client refactoring. See the SDK and builder guides for managed-upper prerequisites and supported scope.
+
+Managed builds export native targets without adding a Python helper layer or changing task PATH. Whole-sandbox C/R is independent of guest interpreters and application quiescence. `ServiceHandle.start_command()` runs native Compose exec as a reconnectable sandbox command, with an outer Docker CLI PID and stable command ID; restore reattaches without replay or signals. Keep the explicit Python-based inner `start_process()` API optional.
+
+`BuiltImage.has_startup_command` reflects the effective OCI ENTRYPOINT/CMD
+returned by the runtime. Consumers that inherit image startup must disable
+inheritance for empty commands; such images remain valid interactive roots.
+
+Compose project lifecycle and Docker service/process operations are SDK extensions in `_compose.py` and `_service_process.py`; the dependency-free `_service_process_guest.py` runs in the selected service PID namespace. Keep project descriptors JSON-compatible and restore attachment free of fresh-boot operations. Preserve explicit build/network-policy/up boundaries, unknown-outcome identities, source fencing, and container/process start-time checks before signals. Callers retain task/harness semantics. Run the real-process helper unit tests with owned-process cleanup and the complete SDK quality gate when changing these contracts. This feature does not add Docker semantics to Agent DX or change runtime pins.
+
+Automatic Compose image preparation covers image-only services as well as Dockerfile bases. Verify pinned Docker references and committed ROFS snapshots instead of running native pulls, including during up. Keep digest-reference regression coverage and fail closed on missing registrations; never relax bridge extraction protection or populate the private upper with replacement lower layers.
+
+Managed discovery requires helper schema 2 and probes capabilities before sending project input. Confine client Dockerfile/build-context and `.env` reads to the frozen project; never inherit unspecified host environment variables. External include/extends files remain unsupported in client-managed discovery. Validate manifest/config/chain relationships and allow legitimate same-chain roots with different target digests. Keep the empty automatic-plan marker for scratch-only builds. Unknown command exits and failed cancellation retain their identities and cleanup errors without replay.
+
+Managed Compose defaults preserve native IPv4 bridge definitions. Keep forwarding/NAT and per-service tunnel exposure in the SDK/runtime, with daemon-only legacy iptables selection for Docker DNS. Restore attachment stays pure; explicit reconnect_network refreshes only owned chains for the new outer TAP before the harness resumes. Do not claim external TCP address migration. Keep the opt-in Compose network integration regression, including existing inner and published-port sockets, synchronized with these APIs. Docker 28 operator flags are prerequisites; client work must not change production or runtime bundle pins.

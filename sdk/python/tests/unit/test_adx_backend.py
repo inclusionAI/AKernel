@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 import json
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -28,7 +31,7 @@ from adx_environment.commands import Commands as NativeCommands
 from akernel_sdk._addresses import Endpoint
 from akernel_sdk._backends import adx
 from akernel_sdk._backends.base import BackendConfig, SandboxSpec
-from akernel_sdk._backends.errors import BackendOperationError
+from akernel_sdk._backends.errors import BackendOperationError, TimeoutException
 from akernel_sdk.types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config
 
 
@@ -71,6 +74,238 @@ class AdxBackendTest(unittest.TestCase):
             token="secret",
         )
 
+    def test_managed_default_reserves_floor_through_native_request_encoding(self):
+        key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"
+        requests = []
+
+        def send(_client, request, **_kwargs):
+            requests.append(request)
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "items": [
+                            {"id": "node-a", "status": 0, "labels": {key: "8192"}},
+                            {"id": "node-b", "status": 0, "labels": {key: "12288"}},
+                        ]
+                    },
+                    request=request,
+                )
+            return httpx.Response(
+                403, json={"message": "stop after encoding"}, request=request
+            )
+
+        with (
+            patch.object(httpx.Client, "send", autospec=True, side_effect=send),
+            self.assertRaises(BackendOperationError),
+        ):
+            adx.AdxBackend(self.config).create(
+                _spec(
+                    extra_config={"managedRuntimeProfile": "harbor-v1"},
+                    node_id="node-a",
+                )
+            )
+        self.assertEqual([r.method for r in requests], ["GET", "POST"])
+        self.assertEqual(
+            str(requests[0].url), "https://api.example/api/environment/v1/resources"
+        )
+        self.assertEqual(requests[0].headers["X-Auth"], "secret")
+        body = json.loads(requests[1].content)
+        self.assertEqual(body["storageMb"], 8192)
+        self.assertEqual(
+            body["scheduleAffinities"][0]["labelOps"],
+            [
+                {"type": 0, "labelKey": key, "labelValues": ["8192"]},
+                {"type": 0, "labelKey": "NODE_ID", "labelValues": ["node-a"]},
+            ],
+        )
+
+    def test_managed_undersized_budgets_or_missing_nodes_never_create(self):
+        key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"
+        for overrides in (
+            {"storage_mb": 4097},
+            {"storage_limit_mb": 4096},
+            {"node_id": "absent"},
+        ):
+            with self.subTest(overrides=overrides):
+                requests = []
+
+                def send(_client, request, _requests=requests, **_kwargs):
+                    _requests.append(request)
+                    return httpx.Response(
+                        200,
+                        json={
+                            "items": [
+                                {"id": "node-a", "status": 0, "labels": {key: "8192"}}
+                            ]
+                        },
+                        request=request,
+                    )
+
+                with (
+                    patch.object(httpx.Client, "send", autospec=True, side_effect=send),
+                    self.assertRaises(ValueError),
+                ):
+                    adx.AdxBackend(self.config).create(
+                        _spec(
+                            extra_config={"managedRuntimeProfile": "harbor-v1"},
+                            **overrides,
+                        )
+                    )
+                self.assertEqual([r.method for r in requests], ["GET"])
+
+    def test_managed_preflight_retains_authorization_errors(self):
+        def deny(_client, request, **_kwargs):
+            return httpx.Response(
+                403,
+                json={
+                    "message": "denied",
+                    "error": {
+                        "code": "PERMISSION_DENIED",
+                        "retry": "never",
+                        "outcome": "not_started",
+                        "requestId": "profile-test",
+                    },
+                },
+                request=request,
+            )
+
+        with (
+            patch.object(httpx.Client, "send", autospec=True, side_effect=deny),
+            self.assertRaises(BackendOperationError) as raised,
+        ):
+            adx.AdxBackend(self.config).create(
+                _spec(extra_config={"managedRuntimeProfile": "harbor-v1"})
+            )
+        self.assertEqual(raised.exception.code, "PERMISSION_DENIED")
+        self.assertEqual(raised.exception.request_id, "profile-test")
+
+    def test_concurrent_managed_creates_share_geometry_without_merging_specs(self):
+        backend = adx.AdxBackend(self.config)
+        barrier = threading.Barrier(16)
+        calls = []
+        key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"
+
+        def send(_client, request, **_kwargs):
+            calls.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {"id": "a", "status": 0, "labels": {key: "8192"}},
+                        {"id": "b", "status": 0, "labels": {key: "12288"}},
+                    ]
+                },
+                request=request,
+            )
+
+        def resolve(index):
+            barrier.wait(timeout=5)
+            return backend._managed_storage(
+                _spec(
+                    extra_config={"managedRuntimeProfile": "harbor-v1"},
+                    node_id="a" if index % 2 == 0 else "b",
+                )
+            )[0].storage_mb
+
+        with patch.object(httpx.Client, "send", autospec=True, side_effect=send):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+                result = list(pool.map(resolve, range(16)))
+        self.assertEqual(result, [8192, 12288] * 8)
+        self.assertEqual(len(calls), 1)
+
+    def test_managed_probe_expires_and_does_not_serve_stale_authorization(self):
+        backend = adx.AdxBackend(self.config)
+        spec = _spec(extra_config={"managedRuntimeProfile": "harbor-v1"})
+        key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"
+        clock = [0.0]
+        replies = [8192, None, 16384]
+
+        def send(_client, request, **_kwargs):
+            floor = replies.pop(0)
+            if floor is None:
+                return httpx.Response(403, json={"message": "revoked"}, request=request)
+            return httpx.Response(
+                200,
+                json={"items": [{"id": "a", "status": 0, "labels": {key: str(floor)}}]},
+                request=request,
+            )
+
+        with (
+            patch.object(httpx.Client, "send", autospec=True, side_effect=send),
+            patch.object(adx.time, "monotonic", side_effect=lambda: clock[0]),
+        ):
+            self.assertEqual(backend._managed_storage(spec)[0].storage_mb, 8192)
+            clock[0] = 0.5
+            self.assertEqual(backend._managed_storage(spec)[0].storage_mb, 8192)
+            clock[0] = 1.0
+            with self.assertRaises(BackendOperationError):
+                backend._managed_storage(spec)
+            self.assertEqual(backend._managed_storage(spec)[0].storage_mb, 16384)
+        self.assertEqual(replies, [])
+
+    def test_managed_probe_isolated_by_authenticated_backend(self):
+        key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"
+        tokens = []
+
+        def send(_client, request, **_kwargs):
+            token = request.headers["X-Auth"]
+            tokens.append(token)
+            floor = 8192 if token == "secret" else 12288
+            return httpx.Response(
+                200,
+                json={"items": [{"id": "a", "status": 0, "labels": {key: str(floor)}}]},
+                request=request,
+            )
+
+        spec = _spec(extra_config={"managedRuntimeProfile": "harbor-v1"})
+        with patch.object(httpx.Client, "send", autospec=True, side_effect=send):
+            first = adx.AdxBackend(self.config)._managed_storage(spec)[0]
+            second = adx.AdxBackend(
+                replace(self.config, token="other")
+            )._managed_storage(spec)[0]
+        self.assertEqual((first.storage_mb, second.storage_mb), (8192, 12288))
+        self.assertEqual(tokens, ["secret", "other"])
+
+    def test_managed_probe_releases_followers_when_leader_is_interrupted(self):
+        backend = adx.AdxBackend(self.config)
+        entered = threading.Event()
+        release = threading.Event()
+        interruption = KeyboardInterrupt("cancel resource read")
+
+        def send(_client, _request, **_kwargs):
+            entered.set()
+            self.assertTrue(release.wait(timeout=5))
+            raise interruption
+
+        with patch.object(httpx.Client, "send", autospec=True, side_effect=send):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                leader = pool.submit(backend._managed_resource_nodes)
+                self.assertTrue(entered.wait(timeout=5))
+                follower = pool.submit(backend._managed_resource_nodes)
+                release.set()
+                for result in [leader, follower]:
+                    with self.assertRaises(KeyboardInterrupt):
+                        result.result(timeout=5)
+        self.assertIsNone(backend._managed_resource_pending)
+
+    def test_managed_probe_drops_inherited_process_state_before_locking(self):
+        backend = adx.AdxBackend(self.config)
+        backend._managed_resource_pid = -1
+        backend._managed_resource_lock.acquire()
+        with patch.object(
+            httpx.Client,
+            "send",
+            autospec=True,
+            return_value=httpx.Response(
+                200,
+                json={"items": []},
+                request=httpx.Request("GET", "https://api.example"),
+            ),
+        ):
+            self.assertEqual(backend._managed_resource_nodes(), [])
+        self.assertEqual(backend._managed_resource_pid, os.getpid())
+
     def _failed_create_calls(self, stage, ownership):
         calls = []
 
@@ -83,24 +318,33 @@ class AdxBackendTest(unittest.TestCase):
             if action:
                 if (stage == "cwd" and action == "file.make_dir") or stage == "route":
                     return httpx.Response(
-                        403, json={"message": "initialization denied", "error": {
-                            "code": "PERMISSION_DENIED", "retry": "never",
-                            "outcome": "not_started", "requestId": "test",
-                        }}, request=request,
+                        403,
+                        json={
+                            "message": "initialization denied",
+                            "error": {
+                                "code": "PERMISSION_DENIED",
+                                "retry": "never",
+                                "outcome": "not_started",
+                                "requestId": "test",
+                            },
+                        },
+                        request=request,
                     )
                 return httpx.Response(200, json={"processes": []}, request=request)
             payload = {"environmentId": "default-shared", "status": "running"}
             if ownership is not None:
                 payload["newlyCreated"] = ownership
             return httpx.Response(
-                200, headers={"content-type": "text/event-stream"},
+                200,
+                headers={"content-type": "text/event-stream"},
                 content="event: final\ndata: " + json.dumps(payload) + "\n\n",
                 request=request,
             )
 
         tunnel = (
             HttpReverseTunnel(target="http://127.0.0.1:9000")
-            if stage == "tunnel" else None
+            if stage == "tunnel"
+            else None
         )
         with (
             patch.object(httpx.Client, "send", autospec=True, side_effect=send),
@@ -108,11 +352,16 @@ class AdxBackendTest(unittest.TestCase):
         ):
             client.return_value.start.return_value = False
             with self.assertRaises(BackendOperationError):
-                adx.AdxBackend(self.config).create(_spec(
-                    name="shared", detached=True, cpu=2000, memory=4096,
-                    command_cwd="/proc/akernel-review" if stage == "cwd" else None,
-                    reverse_tunnel=tunnel,
-                ))
+                adx.AdxBackend(self.config).create(
+                    _spec(
+                        name="shared",
+                        detached=True,
+                        cpu=2000,
+                        memory=4096,
+                        command_cwd="/proc/akernel-review" if stage == "cwd" else None,
+                        reverse_tunnel=tunnel,
+                    )
+                )
         return calls
 
     def test_failed_native_and_backend_initialization_respect_create_ownership(self):
@@ -133,10 +382,13 @@ class AdxBackendTest(unittest.TestCase):
             return httpx.Response(
                 403,
                 json={
-                    "code": 403, "message": "host mount is not authorized",
+                    "code": 403,
+                    "message": "host mount is not authorized",
                     "error": {
-                        "code": "PERMISSION_DENIED", "retry": "never",
-                        "outcome": "not_started", "requestId": "host-path-test",
+                        "code": "PERMISSION_DENIED",
+                        "retry": "never",
+                        "outcome": "not_started",
+                        "requestId": "host-path-test",
                     },
                 },
                 request=request,
@@ -175,7 +427,8 @@ class AdxBackendTest(unittest.TestCase):
             Mount(target="/inputs", host_path="/apps/inputs"),
             Mount(target="/tools", image_url="tools:v1"),
             Mount(
-                target="/weights", type="erofs",
+                target="/weights",
+                type="erofs",
                 s3_config=S3Config("https://s3.example", "data", "weights.img"),
             ),
         )
@@ -189,9 +442,15 @@ class AdxBackendTest(unittest.TestCase):
 
     def test_create_preserves_public_error_context_and_cause(self):
         error = EnvironmentHTTPError(
-            504, {}, "CPU cannot fit", code="DEADLINE_EXCEEDED",
-            retry="never", outcome="not_started", request_id="create-test",
-            operation_id="op-test", environment_id="default-test",
+            504,
+            {},
+            "CPU cannot fit",
+            code="DEADLINE_EXCEEDED",
+            retry="never",
+            outcome="not_started",
+            request_id="create-test",
+            operation_id="op-test",
+            environment_id="default-test",
         )
         error.scheduling_failure = {"rejections": {"insufficient_cpu": 3}}
         with (
@@ -202,15 +461,24 @@ class AdxBackendTest(unittest.TestCase):
         public = raised.exception
         self.assertIs(public.__cause__, error)
         for field in (
-            "code", "retry", "outcome", "request_id", "operation_id",
-            "environment_id", "status_code", "scheduling_failure",
+            "code",
+            "retry",
+            "outcome",
+            "request_id",
+            "operation_id",
+            "environment_id",
+            "status_code",
+            "scheduling_failure",
         ):
             self.assertEqual(getattr(public, field), getattr(error, field), field)
 
     def test_unknown_create_retains_same_operation_guidance(self):
         error = adx.adx_environment.EnvironmentError(
-            "response lost", code="OUTCOME_UNKNOWN", retry="same_operation",
-            outcome="unknown", request_id="create-unknown",
+            "response lost",
+            code="OUTCOME_UNKNOWN",
+            retry="same_operation",
+            outcome="unknown",
+            request_id="create-unknown",
             environment_id="default-unknown",
         )
         with (
@@ -223,6 +491,42 @@ class AdxBackendTest(unittest.TestCase):
         self.assertIsNone(raised.exception.status_code)
         self.assertIsNone(raised.exception.scheduling_failure)
 
+    def test_create_retains_first_native_failure_and_final_retry_guidance(self):
+        first = EnvironmentHTTPError(
+            503,
+            {},
+            "initial service failure",
+            code="SERVICE_UNAVAILABLE",
+            retry="same_operation",
+            outcome="unknown",
+            request_id="create-first",
+        )
+        final = EnvironmentHTTPError(
+            504,
+            {},
+            "deadline expired during ownership lookup",
+            code="DEADLINE_EXCEEDED",
+            retry="same_operation",
+            outcome="unknown",
+            request_id="create-final",
+            environment_id="default-pending",
+        )
+        final.first_error = first
+        with (
+            patch.object(adx, "_OwnedSandbox", side_effect=final),
+            self.assertRaises(BackendOperationError) as raised,
+        ):
+            adx.AdxBackend(self.config).create(_spec())
+        public = raised.exception
+        self.assertIs(public.first_error, first)
+        self.assertIs(public.__cause__, final)
+        self.assertEqual(public.code, "DEADLINE_EXCEEDED")
+        self.assertEqual(public.request_id, "create-final")
+        self.assertEqual(public.environment_id, "default-pending")
+        self.assertEqual(public.retry, "same_operation")
+        self.assertEqual(public.outcome, "unknown")
+        self.assertIs(adx._convert_error("cleanup", public).first_error, first)
+
     def test_unstructured_error_does_not_invent_execution_outcome(self):
         error = adx._convert_error("create sandbox", RuntimeError("local failure"))
         self.assertIsNone(error.code)
@@ -230,6 +534,7 @@ class AdxBackendTest(unittest.TestCase):
         self.assertIsNone(error.outcome)
         self.assertIsNone(error.request_id)
         self.assertIsNone(error.environment_id)
+        self.assertIsNone(error.first_error)
         self.assertEqual(
             str(BackendOperationError("existing caller")), "existing caller"
         )
@@ -409,6 +714,51 @@ class AdxBackendTest(unittest.TestCase):
             stdout="finished", stderr="", exit_code=0
         )
         self.assertEqual(driver.wait(12, timeout=10).exit_code, 0)
+
+    def test_foreground_timeout_retains_partial_output_without_using_it_as_reason(self):
+        native = MagicMock()
+        native.run.return_value = SimpleNamespace(
+            stdout="partial stdout",
+            stderr="ordinary build progress, no diagnostic",
+            exit_code=None,
+            status=adx.adx_environment.CommandStatus.TIMED_OUT,
+            error_code="COMMAND_TIMEOUT",
+            error_message=None,
+        )
+        driver = adx._CommandsDriver(native)
+        with self.assertRaisesRegex(
+            TimeoutException, "timed out after 600 seconds"
+        ) as caught:
+            driver.run("native build", envs=None, cwd=None, timeout=600)
+        error = caught.exception
+        self.assertEqual(error.code, "COMMAND_TIMEOUT")
+        self.assertIsNone(error.retry)
+        self.assertIsNone(error.outcome)
+        self.assertNotIn("ordinary build progress", str(error))
+        self.assertIsNotNone(error.command_result)
+        self.assertEqual(error.command_result.stdout, "partial stdout")
+        self.assertEqual(
+            error.command_result.stderr, "ordinary build progress, no diagnostic"
+        )
+        self.assertIsNone(error.command_result.exit_code)
+
+    def test_foreground_wait_timeout_is_not_reported_as_a_terminal_exit(self):
+        native = MagicMock()
+        native.run.return_value = SimpleNamespace(
+            stdout="partial",
+            stderr="progress",
+            exit_code=None,
+            status=adx.adx_environment.CommandStatus.RUNNING,
+            error_code="WAIT_TIMEOUT",
+            error_message="observation expired",
+        )
+        driver = adx._CommandsDriver(native)
+        with self.assertRaises(TimeoutException) as caught:
+            driver.run("native build", envs=None, cwd=None, timeout=600)
+        self.assertEqual(caught.exception.code, "WAIT_TIMEOUT")
+        self.assertIsNone(caught.exception.outcome)
+        self.assertIsNotNone(caught.exception.command_result)
+        self.assertEqual(caught.exception.command_result.status, "RUNNING")
 
     def test_reload_waits_for_new_data_route_without_repeating_reload(self):
         backend = adx.AdxBackend(self.config)

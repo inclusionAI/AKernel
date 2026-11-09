@@ -38,8 +38,8 @@ ARG OTELCOL_CONTRIB_SHA256=
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 ARG ADX_VERSION=v0.1.0rc2
-ARG ADX_RELEASE_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261106003204-e611b9e4a83d/linux/amd64/adx-release.tar.gz
-ARG ADX_RELEASE_SHA256=f53816d8378dc43e62755dc173e093d7237105e1b190fd8297dd934692cdb403
+ARG ADX_RELEASE_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261106064716-2f61d44d9c56/linux/amd64/adx-release.tar.gz
+ARG ADX_RELEASE_SHA256=e4390134ed9428936a241622dfd01a4420b0ddc494b3dab40bf0b9712238cf33
 
 FROM ${AKERNEL_NODE_BASE_IMAGE} AS adx-release
 ARG ADX_RELEASE_URL
@@ -473,6 +473,7 @@ COPY ./builder/scripts/prepare-adx-config.py /usr/local/libexec/prepare-adx-conf
 COPY ./builder/scripts/adx-service.sh /usr/local/bin/adx-service
 COPY ./builder/scripts/otel-collector-service.sh /usr/local/bin/otel-collector-service
 COPY ./builder/scripts/sandboxd_network_prepare.sh /usr/local/bin/sandboxd-network-prepare
+COPY ./builder/managed-docker/image_provider.py ./builder/managed-docker/provider_service.py /usr/local/lib/akernel/managed-docker/
 ARG FIRECRACKER_KERNEL_PROFILE
 COPY ./builder/config/adx-standalone.yaml /etc/akernel/adx-standalone.yaml
 RUN case "${FIRECRACKER_KERNEL_PROFILE}" in \

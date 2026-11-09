@@ -334,6 +334,13 @@ a time and keep the others available. This also allows updates when pod
 anti-affinity already occupies every eligible node. A single replica retains
 surge-first updates.
 
+The default standalone and Helm OCI specifications mount a private 64 MiB tmpfs
+at `/dev/shm` with mode `1777`, `nosuid`, `nodev` and `noexec`. Non-root processes,
+including PostgreSQL, can create POSIX shared-memory objects there. This mount
+belongs to the sandbox and follows its checkpoint/restore; it is not the node's
+shared-memory directory. Custom OCI specifications own their mount options.
+Drain existing sandboxes and snapshots before replacing their OCI mount layout.
+
 ### Network ACLs
 
 The bundled standalone, Helm, and Terraform sandboxd configurations enable

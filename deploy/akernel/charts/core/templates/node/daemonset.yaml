@@ -1,3 +1,12 @@
+{{- $runtimePin := .Values.node.runtimeRootfsPin | default dict }}
+{{- if $runtimePin.enabled }}
+{{- if and ($runtimePin.currentExecdSha256 | default "") (not (regexMatch "^[a-f0-9]{64}$" $runtimePin.currentExecdSha256)) }}
+{{- fail "runtimeRootfsPin.currentExecdSha256 must be a separately qualified SHA256" }}
+{{- end }}
+{{- if or .Values.adx.e2b.enabled (contains "://" ($runtimePin.sourceImage | default "")) (not (regexMatch "^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$" ($runtimePin.sourceImage | default ""))) (not (regexMatch "^[a-f0-9]{64}$" ($runtimePin.sha256 | default ""))) (not (regexMatch "^[a-f0-9]{64}$" ($runtimePin.execdSha256 | default ""))) }}
+{{- fail "runtimeRootfsPin requires ADX without E2B, a digest-pinned source image, and rootfs/Execd SHA256 values" }}
+{{- end }}
+{{- end }}
 {{- if .Values.kruise.enabled }}
 apiVersion: apps.kruise.io/v1alpha1
 {{- else }}
@@ -72,6 +81,34 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
+        {{- if $runtimePin.enabled }}
+        {{- range $mode := list "stage" "verify" }}
+        - name: {{ $mode }}-runtime-rootfs
+          {{- if eq $mode "stage" }}
+          image: {{ $runtimePin.sourceImage | quote }}
+          {{- else }}
+          image: "{{ include "core.image" (dict "root" $ "image" $.Values.node.image) }}"
+          {{- end }}
+          imagePullPolicy: IfNotPresent
+          command: [python3, /config/pin-runtime-rootfs.py]
+          args:
+            - {{ $mode }}
+            - --root
+            - /runtime-cache
+            - --sha256
+            - {{ $runtimePin.sha256 | quote }}
+            - --execd-sha256
+            {{- if eq $mode "verify" }}
+            - {{ $runtimePin.currentExecdSha256 | default $runtimePin.execdSha256 | quote }}
+            {{- else }}
+            - {{ $runtimePin.execdSha256 | quote }}
+            {{- end }}
+          securityContext: {runAsUser: 0, runAsGroup: 0, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true}
+          volumeMounts:
+            - {name: akernel-node-config, mountPath: /config, readOnly: true}
+            - {name: home-disk, mountPath: /runtime-cache, readOnly: {{ eq $mode "verify" }}}
+        {{- end }}
+        {{- end }}
         {{- if .Values.node.config.sandboxd.enableRunc }}
         - name: prepare-runc-filesystems
           image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
@@ -257,6 +294,12 @@ spec:
         securityContext:
           privileged: true
         volumeMounts:
+        {{- if $runtimePin.enabled }}
+        - name: home-disk
+          mountPath: /opt/akernel/runtime/akernel-runtime-rootfs.img
+          subPath: {{ printf "runtime-rootfs/%s.img" $runtimePin.sha256 | quote }}
+          readOnly: true
+        {{- end }}
         {{- if .Values.node.applicationLogs.enabled }}
         - name: application-logs-disk
           mountPath: /app/logs

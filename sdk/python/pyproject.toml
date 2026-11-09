@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akernel-sdk"
-version = "0.2.0rc5"
+version = "0.2.0rc6"
 description = "Python SDK and CLI for AKernel remote sandboxes"
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,6 +30,8 @@ classifiers = [
 dependencies = [
     "adx-environment==0.1.0rc4",
     "idna>=3,<4",
+    "httpx>=0.27,<1",
+    "PyYAML>=6,<7",
     "websockets>=10.0",
     "dockerfile-parse>=2.0.1",
 ]
@@ -42,6 +44,7 @@ dev = [
     "build>=1.2,<2",
     "mypy>=1.10,<2",
     "ruff>=0.11,<1",
+    "types-PyYAML>=6,<7",
 ]
 
 [project.scripts]

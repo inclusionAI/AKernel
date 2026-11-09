@@ -1,5 +1,7 @@
 # AKernel Python SDK
 
+The experimental [managed remote-build runtime](../../builder/managed-docker/README.md) uses official Buildx remote and native Compose rather than the legacy Dockerfile interpreter. Its operator-prepared fresh descriptor binds with `ComposeProject.bind_runtime(sandbox, descriptor)`; this performs no upload, daemon startup, image preparation or build. After checkpoint restore, use `ComposeProject.attach()` so captured services and tunnels are reused. Docker `network_mode: service:...` follows the native namespace owner when exposing a bridge-accessible model tunnel.
+
 `akernel-sdk` is the Python interface for creating and managing remote AKernel
 sandboxes. Applications use one stable API for commands, files, interactive
 PTYs, port forwarding, and reverse tunnels.
@@ -87,6 +89,15 @@ Address behavior is deterministic:
   without a scheme uses HTTP/WS. Scheme-qualified overrides without a port
   use 443 for HTTPS/WSS and 80 for HTTP/WS; an explicit port is preserved.
   Exec and file transfer continue to use `AKERNEL_SERVER_ADDRESS`.
+
+For a shared HTTPS control and tunnel entrypoint, set both addresses explicitly:
+
+```bash
+export AKERNEL_SERVER_ADDRESS="https://akernel.example.com"
+export AKERNEL_GATEWAY_ADDRESS="$AKERNEL_SERVER_ADDRESS"
+```
+
+The shell expands the double-quoted variable in this example. The SDK does not expand `$NAME` or `${NAME}` within address values and rejects unresolved variables before creating a sandbox. Use literal URLs in configuration files whose loader does not expand variables.
 
 ### TLS certificate verification
 
@@ -479,6 +490,13 @@ retaining stdout, stderr and exit_code, and `TimeoutException` for an unfinished
 observation. The default continues returning `CommandResult`. Authentication,
 permission, missing-resource, timeout, rate-limit and service-busy exceptions
 subclass `BackendOperationError` and retain structured service context.
+
+An ADX foreground command deadline raises `TimeoutException` with its native
+error code and any available partial `command_result`. Its message identifies
+the deadline; stdout/stderr remain command output. A wait deadline does not
+establish a terminal remote exit. Managed builds and Compose operations retain
+available partial output in their configured logs, preserving the original
+exception if local log persistence fails.
 
 Foreground commands return a backend-neutral `CommandResult`. Background
 commands return an AKernel `CommandHandle`; its lifecycle operations are
@@ -1428,6 +1446,8 @@ are `None`; the original exception remains in `__cause__`. `cleanup_errors` is a
 tuple of rollback failures (empty when absent). Known-created IDs and these
 errors are also attached to interruption exceptions without changing their type.
 
+`first_error` retains the native client's first failed attempt when a later retry reports a different failure; otherwise it is `None`. The final exception's `code`, `retry` and `outcome` still govern retry and cleanup decisions. The original final native exception remains in `__cause__`.
+
 ```python
 from akernel_sdk import BackendOperationError, Sandbox
 
@@ -1448,3 +1468,251 @@ results retain `outcome="unknown"` and `retry="same_operation"`; preserve the
 original identity when querying or retrying. Do not infer execution or cleanup
 from a timeout message. `status_code` describes the service failure (including
 an SSE final event's error code); it need not equal the stream's HTTP status.
+
+
+### Client-managed Docker/Compose runtime
+
+For a platform-owned deployment, use the [managed profile](#platform-managed-native-docker-builds). The client-managed API below requires a compatible runsc deployment with Sandboxd managed file-backed tmpfs support. Select reflink checkpoint mode and durable sync in deployment configuration; the SDK never modifies cluster settings. See [runtime prerequisites](../../builder/image-bridge/README.md).
+
+```python
+from pathlib import Path
+from akernel_sdk import DockerRuntime, Sandbox, prepare_compose_images
+
+images = prepare_compose_images(
+    "./project", ["./project/docker-compose.yaml"],
+    output_dir="./diagnostics/images",
+    bridge_binary="/opt/tools/akernel-image-bridge",
+)
+runtime = DockerRuntime(
+    images=images, bridge_binary=Path("/opt/tools/akernel-image-bridge"),
+    writable_mb=2048, writable_backing="file",
+)
+sandbox = Sandbox(
+    image=DockerRuntime.default_image, cpu=4000, memory=8192,
+    storage_mb=30720, cwd="/", failover=False,
+    **runtime.sandbox_options(),
+)
+try:
+    runtime.start(sandbox, network="bridge")
+    # Upload the original project; run ordinary docker compose build/up here.
+    # Persist any client-side state that must stay aligned with the snapshot.
+    snapshot = sandbox.create_snapshot(timeout=300)
+    sandbox.kill()  # Fence the source before creating a running clone.
+    restored = Sandbox.from_snapshot(
+        snapshot, cwd="/", failover=False, **runtime.sandbox_options(),
+        # Explicitly rebind any reverse_tunnel and current network_policy here.
+    )
+    try:
+        runtime.reconnect_network(restored)  # new outer TAP; no daemon restart
+        print(restored.commands.run("docker ps", check=True).stdout)
+        # Continue using restored, which wraps the captured processes. Do not
+        # call runtime.start(), rerun builds, or restart the agent command.
+    finally:
+        restored.kill()
+        Sandbox.delete_snapshot(snapshot.snapshot_id)
+finally:
+    sandbox.kill()
+```
+
+The SDK prepares manifest/config metadata only. Sandboxd's existing OCI/ROFS image manager supplies immutable shared lower roots; containerd uses a private managed upper. Credentials for metadata discovery and node layer fetching are separate. No task image build/push or user image plan is required. Original definitions are read without rewriting them. Managed bridge networking preserves original default/custom IPv4 bridge networks, service DNS and TCP/UDP userland port mappings; Harbor continues to own its normal service, bind, resource and verifier overlays.
+
+`from_snapshot(..., extra_config=...)` and `create(snapshot_id=..., extra_config=...)` forward validated, defensively copied runtime configuration. Supply the same managed-upper geometry and image mounts on restore. Native ADX DTOs, client connection/TLS handling and reconstructed commands/files/tunnel handles stay inside the SDK. Snapshot restore does not capture local Python harness state or external services; callers own alignment, fencing the previous execution and deleting snapshots.
+
+`DockerRuntime.default_image` is the public Docker Hub image
+`docker.io/library/docker:28.3.3-dind`. Fresh runtime startup installs missing
+Alpine support packages (Python 3, Bash, util-linux and related tools). This
+requires access to Docker Hub and Alpine package repositories; no custom runtime
+image build or registry push is needed. A compatible prebuilt image can still be
+selected explicitly to avoid installing packages during startup. Restore never
+repeats runtime installation or starts another Docker daemon.
+
+### Compose projects and service processes
+
+`ComposeProject`, `ServiceHandle` and `ServiceProcessHandle` expose project, service and process operations. They use the same managed Docker runtime and existing ROFS provider described above. Their backend-neutral operations use the Agent DX API. The managed file-backed upper profile additionally requires compatible Sandboxd support; installing this Python SDK alone does not enable it. The framework/runtime boundary and prerequisites are described in [managed Compose integration](docs/managed-compose.md). A complete client-side example is in [compose_checkpoint.py](examples/compose_checkpoint.py).
+
+`ComposeProject.prepare()` freezes a private local copy of the selected context and Compose bytes and produces sandbox options. The platform-managed profile resolves services through official Compose after `start_runtime()`; client-managed mode discovers image inputs locally. Put `output_dir` outside the input context. Keep build contexts inside the selected directory. The default `network="bridge"` preserves original Compose network definitions, Docker IPAM, DNS and published TCP/UDP ports. The explicit `network="host"` compatibility profile still adds host/loopback aliases and rejects explicit Compose networks. Scaled service process handles are rejected. Task files are not rewritten. Generic SDK defaults contain no Harbor service or artifact names.
+
+In client-managed automatic image mode, both Dockerfile bases and image-only services use pinned ROFS mounts. `pull()` verifies their Docker references and committed snapshots; `up()` verifies them again and prevents native repeat pulls. This includes `image: name:tag@sha256:...`, for which native Compose's missing policy can still request layer extraction. Tags are resolved once during preparation; missing or changed registrations fail without fallback. Without automatic images, native Compose pull behavior is retained.
+
+Client-managed discovery requires an image bridge reporting `discover_schema: 2`
+via `--mode capabilities`. Discovery
+confines build/Dockerfile and `.env` reads to the frozen context and receives
+only explicitly supplied project variables. `include` / `extends.file` and
+remote contexts are not supported in client-managed discovery. Valid shared chains
+across different manifests/configs are supported after OCI configuration checks.
+
+```python
+from pathlib import Path
+from akernel_sdk import ComposeProject, DockerRuntime, Sandbox
+
+project = ComposeProject.prepare(
+    "./project", ["./project/docker-compose.yaml"],
+    runtime=DockerRuntime(bridge_binary=Path("/opt/tools/akernel-image-bridge"),
+                          writable_mb=2048, writable_backing="file"),
+    auto_images=True, output_dir="./artifacts/compose",
+)
+sandbox = Sandbox(image=DockerRuntime.default_image, cpu=4000,
+                  memory=8192, storage_mb=30720, cwd="/", failover=False,
+                  **project.sandbox_options())
+try:
+    project.start_runtime(sandbox)       # fresh creation only
+    project.build(timeout=600)
+    project.pull(timeout=600)
+    # Apply the application's running network policy here if required.
+    project.up(wait_timeout=600)
+    worker = project.service("worker")
+    print(worker.exec("uname -s").stdout)  # POSIX sh by default
+    process = worker.start_command("exec ./worker", cwd="/app")
+    snapshot = sandbox.create_snapshot(timeout=300)
+    project_state, command_id = project.descriptor, process.command_id
+    # Persist these JSON descriptors with application/harness state as needed.
+    sandbox.kill()                      # fence source before creating running clone
+    restored = Sandbox.from_snapshot(snapshot, cwd="/", failover=False,
+                                     **project.sandbox_options())
+    try:
+        attached = ComposeProject.attach(restored, project_state)
+        attached.reconnect_network()    # rebind owned NAT/forwarding rules only
+        original = restored.commands.connect(command_id)  # no build/up/relaunch
+    finally:
+        restored.kill()
+        Sandbox.delete_snapshot(snapshot.snapshot_id)
+finally:
+    sandbox.kill()
+```
+
+`ServiceHandle` provides exec, upload/download (including directories), stop and process start. `start_command()` starts native Compose exec through the sandbox command API without installing a service monitor or requiring Python in the service. Its handle PID belongs to the outer Docker CLI; persist its stable `command_id` and reconnect through `restored.commands.connect(command_id)` after whole-sandbox restore. The runtime captures the Docker CLI, dockerd and inner process together. Do not use the outer PID to signal an inner service process. Whole-sandbox checkpointing requires no application stop/continue or model-idle barrier.
+
+The separate explicit `start_process()` API returns a `ServiceProcessHandle` for callers that need inner PID/tree signalling. Select shell, login behavior, cwd, user and environment explicitly; the SDK does not assign a special main service. `ServiceProcessHandle` uses a stable process token, Docker container ID/start time and Linux process start time. Its in-service monitor and identity record are captured with the sandbox. It supports inspect, tree stop/continue/terminate/kill and exit-code wait. Python 3 is required only for managed service processes, not ordinary service exec. The process is detached from the short-lived docker-exec submission; outer command PIDs are not used to signal the inner process.
+
+Unknown start failures retain `error.process_descriptor`; attach using that token to observe the original execution instead of submitting it again. A restarted/replaced container or changed process identity is rejected. A partial runtime startup is fresh-only and cannot be replayed on the same project object; delete the owned sandbox after failure. Compose failures retain phase, exit code, stdout/stderr and diagnostic logs. The SDK never silently retries a side-effecting Compose operation with an unknown outcome.
+
+`ComposeProject.attach()` only reconstructs client bindings. It does not upload files, start daemons, build images or recreate services. Snapshot restore must retain the same mount/upper options, rebind tunnels and the current network policy, and fence the previous execution before resuming it. Application conversation state and checkpoint timing remain with the application. Descriptors may contain explicit project environment values; store them with the same protection as application configuration.
+
+
+### Native Compose networking and model tunnels
+
+The Linux/amd64 runsc Docker profile requires Docker 28's operator-owned
+`--net-raw=true` and `--allow-packet-socket-write=true` flags. The outer runtime
+image supplies `ip`, `iptables-legacy` and `iptables-legacy-restore`. No task
+Dockerfile or Compose edit is needed. These are node/runtime prerequisites;
+the SDK never changes a deployment. Existing shared ROFS lower and file-backed
+upper mounts are independent of the network choice.
+
+The SDK enables IPv4 forwarding/SNAT inside the sandbox and keeps independent
+bridges from routing directly to each other. Docker owns bridge creation, IPAM,
+embedded DNS and TCP/UDP userland port proxies. Global dockerd iptables handling
+is disabled because this runsc lacks Docker's `addrtype` matcher. A daemon-only
+PATH selects legacy tools for Docker's per-container DNS DNAT; system symlinks
+and original user files are preserved. IPv6-only egress, non-bridge drivers and
+arbitrary Docker firewall/driver options are outside the supported profile.
+
+After restoring to a new outer TAP/address, call `project.reconnect_network()`
+(or `DockerRuntime.reconnect_network(restored)` for the low-level API) before
+resuming work. It replaces only SDK-owned forwarding/NAT chains, retaining
+conntrack and the captured bridges, containers, DNS/proxies and inner sockets.
+`attach()` itself remains free of remote operations. Established connections
+inside the sandbox, including through its published-port proxy, are retained.
+Connections to external peers do not acquire address-migration guarantees.
+
+An `HttpReverseTunnel` listens on the **outer** loopback. For a service on its
+own bridge, use the service-specific controlled entry point:
+
+```python
+# Pass the same HttpReverseTunnel on fresh creation and Sandbox.from_snapshot.
+url = project.service("worker").expose_tunnel(tunnel)
+process = project.service("worker").start_process(
+    "exec python3 worker.py", envs={"MODEL_BASE_URL": url},
+)
+```
+
+`expose_tunnel()` binds an ephemeral port only on an attached IPv4 gateway and
+accepts only that service's IP. It relays TCP bytes without changing URLs,
+authentication headers, HTTP or SSE. An internal bridge can use its local
+gateway without gaining general egress. Host-network services retain the
+original loopback URL. The relay and JSON descriptor enter the sandbox snapshot;
+restored projects reuse the entry point without starting another listener.
+Container replacement, a missing relay descriptor on restore, or ambiguous
+launch outcomes fail closed. Network-none and IPv6-only services cannot use this
+IPv4 entry point.
+
+Run the opt-in real network regression only against an owned test instance:
+
+```sh
+AKERNEL_RUN_COMPOSE_TESTS=1 \
+AKERNEL_TEST_DIND_IMAGE='<compatible-dind-image>' \
+AKERNEL_TEST_IMAGE_BRIDGE_BINARY='/absolute/path/akernel-image-bridge' \
+python -m unittest tests.integration.test_compose_network -v
+```
+
+It checks default/custom DNS, aliases, disjoint-network isolation, TCP/UDP port
+mappings, peer-restricted model HTTP/auth/SSE, new egress, and original service
+and published-port TCP sockets across two snapshot/delete/restore cycles. All
+owned environments and snapshots are deleted; no deployment is changed.
+
+Explicit service process-tree control freezes waiters before descendants and thaws descendants before waiters, preserving Bash job-control wait semantics. Numeric PID order is not used as ancestry. Whole-sandbox checkpointing does not require these signals.
+
+### Platform-managed native Docker builds
+
+When an operator enables a named managed-runtime profile, clients submit its
+capability name. They do not need Docker, Kubernetes access, a Registry route,
+Registry credentials, a node path or an image-bridge executable:
+
+```python
+from akernel_sdk import ComposeProject, DockerRuntime, Sandbox, build_image
+
+artifact = build_image("./environment", profile="harbor-v1")
+sandbox = Sandbox(image=artifact.reference, env=artifact.envs)
+# Use artifact.cwd / artifact.user as the task's execution defaults.
+sandbox.kill()
+
+project = ComposeProject.prepare(
+    "./environment", ["./environment/docker-compose.yaml"],
+    runtime=DockerRuntime(profile="harbor-v1"), network="bridge",
+)
+sandbox = Sandbox(**project.sandbox_options())
+project.start_runtime(sandbox)
+project.build()  # Official Buildx remote; native Dockerfile frontend and cache.
+project.pull()   # Runtime prepares ROFS and registers the immutable references.
+project.up()
+service = project.service("main")
+# Existing service/process and snapshot interfaces apply unchanged.
+sandbox.kill()
+```
+
+The node authorizes the ADX tenant and supplies the pinned tool image, official
+Buildx endpoint, private Registry account, collection capability and Docker
+runtime configuration. The runtime pushes native Nydus OCI artifacts directly;
+Dragonfly and Sandboxd's existing ROFS image manager distribute shared lowers.
+The SDK only transfers task files, submits operations and returns artifact/service
+handles. It does not interpret Dockerfiles or start a local Docker daemon.
+
+`no_cache=True` is an explicit rebuild choice; fresh environments retain native
+BuildKit cache use by default. Build failure stdout/stderr can be retained using
+`build_image(..., log_path=...)`. Cleanup failures retain environment identity.
+`artifact.has_startup_command` reports whether the effective OCI ENTRYPOINT/CMD
+is nonempty. Pass it as `Sandbox(..., inherit_entrypoint=artifact.has_startup_command)`
+when the task should run the image's startup command. Images that clear both
+commands still support interactive sandbox creation with inheritance disabled.
+Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the
+temporary preparation sandbox's scheduling reservation. Its existing limits
+remain 1000 millicores and 2048 MiB; each request must be positive and no greater
+than its limit. Omit these options to preserve the default reservations. Lower
+requests do not provide additional physical capacity for concurrent workloads.
+The managed resource-geometry probe coalesces concurrent reads within one
+authenticated SDK backend and reuses successful views for at most one second.
+Errors are not cached. Creation still reaches the scheduler individually, and
+node authorization and storage validation remain authoritative on every request.
+Restore uses `ComposeProject.attach()` and saved descriptors; it never rebuilds
+or reruns Docker startup. Snapshot metadata contains an opaque server-created
+collection identity, checked against the tenant and profile on restore.
+
+This opt-in profile requires same-node retained collections and the same mount
+view. Version-1 collections use durable local live/checkpoint leases and are
+retired after their last reference disappears; retained checkpoints keep their
+ROFS mounts pinned. Service restart recovers these leases before admission.
+Legacy collections require an operator drain. This local mount cleanup does not
+delete Registry artifacts. Cross-node reconstruction, Pod replacement with a
+changed provider identity, and automatic Registry artifact GC remain outside
+the qualified contract.
+Operators own Registry TLS and repository-scoped authorization. A shared
+Registry account does not provide per-tenant image isolation.
