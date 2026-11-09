@@ -476,6 +476,9 @@ The default chart runs ADX Ingress and API Server in one
 `akernel-adx-ingress-api` Pod, with 2 CPU requested and an 8 CPU limit.
 Override `core.adx.ingressApi.resources` for your node shape and workload.
 Measure capacity with the [Create benchmark](../sdk/python/benchmarks/create_throughput/README.md).
+For larger installations, use the opt-in [production control-plane capacity
+profile](docs/control-plane-capacity.md), including placement, SSD selection,
+capacity qualification and existing-PVC migration requirements.
 
 The `monitor` subchart remains optional and contains Prometheus, Grafana, Loki,
 and Tempo. Kubernetes nodes must support privileged Pods and the runtime
