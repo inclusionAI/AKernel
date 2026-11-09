@@ -228,6 +228,28 @@ configurations must carry the override themselves. The ordinary KVM profile
 is unchanged and the guest-agent startup budget remains 15 seconds; extending
 an RPC cleanup budget does not authorize increasing the guest startup deadline.
 
+The aggregate sandbox memory policy remains disabled by default for PVM until
+its finite-cap profile is qualified on the matching maintained host. Standalone
+can explicitly select `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true`; Helm uses
+`node.config.sandboxd.pvmMemoryLimitEnabled=true` (under `core` in the umbrella
+chart). Both default to false and apply only to the PVM backend. Select a
+`total_reserve` suitable for the actual L1 in its sandboxd configuration before
+opting in, configure a compatible ADX `resource_source`, and qualify memory
+capacity, allocation/release accounting and schedulable CPU on that host. The
+bundled standalone profile retains `auto`, which does not guarantee capacity
+follows the sandbox parent limit. Ordinary runsc tests and static profile
+checks do not qualify this combination, and the 16 GiB deployment reserve is
+not a universal host OOM safety budget.
+
+PVM configuration requires Helm 3.17 or newer for chart rendering, or Python
+3.11 or newer for the standalone launcher. Standalone also accepts Python 3.10
+with `tomli` installed in the launcher's Python environment. The generators
+validate the TOML before writing the configuration. Helm can override quoted
+and inline tables. For standalone, use the standard
+`[plugin.resource.memory_limit]` section with a boolean `enabled` field when
+the switch needs to change that value. Standalone rejects an override it
+cannot apply and leaves the previous generated configuration in place.
+
 ## Isolated qualification workflow
 
 Ordinary sandboxd hardware-KVM CI and AKernel's runsc-only standalone image do

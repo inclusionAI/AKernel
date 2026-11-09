@@ -834,6 +834,22 @@ variable "tempo_resources" {
   default = {}
 }
 
+variable "sandbox_memory_limit_enabled" {
+  type        = bool
+  description = "Opt into the aggregate sandbox parent memory limit only on qualified cgroup v2 nodes. Drain before adding or lowering a cap."
+  default     = false
+}
+
+variable "sandbox_memory_total_reserve" {
+  type        = string
+  description = "Memory excluded from the aggregate sandbox budget when enabled; effective node memory must exceed this deployment-specific reserve."
+  default     = "16GiB"
+  validation {
+    condition     = can(regex("^0*[1-9][0-9]*(B|KiB|MiB|GiB|TiB)?$", var.sandbox_memory_total_reserve))
+    error_message = "sandbox_memory_total_reserve must be positive whole bytes or an integer with B/KiB/MiB/GiB/TiB."
+  }
+}
+
 variable "chunk_db_size" {
   type        = string
   description = "Shared distill-fs ChunkDB map capacity, e.g. 64GiB; empty uses the Linux default of 100 GiB. Existing caches must not be resized."

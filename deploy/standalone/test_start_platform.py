@@ -57,6 +57,7 @@ class StartPlatformTest(unittest.TestCase):
             YR_IMAGE_PROCESS_CONFIG="/run/akernel/yr-image-process.json",
             AKERNEL_ENABLE_RUNC="true", AKERNEL_NAT_BACKEND="iptables",
             AKERNEL_FIRECRACKER_BACKEND="kvm",
+            AKERNEL_PVM_MEMORY_LIMIT_ENABLED="false",
             MOCK_HOST="Darwin", MOCK_OS="OrbStack",
             MOCK_ENGINE="linux/aarch64", MOCK_IMAGE="linux/arm64",
             MOCK_TRAEFIK_IMAGE="linux/arm64",
@@ -174,6 +175,12 @@ show_status() { record stage show_status; }
         result = self.run_main(AKERNEL_FIRECRACKER_BACKEND="invalid")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("AKERNEL_FIRECRACKER_BACKEND must be kvm or pvm", result.stderr)
+        self.assert_no_profile_mutation()
+
+    def test_invalid_pvm_memory_opt_in_is_rejected_before_profile_mutation(self):
+        result = self.run_main(AKERNEL_PVM_MEMORY_LIMIT_ENABLED="yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AKERNEL_PVM_MEMORY_LIMIT_ENABLED must be true or false", result.stderr)
         self.assert_no_profile_mutation()
 
     def test_native_runc_uses_only_disposable_capability_probe(self):

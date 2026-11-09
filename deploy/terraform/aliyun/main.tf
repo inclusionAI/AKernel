@@ -176,6 +176,9 @@ locals {
 
   core_chart_hash = sha256(join("", [for f in fileset("${path.module}/../../akernel/charts/core", "**") : filesha256("${path.module}/../../akernel/charts/core/${f}")]))
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
+    sandbox_memory_limit_enabled = var.sandbox_memory_limit_enabled
+    sandbox_memory_total_reserve = var.sandbox_memory_total_reserve
+
     cluster_name                = var.cluster_name
     adx_public_service_enabled  = var.adx_public_service_enabled
     adx_service_type            = var.adx_service_type

@@ -24,6 +24,7 @@ AKERNEL_DATA_PORT="${AKERNEL_DATA_PORT:-80}"
 AKERNEL_ENDPOINT_HOST="${AKERNEL_ENDPOINT_HOST:-127.0.0.1}"
 AKERNEL_CHUNK_DB_SIZE="${AKERNEL_CHUNK_DB_SIZE:-}"
 AKERNEL_FIRECRACKER_BACKEND="${AKERNEL_FIRECRACKER_BACKEND:-kvm}"
+AKERNEL_PVM_MEMORY_LIMIT_ENABLED="${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}"
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
@@ -191,6 +192,17 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    case "${AKERNEL_PVM_MEMORY_LIMIT_ENABLED}" in
+        true|false) ;;
+        *)
+            log_error "AKERNEL_PVM_MEMORY_LIMIT_ENABLED must be true or false"
+            exit 1
+            ;;
+    esac
+    if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]] &&
+        ! python3 "${SCRIPT_DIR}/prepare-pvm-memory.py" --help >/dev/null; then
+        exit 1
+    fi
     if [[ "${DATA_DIR}" != /* ]]; then
         log_error "AKERNEL_STANDALONE_DATA_DIR must be an absolute path"
         exit 1
@@ -317,12 +329,20 @@ configure_gpu() {
 
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
+    local pvm_config
     local sed_args=(
         -E
         -e "s/^[[:space:]]*nat_backend[[:space:]]*=.*/nat_backend=\"${AKERNEL_NAT_BACKEND}\"/"
     )
 
     if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]]; then
+        case "${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}" in
+            true|false) ;;
+            *)
+                log_error "AKERNEL_PVM_MEMORY_LIMIT_ENABLED must be true or false"
+                exit 1
+                ;;
+        esac
         if ! grep -q '^\[plugin.runtime.firecracker\]$' \
             "${CONFIG_DIR}/sandboxd_config.toml" || \
            ! grep -q '^firecracker="/usr/local/bin/firecracker"$' \
@@ -330,6 +350,8 @@ configure_network() {
             log_error "PVM selection requires the standard Firecracker config section and binary entry"
             exit 1
         fi
+        pvm_config="$(python3 "${SCRIPT_DIR}/prepare-pvm-memory.py" \
+            "${CONFIG_DIR}/sandboxd_config.toml" "${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}")" || exit 1
         sed_args+=(
             -e 's/^firecracker=/firecracker-pvm=/'
             -e 's/^\[plugin.runtime.firecracker\]$/[plugin.runtime.firecracker_pvm]/'
@@ -396,7 +418,11 @@ configure_network() {
             -e "s|^[[:space:]]*# AKERNEL_CHUNK_DB_SIZE[[:space:]]*$|chunk_db_size=\"${AKERNEL_CHUNK_DB_SIZE}\"|"
         )
     fi
-    sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
+    if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]]; then
+        sed "${sed_args[@]}" <<< "${pvm_config}" > "${config_tmp}"
+    else
+        sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
+    fi
     mv "${config_tmp}" "${SANDBOXD_CONFIG_FILE}"
 
     if [[ "${AKERNEL_ENABLE_RUNC}" == "true" ]]; then

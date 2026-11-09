@@ -247,6 +247,32 @@ distill-fs release's packaged manifest.
 
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
+The direct Helm chart enables the cgroup v2 parent memory policy with
+`total_reserve="16GiB"` for the ordinary KVM profile. Standalone and both cloud
+Terraform profiles keep it disabled by default. Cloud opt-in uses
+`sandbox_memory_limit_enabled`; guided profiles expose
+`SANDBOX_MEMORY_LIMIT_ENABLED` and `SANDBOX_MEMORY_TOTAL_RESERVE`. Qualify cgroup
+v2 and effective memory (host MemTotal clipped by visible ancestor limits)
+above the reserve with room for sandbox requests before enabling the policy.
+The bundled standalone ADX profile retains its `auto` resource source, which
+does not guarantee scheduling capacity follows the sandbox parent ceiling.
+Operators enabling the policy must select and qualify a compatible
+`resource_source`, including memory capacity, allocation/release accounting and
+schedulable CPU. The disabled default does not fix resource-source limitations.
+PVM also keeps the policy disabled until explicitly selected with
+`AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true` in standalone or
+`node.config.sandboxd.pvmMemoryLimitEnabled=true` in Helm. Size the reserve for
+the selected L1 and qualify the finite-cap and scheduling combination on the
+matching PVM host before rollout; ordinary runsc tests do not qualify PVM.
+Validate PVM memory switches against parsed TOML. PVM chart rendering requires
+Helm 3.17 or newer, and standalone uses Python 3.11 or Python 3.10 with
+`tomli`. Reject a standalone rewrite unless the parsed configuration matches
+the requested policy and preserves the other fields.
+Adding or lowering a parent cap requires an empty sandbox subtree; an existing
+stricter cap is retained. This aggregate sandbox cap does not bound all node
+components or guarantee avoidance of host OOM.
+See `deploy/README.md#aggregate-sandbox-memory-budget` for migration and scope.
+
 The [standalone guide](./deploy/standalone/README.md) owns source startup, supported platforms, runtime selection, and SDK setup. Preserve the source launcher's native-daemon architecture selection, clean sandboxd gitlink check, occupied-name preflight, profile locking, unique source image, and node/gateway health checks. Status and stop must verify recorded container identities, images, and data mounts; stop also requires an empty sandbox inventory. Source management is independent of cloud profiles and must preserve unrelated containers.
 
 The all-in-one image and node launchers declare lowercase `container=oci`

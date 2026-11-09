@@ -30,6 +30,36 @@ class AfsConfigTest(unittest.TestCase):
         if binary:
             subprocess.run([binary, "--config", str(target), "validate"], check=True)
 
+    @unittest.skipUnless(os.environ.get("AKERNEL_TEST_ADXCTL"), "requires packaged ADX CLI")
+    def test_packaged_cli_preserves_standalone_auto_capacity_after_preparation(self):
+        binary = os.environ["AKERNEL_TEST_ADXCTL"]
+        source = ROOT / "builder/config/adx-standalone.yaml"
+
+        def resource_source(path):
+            deployment = yaml.safe_load(subprocess.run(
+                [binary, "--config", str(path), "config", "dump"],
+                check=True, capture_output=True, text=True,
+            ).stdout)
+            workers = [service for service in deployment["services"]
+                       if service["role"] == "adxlet"]
+            self.assertEqual(len(workers), 1)
+            return workers[0]["config"]["resource_source"]
+
+        baseline = resource_source(source)
+        self.assertEqual(baseline["kind"], "auto")
+        for pvm in (False, True):
+            for trace, mount in ((False, None), (True, None),
+                                 (False, Path("/mnt/akernel-shared"))):
+                with self.subTest(pvm=pvm, trace=trace, mount=mount), tempfile.TemporaryDirectory() as directory:
+                    target = Path(directory) / "prepared.yaml"
+                    with patch.dict(os.environ, {"ENABLE_TRACE": str(trace).lower()}):
+                        # Only mount inspection is simulated; capacity comes
+                        # from the real packaged CLI's resolved deployments.
+                        with patch.object(CONFIG.subprocess, "run") as run:
+                            run.return_value.stdout = "afs-dfs fuse rw\n"
+                            CONFIG.configure(source, target, mount, "test/checkpoints", pvm=pvm)
+                        self.assertEqual(resource_source(target), baseline)
+
     def test_trace_preserves_explicit_services_and_only_changes_present_roles(self):
         for profile in ("standalone-managed-redis", "node", "coordinator", "ingress-api"):
             source = ROOT / f"src/agent-dx/build/config/examples/deployment-{profile}.yaml"

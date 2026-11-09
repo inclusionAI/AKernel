@@ -2,8 +2,10 @@
 """Check the maintained profile and Bash compatibility exports without builds."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +45,32 @@ class HostProfileTest(unittest.TestCase):
                                  str(ROOT / "deploy/pvm/oot-host.env")],
                                 text=True, capture_output=True, check=True, timeout=10)
         self.assertEqual(result.stdout.splitlines(), list(expected.values()))
+
+
+class CiMemoryPolicyTest(unittest.TestCase):
+    def test_pvm_ci_keeps_parent_enforcement_disabled_even_if_inherited_enabled(self):
+        script = (ROOT / "deploy/pvm/run-adx-ci.sh").read_text()
+        preparation = "export AKERNEL_FIRECRACKER_BACKEND=pvm" + script.split(
+            "export AKERNEL_FIRECRACKER_BACKEND=pvm", 1
+        )[1].split("export AKERNEL_CONTAINER_PROXY=", 1)[0]
+        result = subprocess.run(
+            ["bash", "-euc", preparation + '\npython3 -c \'import os; print(os.environ["AKERNEL_PVM_MEMORY_LIMIT_ENABLED"]); assert "AKERNEL_TEST_EXPECT_MEMORY_BYTES" not in os.environ; assert "AKERNEL_TEST_EXPECT_CPU_MILLIS" not in os.environ\''],
+            text=True, capture_output=True,
+            env=dict(os.environ, AKERNEL_PVM_MEMORY_LIMIT_ENABLED="true",
+                     AKERNEL_TEST_EXPECT_MEMORY_BYTES="6442450944",
+                     AKERNEL_TEST_EXPECT_CPU_MILLIS="1000"), timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "false")
+
+    def test_pvm_qualification_settings_do_not_claim_parent_limit_coverage(self):
+        script = (ROOT / "deploy/pvm/run-adx-ci.sh").read_text()
+        settings = script.split("<<'SETTINGS'\n", 1)[1].split("\nSETTINGS", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(["python3", "-c", settings, directory], check=True, timeout=10)
+            recorded = json.loads((Path(directory) / "qualification-settings.json").read_text())
+        self.assertFalse(recorded["sandbox_parent_memory_limit_enabled"])
+        self.assertFalse(recorded["sandbox_parent_memory_limit_qualified"])
 
 
 if __name__ == "__main__":
