@@ -288,12 +288,8 @@ environment overrides take precedence. Preserve this handoff when changing
 node deployment: otherwise the service can fall back to standalone configuration
 even though the Pod declares a node configuration.
 
-Large deployments may opt into the core chart's `values-production.yaml`.
 The [control-plane capacity guide](deploy/docs/control-plane-capacity.md) owns
-resource budgets, strict API host separation, SSD selection and existing-PVC
-migration. These are starting allocations, not a 100,000-sandbox capacity claim.
-Keep Redis placement optional and do not apply a capacity profile to a live
-release without reviewing current values, data and rollout requirements.
+production profile sizing, placement and existing-PVC migration requirements.
 
 The managed Kubernetes Redis uses its own Helm-generated authentication Secret,
 preserved by live lookup during upgrades. Its NetworkPolicy is additional

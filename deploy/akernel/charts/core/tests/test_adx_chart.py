@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import subprocess
@@ -16,19 +17,21 @@ import yaml
 CHART = Path(__file__).resolve().parents[1]
 
 
-def render(*settings: str) -> tuple[list[dict], str]:
+def render(*settings: str, values: dict | None = None, umbrella: bool = False) -> tuple[list[dict], str]:
     result = subprocess.run(
         [
             "helm",
             "template",
             "akernel",
-            str(CHART),
+            str(CHART.parents[1] if umbrella else CHART),
             "--namespace",
             "akernel-system",
             "--set",
-            "adx.tls.existingSecret=adx-test-tls",
+            ("core." if umbrella else "") + "adx.tls.existingSecret=adx-test-tls",
+            "-f", "-",
             *[argument for value in settings for argument in ("--set", value)],
         ],
+        input=yaml.safe_dump(values or {}),
         check=True,
         capture_output=True,
         text=True,
@@ -691,6 +694,62 @@ class AdxChartTest(unittest.TestCase):
         names = {item["metadata"]["name"] for item in self.resources}
         self.assertNotIn("akernel-component-tls", names)
         self.assertNotIn("akernel-master-secret", names)
+
+    def test_production_profile_renders_in_core_and_umbrella(self) -> None:
+        profile = yaml.safe_load((CHART / "values-production.yaml").read_text())
+        for umbrella in (False, True):
+            with self.subTest(umbrella=umbrella):
+                values = {"core": profile, "monitor": {"enabled": False}} if umbrella else profile
+                resources, _ = render(values=values, umbrella=umbrella)
+                objects = {(r["kind"], r["metadata"]["name"]): r for r in resources}
+                for kind, name, role in (
+                    ("Deployment", "akernel-adx-coordinator", "coordinator"),
+                    ("Deployment", "akernel-adx-ingress-api", "ingressApi"),
+                    ("StatefulSet", "akernel-adx-redis", "redis"),
+                ):
+                    spec = objects[kind, name]["spec"]
+                    self.assertEqual(spec["template"]["spec"]["containers"][0]["resources"],
+                                     profile["adx"][role]["resources"])
+                self.assertEqual(objects["StatefulSet", "akernel-adx-redis"]["spec"]
+                                 ["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"],
+                                 profile["adx"]["redis"]["persistence"]["size"])
+                for kind, name in (("DaemonSet", "akernel-node"), ("ConfigMap", "akernel-adx-config")):
+                    self.assertEqual(objects[kind, name], self.resource(kind, name))
+
+    def test_production_api_host_separation_and_disruption_budget(self) -> None:
+        for replicas in (4, 8):
+            with self.subTest(replicas=replicas):
+                resources, _ = render(f"adx.ingressApi.replicas={replicas}",
+                                      values=yaml.safe_load((CHART / "values-production.yaml").read_text()))
+                objects = {(r["kind"], r["metadata"]["name"]): r for r in resources}
+                api = objects["Deployment", "akernel-adx-ingress-api"]["spec"]
+                self.assertEqual(api["replicas"], replicas)
+                pod = api["template"]["spec"]
+                rule = pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+                self.assertEqual(rule["topologyKey"], "kubernetes.io/hostname")
+                self.assertEqual(rule["labelSelector"]["matchLabels"], api["selector"]["matchLabels"])
+                self.assertEqual(pod["topologySpreadConstraints"][0]["whenUnsatisfiable"], "ScheduleAnyway")
+                self.assertEqual(api["strategy"]["rollingUpdate"], {"maxSurge": 0, "maxUnavailable": 1})
+                self.assertEqual(objects["PodDisruptionBudget", "akernel-adx-ingress-api"]["spec"]["minAvailable"],
+                                 replicas - 1)
+
+    def test_redis_placement_preserves_storage_and_container_configuration(self) -> None:
+        placement = {
+            "nodeSelector": {"pool": "control"},
+            "tolerations": [{"key": "control", "operator": "Exists", "effect": "NoSchedule"}],
+            "affinity": {"podAntiAffinity": {"preferredDuringSchedulingIgnoredDuringExecution": [{
+                "weight": 100, "podAffinityTerm": {
+                    "topologyKey": "kubernetes.io/hostname",
+                    "labelSelector": {"matchLabels": {"app": "akernel-adx-coordinator"}},
+                },
+            }]}},
+        }
+        resources, _ = render(values={"adx": {"redis": placement}})
+        actual = next(r for r in resources if r["kind"] == "StatefulSet" and
+                      r["metadata"]["name"] == "akernel-adx-redis")
+        expected = copy.deepcopy(self.resource("StatefulSet", "akernel-adx-redis"))
+        expected["spec"]["template"]["spec"].update(placement)
+        self.assertEqual(actual, expected)
 
     def test_multiple_coordinator_replicas_are_rejected(self) -> None:
         result = subprocess.run(
