@@ -1,0 +1,37 @@
+image: "" # Required immutable checker image (repository@sha256:...).
+imagePullSecrets: []
+nodeSelector: {}
+tolerations: []
+registry:
+  deployment: registry
+  podSelector:
+    app: managed-registry
+  url: ""
+  allowedAuthOrigins: []
+  ports: [5000, 5001]
+  # A retained, single-platform Nydus manifest (not an image index).
+  probeRepository: ""
+  probeDigest: ""
+  # Existing Secret with credentials.json: {"username": ..., "password": ...}.
+  # Use a pull-only identity restricted to the probe repository.
+  pullSecret: ""
+dragonfly:
+  namespace: dragonfly-system
+  podSelector:
+    app: dragonfly
+    component: seed-client
+  container: seed-client
+  seedNames:
+    - dragonfly-seed-client-0
+    - dragonfly-seed-client-1
+    - dragonfly-seed-client-2
+    - dragonfly-seed-client-3
+    - dragonfly-seed-client-4
+  proxy: http://127.0.0.1:4001
+networkPolicy:
+  name: registry-dragonfly-seed-ingress
+schedule: '* * * * *'
+recheckSeconds: 600
+resources:
+  requests: {cpu: 50m, memory: 96Mi}
+  limits: {cpu: '1', memory: 256Mi}

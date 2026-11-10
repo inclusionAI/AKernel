@@ -17,6 +17,11 @@ when a shared filesystem is independently required.
 For one deployment serving both native and E2B SDKs with version-independent
 application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-application-logs.md).
 
+For private Registries serving Nydus through Dragonfly, install the
+[Registry connectivity guard](registry-connectivity/README.md). It maintains
+namespace-and-Pod ingress selectors and verifies all five seeds after Registry
+moves or rollouts without changing Registry placement or storage.
+
 ## Aggregate sandbox memory budget
 
 The direct Helm chart enables the cgroup v2 aggregate sandbox memory policy by
