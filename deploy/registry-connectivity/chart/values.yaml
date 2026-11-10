@@ -9,6 +9,9 @@ registry:
   url: ""
   allowedAuthOrigins: []
   ports: [5000, 5001]
+  # CA bundle paths INSIDE each seed, not paths on the checker/client.
+  caFile: ""
+  authCAFile: ""
   # A retained, single-platform Nydus manifest (not an image index).
   probeRepository: ""
   probeDigest: ""
@@ -28,9 +31,19 @@ dragonfly:
     - dragonfly-seed-client-3
     - dragonfly-seed-client-4
   proxy: http://127.0.0.1:4001
+  proxyCheckEnabled: true
+  # Enable only after disabling/redacting request dumps and testing a dummy
+  # credential against all proxy log sinks (console, files and collectors).
+  proxyLoggingVerified: false
+  # HTTPS CONNECT is terminated by Dragonfly: curl needs this signing CA.
+  proxyCAFile: ""
 networkPolicy:
+  enabled: false
+  # Verify existing policies preserve BuildKit/direct-client ingress first.
+  existingClientsReviewed: false
   name: registry-dragonfly-seed-ingress
 schedule: '* * * * *'
+suspend: false
 recheckSeconds: 600
 resources:
   requests: {cpu: 50m, memory: 96Mi}

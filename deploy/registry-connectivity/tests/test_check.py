@@ -36,7 +36,7 @@ def pod(name, uid=None, is_ready=True):
 
 
 def configuration():
-    return {"namespace": "registry", "deployment": "registry", "registrySelector": {"app": "registry"}, "seedNamespace": "dragonfly", "seedSelector": {"app": "dragonfly", "component": "seed-client"}, "seedContainer": "seed-client", "seedNames": [f"seed-{i}" for i in range(5)], "registry": "http://registry.test:5000", "allowedAuthOrigins": ["http://auth.test:5001"], "repository": "health/probe", "digest": sha(fixture()[1])}
+    return {"namespace": "registry", "deployment": "registry", "registrySelector": {"app": "registry"}, "seedNamespace": "dragonfly", "seedSelector": {"app": "dragonfly", "component": "seed-client"}, "seedContainer": "seed-client", "seedNames": [f"seed-{i}" for i in range(5)], "registry": "http://registry.test:5000", "allowedAuthOrigins": ["http://auth.test:5001"], "proxyLoggingVerified": True, "repository": "health/probe", "digest": sha(fixture()[1])}
 
 
 class API:
@@ -59,7 +59,7 @@ class CheckerTests(unittest.TestCase):
 
     def test_response_decodes_binary_and_status(self):
         data = b"\x00\xff\xfe"
-        encoded = base64.b64encode(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n" + data + check.MARKER + b"200\n")
+        encoded = base64.b64encode(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n" + data + check.MARKER + b"200\n" + check.EXIT_MARKER + b"0\n")
         status, headers, body = check.decode_response(encoded)
         self.assertEqual((status, body), (200, data))
         self.assertEqual(headers["content-type"], "application/octet-stream")
@@ -84,7 +84,7 @@ class CheckerTests(unittest.TestCase):
         calls = []
         class HTTP:
             pod = "seed-0"
-            def get(self, url, headers=None, proxy=None):
+            def get(self, url, headers=None, proxy=None, ca_file=None):
                 calls.append((url, headers, proxy))
                 if url.endswith("/v2/"):
                     return 401, {"www-authenticate": 'Bearer realm="http://auth.test:5001/auth",service="registry"'}, b""
@@ -126,7 +126,7 @@ class CheckerTests(unittest.TestCase):
                 return self.unread
             def read_stdout(self):
                 self.unread = False
-                return base64.b64encode(b"HTTP/1.1 200 OK\r\n\r\nbody" + check.MARKER + b"200\n").decode()
+                return base64.b64encode(b"HTTP/1.1 200 OK\r\n\r\nbody" + check.MARKER + b"200\n" + check.EXIT_MARKER + b"0\n").decode()
             def peek_stderr(self):
                 return False
             def close(self):

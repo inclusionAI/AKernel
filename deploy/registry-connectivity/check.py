@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import concurrent.futures
 import hashlib
+import gzip
 import io
 import json
 import os
@@ -18,8 +19,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-LIMIT = 32 * 1024 * 1024
+# A dedicated retained probe is tiny. Bound both transport and decompressed
+# content instead of accepting arbitrary task-image bootstraps in this Job.
+LIMIT = 1024 * 1024
+CONCURRENCY = 2
 MARKER = b"\n__AKERNEL_HTTP_STATUS__"
+EXIT_MARKER = b"\n__AKERNEL_CURL_EXIT__"
 BOOTSTRAP = "containerd.io/snapshot/nydus-bootstrap"
 
 
@@ -47,9 +52,14 @@ def challenge(headers, allowed_origins):
 
 
 def decode_response(encoded):
+    if len(encoded) > 2 * LIMIT:
+        raise CheckFailed("seed response exceeds limit")
     try:
         raw = base64.b64decode(encoded, validate=False)
-        response, code = raw.rsplit(MARKER, 1)
+        response, exit_code = raw.rsplit(EXIT_MARKER, 1)
+        if int(exit_code.strip()) != 0:
+            raise CheckFailed("seed curl transfer failed")
+        response, code = response.rsplit(MARKER, 1)
         status = int(code.strip())
         # curl may include proxy CONNECT / HTTP interim header blocks.
         while True:
@@ -62,11 +72,15 @@ def decode_response(encoded):
                 response = body
                 continue
             break
-        if status == 0 or len(body) > LIMIT:
+        if status == 0 or len(body) > LIMIT or len(head) > 64 * 1024:
             raise ValueError("failed or too large")
         return status, headers, body
     except (ValueError, IndexError) as error:
         raise CheckFailed("seed HTTP request failed or returned an invalid response") from error
+
+
+def curl_command(length):
+    return ["/bin/sh", "-c", 'head -c "$1" | { curl --config - --silent --show-error --suppress-connect-headers --include --write-out "\\n__AKERNEL_HTTP_STATUS__%{http_code}\\n"; result=$?; printf "\\n__AKERNEL_CURL_EXIT__%s\\n" "$result"; } | base64', "registry-check", str(length)]
 
 
 def digest_bytes(data, expected):
@@ -91,7 +105,15 @@ def bootstrap_contents(layer, descriptor):
     if len(layer) != descriptor["size"]:
         raise CheckFailed("bootstrap layer size mismatch")
     try:
-        with tarfile.open(fileobj=io.BytesIO(layer), mode="r:*") as archive:
+        # Limit decompression before tar parsing, including skipped members.
+        if layer.startswith(b"\x1f\x8b"):
+            with gzip.GzipFile(fileobj=io.BytesIO(layer)) as compressed:
+                archive_data = compressed.read(2 * LIMIT + 1)
+        else:
+            archive_data = layer
+        if len(archive_data) > 2 * LIMIT:
+            raise CheckFailed("bootstrap archive exceeds decompression limit")
+        with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:") as archive:
             member = archive.getmember("image/image.boot")
             if not member.isfile() or not 0 < member.size <= LIMIT:
                 raise CheckFailed("bootstrap is not a bounded regular file")
@@ -99,7 +121,7 @@ def bootstrap_contents(layer, descriptor):
             if len(data) != member.size:
                 raise CheckFailed("bootstrap file is truncated")
             return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
-    except (tarfile.TarError, KeyError, OSError) as error:
+    except (tarfile.TarError, KeyError, OSError, EOFError) as error:
         raise CheckFailed("cannot read image/image.boot from bootstrap layer") from error
 
 
@@ -107,17 +129,21 @@ class SeedHTTP:
     def __init__(self, api, namespace, pod, container, timeout=30):
         self.api, self.namespace, self.pod, self.container, self.timeout = api, namespace, pod, container, timeout
 
-    def get(self, url, headers=None, proxy=None):
+    def get(self, url, headers=None, proxy=None, ca_file=None):
         from kubernetes import client
         from kubernetes.stream import stream
 
         # Fixed-length stdin gives curl EOF without depending on a particular
         # Kubernetes exec websocket protocol's half-close implementation.
         options = {"url": url, "connect-timeout": "5", "max-time": str(self.timeout), "max-filesize": str(LIMIT), "noproxy": "" if proxy else "*", "proxy": proxy or ""}
+        if proxy and urlsplit(proxy).scheme != "http":
+            raise CheckFailed("Dragonfly probe requires an HTTP CONNECT proxy")
+        if ca_file:
+            options["cacert"] = ca_file
         config = "".join(f"{key} = {json.dumps(value)}\n" for key, value in options.items())
         config += "".join(f"header = {json.dumps(key + ': ' + value)}\n" for key, value in (headers or {}).items())
         payload = config.encode()
-        command = ["/bin/sh", "-c", 'head -c "$1" | curl --config - --silent --show-error --include --write-out "\\n__AKERNEL_HTTP_STATUS__%{http_code}\\n" | base64', "registry-check", str(len(payload))]
+        command = curl_command(len(payload))
         # Kubernetes stream temporarily replaces ApiClient.request. A client
         # shared by concurrent seed checks would corrupt HTTP/exec dispatch.
         isolated = client.ApiClient(configuration=self.api.api_client.configuration)
@@ -147,16 +173,25 @@ class SeedHTTP:
             isolated.close()
 
 
+def validate_probe_security(cfg):
+    if cfg.get("proxyCheckEnabled", True):
+        if cfg.get("proxyLoggingVerified") is not True:
+            raise CheckFailed("proxy checks require verified credential-safe Dragonfly logging")
+        if urlsplit(cfg["registry"]).scheme == "https" and not cfg.get("proxyCAFile"):
+            raise CheckFailed("HTTPS proxy checks require the Dragonfly signing CA bundle path in each seed")
+
+
 def verify_seed(http, cfg, credential):
+    validate_probe_security(cfg)
     start = time.monotonic()
     registry = cfg["registry"].rstrip("/")
-    status, headers, _ = http.get(registry + "/v2/")
+    status, headers, _ = http.get(registry + "/v2/", ca_file=cfg.get("registryCAFile"))
     if status != 401:
         raise CheckFailed("anonymous Registry access did not require authentication")
     realm, service = challenge(headers, cfg["allowedAuthOrigins"])
     scope = "repository:" + cfg["repository"] + ":pull"
     basic = base64.b64encode((credential["username"] + ":" + credential["password"]).encode()).decode()
-    status, _, body = http.get(realm + "?" + urlencode({"service": service, "scope": scope}), {"Authorization": "Basic " + basic})
+    status, _, body = http.get(realm + "?" + urlencode({"service": service, "scope": scope}), {"Authorization": "Basic " + basic}, ca_file=cfg.get("authCAFile"))
     if status != 200:
         raise CheckFailed("pull token acquisition failed")
     try:
@@ -168,7 +203,7 @@ def verify_seed(http, cfg, credential):
         raise CheckFailed("invalid pull token response") from error
     auth = {"Authorization": "Bearer " + token, "Accept": "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"}
     root = registry + "/v2/" + cfg["repository"]
-    status, _, body = http.get(root + "/manifests/" + cfg["digest"], auth)
+    status, _, body = http.get(root + "/manifests/" + cfg["digest"], auth, ca_file=cfg.get("registryCAFile"))
     if status != 200:
         raise CheckFailed("authenticated manifest read failed")
     digest_bytes(body, cfg["digest"])
@@ -177,16 +212,18 @@ def verify_seed(http, cfg, credential):
     except (ValueError, TypeError) as error:
         raise CheckFailed("invalid manifest JSON") from error
     url = root + "/blobs/" + descriptor["digest"]
-    status, _, body = http.get(url, auth)
+    status, _, body = http.get(url, auth, ca_file=cfg.get("registryCAFile"))
     if status != 200:
         raise CheckFailed("authenticated bootstrap read failed")
     result = bootstrap_contents(body, descriptor)
-    status, _, body = http.get(url, auth, proxy=cfg.get("seedProxy", "http://127.0.0.1:4001"))
-    if status != 200:
-        raise CheckFailed("Dragonfly proxy bootstrap read failed")
-    if bootstrap_contents(body, descriptor) != result:
-        raise CheckFailed("Dragonfly proxy bootstrap differs from Registry")
-    return {"seed": http.pod, "passed": True, "bootstrap": result, "layer_digest": descriptor["digest"], "seconds": round(time.monotonic() - start, 3)}
+    proxy_checked = cfg.get("proxyCheckEnabled", True)
+    if proxy_checked:
+        status, _, body = http.get(url, auth, proxy=cfg.get("seedProxy", "http://127.0.0.1:4001"), ca_file=cfg.get("proxyCAFile"))
+        if status != 200:
+            raise CheckFailed("Dragonfly proxy bootstrap read failed")
+        if bootstrap_contents(body, descriptor) != result:
+            raise CheckFailed("Dragonfly proxy bootstrap differs from Registry")
+    return {"seed": http.pod, "passed": True, "proxy_checked": proxy_checked, "bootstrap": result, "layer_digest": descriptor["digest"], "seconds": round(time.monotonic() - start, 3)}
 
 
 def ready(pod):
@@ -213,6 +250,7 @@ def fingerprint(api, apps, cfg):
 
 
 def execute(api, apps, cfg, credential, state, force=False, now=None, http_factory=SeedHTTP):
+    validate_probe_security(cfg)
     now = time.time() if now is None else now
     before = fingerprint(api, apps, cfg)
     if not force and state.get("fingerprint") == before and now - state.get("checked_epoch", 0) < cfg.get("recheckSeconds", 600):
@@ -225,7 +263,7 @@ def execute(api, apps, cfg, credential, state, force=False, now=None, http_facto
             return {"seed": name, "passed": False, "error": str(error)}
         except Exception:
             return {"seed": name, "passed": False, "error": "seed exec or HTTP transport failed"}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
         results = list(pool.map(one, cfg["seedNames"]))
     if not all(r["passed"] for r in results):
         print(json.dumps({"event": "verification_failed", "seeds": results}), flush=True)
@@ -250,7 +288,7 @@ def main():
         print(json.dumps({"event": "unchanged", "last_success": state.get("checked_at")}), flush=True)
         return
     # resourceVersion prevents overlapping manual/hook Jobs overwriting state.
-    api.patch_namespaced_config_map(cfg["stateConfigMap"], cfg["namespace"], {"metadata": {"resourceVersion": cm.metadata.resource_version}, "data": {"state.json": json.dumps(result, sort_keys=True)}}, _request_timeout=20)
+    api.patch_namespaced_config_map(cfg["stateConfigMap"], cfg["namespace"], {"metadata": {"resourceVersion": cm.metadata.resource_version}, "data": {"state.json": json.dumps(result, sort_keys=True)}}, field_manager="registry-connectivity-check", _request_timeout=20)
     print(json.dumps({"event": "verified", **result}), flush=True)
 
 
