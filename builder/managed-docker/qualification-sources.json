@@ -5,20 +5,20 @@
   "upstream_baselines": {
     "akernel": {
       "branch": "develop",
-      "commit": "724238ccf2d1b582824100f312f2031250daa3dc"
+      "commit": "db99c935f85b5935b9ce79e46860ab6ff5bc8948"
     },
     "sandboxd": {
       "branch": "main",
-      "commit": "d23687d62ef0afd643b4028aedbcbc0e8bd346dc"
+      "commit": "03ea0a4db807c1d5dac4b11d02f2ec238083a8ae"
     },
     "agent_dx": {
       "branch": "master",
-      "commit": "2f61d44d9c56ae029a06698c337cbdc4aeaaa7af"
+      "commit": "191b1d262f24cbdd143f9b22c2363dc15202de4d"
     }
   },
   "candidate_gitlinks": {
-    "sandboxd": "d23687d62ef0afd643b4028aedbcbc0e8bd346dc",
-    "agent_dx": "2f61d44d9c56ae029a06698c337cbdc4aeaaa7af"
+    "sandboxd": "03ea0a4db807c1d5dac4b11d02f2ec238083a8ae",
+    "agent_dx": "191b1d262f24cbdd143f9b22c2363dc15202de4d"
   },
   "pinned_runtime_artifacts": {
     "gvisor": {
@@ -41,12 +41,12 @@
   "envd_enabled": false,
   "publication_requirement": "The default amd64 platform/Execd URL and checksum pairs select the same official Agent DX daily build and matching static Execd bytes. Verify architecture and complete manifests before packaging. This managed-runtime integration remains a preview; official dependency publication does not establish completed cluster qualification. Sandboxd is fixed to official main after merged #101 (including R1 checkpoint-lease preflight) and #102; gVisor uses the organization-published complete .4 bundle. The native Python SDK dependency remains index-resolved rc4; separately pinned Harbor source-client qualification is recorded outside this package.",
   "agent_dx_platform_artifacts": {
-    "source_commit": "2f61d44d9c56ae029a06698c337cbdc4aeaaa7af",
-    "publication": "https://buildkite.com/agent-dx/agent-dx/builds/263",
-    "platform_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261106064716-2f61d44d9c56/linux/amd64/adx-release.tar.gz",
-    "platform_sha256": "e4390134ed9428936a241622dfd01a4420b0ddc494b3dab40bf0b9712238cf33",
-    "execd_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261106064716-2f61d44d9c56/linux/amd64/adx-execd.tar.gz",
-    "execd_sha256": "240bfcc19326faab9ea5ffa7587c9e6e5ca48241a86de74778b9a6c26403bbee",
+    "source_commit": "191b1d262f24cbdd143f9b22c2363dc15202de4d",
+    "publication": "https://buildkite.com/agent-dx/agent-dx/builds/266",
+    "platform_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261110035120-191b1d262f24/linux/amd64/adx-release.tar.gz",
+    "platform_sha256": "f2173cb4e6c3fc0c564af12e9d0865a693e207cb8cf5c807eeca9dcefe35b72b",
+    "execd_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261110035120-191b1d262f24/linux/amd64/adx-execd.tar.gz",
+    "execd_sha256": "e41b391f0fcbb4ec5e575c1491c3a4d4b1bc5755319a74d396e791ce7a97c5d8",
     "status": "Official OBS daily artifacts of merged upstream master. Complete manifests, source, architecture and matching static Execd bytes verified; cluster qualification remains separate."
   },
   "integrated_upstream_changes": {
