@@ -76,7 +76,11 @@ adx:
   tls:
     existingSecret: akernel-adx-tls
   redis:
+    # Optional production capacity baseline: values-production.yaml.
     mode: managed
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
     appendfsync: everysec
     external:
       existingSecret: ""

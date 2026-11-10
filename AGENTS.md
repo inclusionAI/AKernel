@@ -288,6 +288,9 @@ environment overrides take precedence. Preserve this handoff when changing
 node deployment: otherwise the service can fall back to standalone configuration
 even though the Pod declares a node configuration.
 
+The [control-plane capacity guide](deploy/docs/control-plane-capacity.md) owns
+production profile sizing, placement and existing-PVC migration requirements.
+
 The managed Kubernetes Redis uses its own Helm-generated authentication Secret,
 preserved by live lookup during upgrades. Its NetworkPolicy is additional
 isolation and requires CNI enforcement. Coordinator and Ingress/API Server run in separate
