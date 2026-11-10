@@ -17,12 +17,13 @@ import tarfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode, urlsplit, urljoin
 
 # A dedicated retained probe is tiny. Bound both transport and decompressed
 # content instead of accepting arbitrary task-image bootstraps in this Job.
 LIMIT = 1024 * 1024
 CONCURRENCY = 2
+MAX_REDIRECTS = 5
 MARKER = b"\n__AKERNEL_HTTP_STATUS__"
 EXIT_MARKER = b"\n__AKERNEL_CURL_EXIT__"
 BOOTSTRAP = "containerd.io/snapshot/nydus-bootstrap"
@@ -181,6 +182,41 @@ def validate_probe_security(cfg):
             raise CheckFailed("HTTPS proxy checks require the Dragonfly signing CA bundle path in each seed")
 
 
+def read_bootstrap(http, cfg, url, headers, proxy=None):
+    """Follow bounded blob redirects without forwarding cross-origin secrets.
+
+    Each hop is a separate curl request: intermediate headers/bodies cannot be
+    mistaken for the final layer. Credentials are never restored after leaving
+    the initial origin, even if a later redirect returns to it.
+    """
+    initial_origin = origin(url)
+    forwarded = dict(headers)
+    visited = set()
+    for hop in range(MAX_REDIRECTS + 1):
+        if url in visited:
+            raise CheckFailed("bootstrap redirect loop detected")
+        visited.add(url)
+        if proxy:
+            ca_file = cfg.get("proxyCAFile")
+            if urlsplit(url).scheme == "https" and not ca_file:
+                raise CheckFailed("HTTPS proxy redirect requires the Dragonfly signing CA bundle")
+        else:
+            ca_file = cfg.get("registryCAFile") if origin(url) == initial_origin else cfg.get("redirectCAFile")
+        status, response_headers, body = http.get(url, forwarded, proxy=proxy, ca_file=ca_file)
+        if status == 200:
+            return body
+        if status not in (301, 302, 303, 307, 308) or not response_headers.get("location"):
+            raise CheckFailed("authenticated bootstrap read failed")
+        target = urljoin(url, response_headers["location"])
+        target_origin = origin(target)  # HTTP(S) only, with no URL credentials.
+        if urlsplit(url).scheme == "https" and urlsplit(target).scheme != "https":
+            raise CheckFailed("bootstrap redirect would downgrade HTTPS")
+        if origin(url) != target_origin:
+            forwarded = {key: value for key, value in forwarded.items() if key.lower() not in ("authorization", "proxy-authorization", "cookie")}
+        url = target
+    raise CheckFailed("bootstrap redirect limit exceeded")
+
+
 def verify_seed(http, cfg, credential):
     validate_probe_security(cfg)
     start = time.monotonic()
@@ -212,15 +248,11 @@ def verify_seed(http, cfg, credential):
     except (ValueError, TypeError) as error:
         raise CheckFailed("invalid manifest JSON") from error
     url = root + "/blobs/" + descriptor["digest"]
-    status, _, body = http.get(url, auth, ca_file=cfg.get("registryCAFile"))
-    if status != 200:
-        raise CheckFailed("authenticated bootstrap read failed")
+    body = read_bootstrap(http, cfg, url, auth)
     result = bootstrap_contents(body, descriptor)
     proxy_checked = cfg.get("proxyCheckEnabled", True)
     if proxy_checked:
-        status, _, body = http.get(url, auth, proxy=cfg.get("seedProxy", "http://127.0.0.1:4001"), ca_file=cfg.get("proxyCAFile"))
-        if status != 200:
-            raise CheckFailed("Dragonfly proxy bootstrap read failed")
+        body = read_bootstrap(http, cfg, url, auth, proxy=cfg.get("seedProxy", "http://127.0.0.1:4001"))
         if bootstrap_contents(body, descriptor) != result:
             raise CheckFailed("Dragonfly proxy bootstrap differs from Registry")
     return {"seed": http.pod, "passed": True, "proxy_checked": proxy_checked, "bootstrap": result, "layer_digest": descriptor["digest"], "seconds": round(time.monotonic() - start, 3)}
@@ -243,8 +275,9 @@ def fingerprint(api, apps, cfg):
     selector = ",".join(f"{k}={v}" for k, v in sorted(cfg["seedSelector"].items()))
     seeds = api.list_namespaced_pod(cfg["seedNamespace"], label_selector=selector, _request_timeout=20).items
     selected = {p.metadata.name: p for p in seeds if p.metadata.name in cfg["seedNames"]}
-    if len(cfg["seedNames"]) != 5 or len(set(cfg["seedNames"])) != 5 or set(selected) != set(cfg["seedNames"]) or not all(ready(p) for p in selected.values()):
-        raise CheckFailed("all five configured Dragonfly seeds must be present and Ready")
+    names = cfg["seedNames"]
+    if not names or len(set(names)) != len(names) or set(selected) != set(names) or not all(ready(p) for p in selected.values()):
+        raise CheckFailed("all configured Dragonfly seeds must be distinct, present and Ready")
     identities = {"deployment": [deployment.metadata.uid, deployment.metadata.generation], "registry": sorted((p.metadata.uid, [(s.name, s.image_id, s.restart_count) for s in (p.status.container_statuses or [])]) for p in pods), "seeds": sorted((name, p.metadata.uid, [(s.name, s.image_id, s.restart_count) for s in (p.status.container_statuses or [])]) for name, p in selected.items()), "config": cfg}
     return hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
 

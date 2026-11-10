@@ -82,6 +82,21 @@ class ChartTests(unittest.TestCase):
         values["dragonfly"]["proxyCheckEnabled"] = False
         self.assertEqual(self.render(values).returncode, 0)
 
+    def test_configured_three_and_five_seed_topologies_and_bad_lists(self):
+        for count in [3, 5]:
+            values = self.values()
+            names = [f"seed-{i}" for i in range(count)]
+            values["dragonfly"]["seedNames"] = names
+            result = self.render(values)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            roles = [o for o in yaml.safe_load_all(result.stdout) if o["kind"] == "Role"]
+            rule = next(r for role in roles for r in role["rules"] if "pods/exec" in r["resources"])
+            self.assertEqual(rule["resourceNames"], names)
+        for names in [[], ["seed-0", "seed-0"]]:
+            values = self.values()
+            values["dragonfly"]["seedNames"] = names
+            self.assertNotEqual(self.render(values).returncode, 0)
+
     def test_chart_does_not_take_over_registry_or_storage(self):
         kinds = {o["kind"] for o in self.objects()}
         self.assertFalse(kinds.intersection({"Deployment", "PersistentVolumeClaim", "Service", "Secret"}))

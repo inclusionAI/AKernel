@@ -12,6 +12,8 @@ registry:
   # CA bundle paths INSIDE each seed, not paths on the checker/client.
   caFile: ""
   authCAFile: ""
+  # Optional private object-storage CA for cross-origin blob redirects.
+  redirectCAFile: ""
   # A retained, single-platform Nydus manifest (not an image index).
   probeRepository: ""
   probeDigest: ""

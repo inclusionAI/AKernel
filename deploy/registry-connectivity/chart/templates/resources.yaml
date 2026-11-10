@@ -2,8 +2,8 @@
 {{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) -}}
 {{- fail "image must be pinned by sha256 digest" -}}
 {{- end -}}
-{{- if or (ne (len .Values.dragonfly.seedNames) 5) (ne (len (uniq .Values.dragonfly.seedNames)) 5) -}}
-{{- fail "exactly five distinct Dragonfly seedNames are required" -}}
+{{- if or (empty .Values.dragonfly.seedNames) (ne (len (uniq .Values.dragonfly.seedNames)) (len .Values.dragonfly.seedNames)) -}}
+{{- fail "a nonempty list of distinct Dragonfly seedNames is required" -}}
 {{- end -}}
 {{- if or (empty .Values.dragonfly.podSelector) (empty .Values.registry.podSelector) (empty .Values.registry.allowedAuthOrigins) -}}
 {{- fail "nonempty Registry/Dragonfly Pod selectors and allowedAuthOrigins are required" -}}
@@ -129,7 +129,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   config.json: |
-    {{- dict "namespace" .Release.Namespace "deployment" .Values.registry.deployment "registrySelector" .Values.registry.podSelector "registry" (required "registry.url is required" .Values.registry.url) "allowedAuthOrigins" .Values.registry.allowedAuthOrigins "repository" (required "registry.probeRepository is required" .Values.registry.probeRepository) "digest" (required "registry.probeDigest is required" .Values.registry.probeDigest) "seedNamespace" .Values.dragonfly.namespace "seedNames" .Values.dragonfly.seedNames "seedSelector" .Values.dragonfly.podSelector "seedContainer" .Values.dragonfly.container "seedProxy" .Values.dragonfly.proxy "proxyCheckEnabled" .Values.dragonfly.proxyCheckEnabled "proxyLoggingVerified" .Values.dragonfly.proxyLoggingVerified "registryCAFile" .Values.registry.caFile "authCAFile" .Values.registry.authCAFile "proxyCAFile" .Values.dragonfly.proxyCAFile "stateConfigMap" (printf "%s-state" .Release.Name) "recheckSeconds" .Values.recheckSeconds | toJson | nindent 4 }}
+    {{- dict "namespace" .Release.Namespace "deployment" .Values.registry.deployment "registrySelector" .Values.registry.podSelector "registry" (required "registry.url is required" .Values.registry.url) "allowedAuthOrigins" .Values.registry.allowedAuthOrigins "repository" (required "registry.probeRepository is required" .Values.registry.probeRepository) "digest" (required "registry.probeDigest is required" .Values.registry.probeDigest) "seedNamespace" .Values.dragonfly.namespace "seedNames" .Values.dragonfly.seedNames "seedSelector" .Values.dragonfly.podSelector "seedContainer" .Values.dragonfly.container "seedProxy" .Values.dragonfly.proxy "proxyCheckEnabled" .Values.dragonfly.proxyCheckEnabled "proxyLoggingVerified" .Values.dragonfly.proxyLoggingVerified "registryCAFile" .Values.registry.caFile "authCAFile" .Values.registry.authCAFile "redirectCAFile" .Values.registry.redirectCAFile "proxyCAFile" .Values.dragonfly.proxyCAFile "stateConfigMap" (printf "%s-state" .Release.Name) "recheckSeconds" .Values.recheckSeconds | toJson | nindent 4 }}
 ---
 apiVersion: v1
 kind: ConfigMap

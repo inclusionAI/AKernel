@@ -12,7 +12,7 @@ NetworkPolicy creation is **off by default**. Before setting
 BuildKit, runtime nodes and direct push/pull clients. Existing policies must
 already permit their traffic. Set `networkPolicy.existingClientsReviewed=true`
 only after that review. The first ingress policy selecting a Pod makes it
-ingress-isolated: five passing seed checks do not prove other clients retain
+ingress-isolated: passing seed checks do not prove other clients retain
 access. Keep both flags explicit when upgrading an installation that already
 owns this policy; omitting them would remove that Helm-managed policy.
 
@@ -34,12 +34,17 @@ configure source-side egress policies.
 ## Automatic verification
 
 A CronJob checks Registry generation, ready Pod UIDs, container identities and
-restart counts, plus the identities of the five named seed Pods, every minute.
+restart counts, plus the identities of all configured seed Pods, every minute.
 A change triggers a full check after the rollout becomes ready. An unchanged
 deployment is checked again every ten minutes. A change during verification
 invalidates the result and is retried. Missing/unready seeds fail the check.
 
-Each of the five seeds must:
+Set `dragonfly.seedNames` to the deployment's nonempty, duplicate-free Pod-name
+list. Three- and five-seed profiles are both supported; five is only the example
+default. All configured seeds must be Ready and pass; exec RBAC is generated
+from this same list. The guard does not require expanding a seed pool.
+
+Each configured seed must:
 
 1. Receive an unauthenticated Registry Bearer challenge.
 2. Obtain a scoped pull token from an explicitly trusted token-service origin.
@@ -50,6 +55,23 @@ Each of the five seeds must:
    Dragonfly HTTP proxy and verify identical content. Direct-only results
    explicitly report `proxy_checked: false` and do not validate the proxy path.
 
+Proxy reads may be served from an existing Dragonfly cache entry. They verify
+proxy availability and matching content, not a fresh origin fetch or cold-cache
+performance; the separate direct Registry read still validates origin access.
+
+Blob reads support at most five HTTP(S) redirects. Every hop is a separate curl
+request, so intermediate redirect bodies cannot enter bootstrap validation.
+Same-origin redirects retain authorization; crossing an origin removes
+Authorization, Proxy-Authorization and Cookie permanently for that chain,
+including any return to the original origin. Signed URL queries are preserved
+without being recorded in checker results. HTTPS-to-HTTP downgrades, credentialed
+URLs, loops, non-HTTP protocols and excessive redirects are rejected. The final
+layer still must match its immutable digest and size. Redirects use the same
+Dragonfly proxy for proxied checks. `registry.redirectCAFile` optionally trusts
+private object-storage origins during direct reads; otherwise native roots are
+used. An HTTPS redirect target also requires `dragonfly.proxyCAFile` when
+proxy checking is enabled, even when the initial Registry URL is HTTP.
+
 Every curl transfer must exit successfully, even if HTTP 200 and the expected
 content bytes were received. Responses and bootstrap files are capped at 1 MiB,
 decompressed tar archives at 2 MiB, with at most two seeds checked concurrently.
@@ -57,14 +79,14 @@ Keep the dedicated probe small; the default 256 MiB Job is not intended to
 inspect arbitrary task-image bootstraps. Oversized probes fail without advancing
 success state. A peak-RSS regression exercises the allowed bounds.
 
-Only a complete five-seed success advances `<release>-state`. A failed Job
+Only a complete all-seed success advances `<release>-state`. A failed Job
 logs redacted per-seed results and exits nonzero. Subsequent scheduled Jobs
 retry; this is a post-rollout check, not a Registry readiness gate or automatic
 rollback. Monitor failed Jobs and the age of the state ConfigMap's `checked_at`.
 History keeps two successful and three failed Jobs; completed Jobs expire after
 one day. A successful `unchanged` Job alone is not a new network verification.
 
-The checker uses the Kubernetes API and execs only in the five configured seed
+The checker uses the Kubernetes API and execs only in the configured seed
 Pods. Seeds require `sh`, `head`, `curl` and `base64`, but do not require Python.
 No seed files or process state are changed. Secret contents, Basic credentials
 and Bearer tokens pass through exec stdin and are omitted from command arguments
@@ -72,7 +94,7 @@ and **checker** logs. Other components have independent logging behavior;
 credential safety of their logs must be verified separately.
 The checker ServiceAccount cannot read Secrets. It mounts one existing Secret
 containing a pull-only credential. Its exec permission is restricted to the
-five Pod names; assess that permission as part of the deployment trust boundary.
+configured Pod names; assess that permission as part of the deployment trust boundary.
 
 ## Prepare the checker and probe
 
@@ -112,7 +134,7 @@ sending a real pull token through the proxy:
    the INFO/DEBUG dumps), or use a verified redacting implementation. Coordinate
    this with the owner of Dragonfly; this chart does not roll the seed Pods.
 2. Send a **dummy**, non-production Authorization value through each seed's
-   proxy. Search for that marker in console output, daemon log files and any
+   proxy. For redirects also use a dummy signed-query marker. Search for that marker in console output, daemon log files and any
    collected logs after allowing the logging pipeline to flush. Do not use a
    real token to test redaction. Repeat after logging/version changes.
 3. Only after verifying the log sinks, set
@@ -189,7 +211,7 @@ Registry Deployment/PVC as part of installing the guard. Preserve other
 operators' placement and resource settings.
 
 After moving or rolling the Registry, inspect the next Job and confirm a new
-`verified` event, **five** `passed: true` results, matching bootstrap hashes and
+`verified` event, one `passed: true` result per configured seed, matching bootstrap hashes and
 a fresh `checked_at` in `registry-connectivity-state`. To force an immediate
 recheck without restarting production services:
 

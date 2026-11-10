@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import hashlib
+import gzip
 import importlib.util
 import io
 import json
@@ -21,11 +22,12 @@ def sha(data):
 
 def fixture():
     output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode="w:gz") as archive:
-        data = b"Nydus-bootstrap-probe"
-        member = tarfile.TarInfo("image/image.boot")
-        member.size = len(data)
-        archive.addfile(member, io.BytesIO(data))
+    with gzip.GzipFile(fileobj=output, mode="wb", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w:") as archive:
+            data = b"Nydus-bootstrap-probe"
+            member = tarfile.TarInfo("image/image.boot")
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
     layer = output.getvalue()
     manifest = json.dumps({"layers": [{"digest": sha(layer), "size": len(layer), "annotations": {check.BOOTSTRAP: "true"}}]}).encode()
     return layer, manifest
@@ -156,6 +158,29 @@ class CheckerTests(unittest.TestCase):
         second = check.fingerprint(api, api, cfg)
         api.seeds[0].metadata.uid = "replacement"
         self.assertNotEqual(check.fingerprint(api, api, cfg), second)
+
+    def test_configured_three_and_five_seeds_all_pass_and_fail_closed(self):
+        for count in [3, 5]:
+            api, cfg = API(), configuration()
+            api.seeds = api.seeds[:count]
+            cfg["seedNames"] = cfg["seedNames"][:count]
+            check.fingerprint(api, api, cfg)
+            with patch.object(check, "verify_seed", return_value={"passed": True, "bootstrap": {"sha256": "one"}}):
+                result = check.execute(api, api, cfg, {}, {})
+            self.assertEqual(len(result["seeds"]), count)
+            api.seeds[-1].status.conditions[0].status = "False"
+            with self.assertRaises(check.CheckFailed):
+                check.fingerprint(api, api, cfg)
+            api.seeds.pop()
+            with self.assertRaises(check.CheckFailed):
+                check.fingerprint(api, api, cfg)
+            api, cfg = API(), configuration()
+            cfg["seedNames"] = ["seed-0", "seed-0"]
+            with self.assertRaises(check.CheckFailed):
+                check.fingerprint(api, api, cfg)
+            cfg["seedNames"] = []
+            with self.assertRaises(check.CheckFailed):
+                check.fingerprint(api, api, cfg)
 
     def test_missing_or_unready_seed_is_not_a_success(self):
         api, cfg = API(), configuration()

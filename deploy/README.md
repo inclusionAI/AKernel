@@ -19,7 +19,7 @@ application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-applicati
 
 For private Registries serving Nydus through Dragonfly, install the
 [Registry connectivity guard](registry-connectivity/README.md). It maintains
-namespace-and-Pod ingress selectors and verifies all five seeds after Registry
+namespace-and-Pod ingress selectors and verifies all configured seeds after Registry
 moves or rollouts without changing Registry placement or storage.
 
 ## Aggregate sandbox memory budget
