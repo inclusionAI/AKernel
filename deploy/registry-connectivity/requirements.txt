@@ -1,0 +1,15 @@
+# Pin the complete checker dependency set for reproducible operator images.
+certifi==2026.10.23
+charset-normalizer==3.5.2
+durationpy==0.11
+idna==3.20
+kubernetes==35.0.0
+oauthlib==4.0.1
+python-dateutil==4.0.0
+PyYAML==6.0.3
+requests==2.34.2
+requests-oauthlib==2.0.0
+six==1.17.0
+tzdata==2026.6
+urllib3==2.8.0
+websocket-client==1.9.2

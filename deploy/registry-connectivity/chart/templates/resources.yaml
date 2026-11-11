@@ -1,0 +1,206 @@
+{{- $image := required "image must specify the checker image digest" .Values.image -}}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) -}}
+{{- fail "image must be pinned by sha256 digest" -}}
+{{- end -}}
+{{- if or (empty .Values.dragonfly.seedNames) (ne (len (uniq .Values.dragonfly.seedNames)) (len .Values.dragonfly.seedNames)) -}}
+{{- fail "a nonempty list of distinct Dragonfly seedNames is required" -}}
+{{- end -}}
+{{- if or (empty .Values.dragonfly.podSelector) (empty .Values.registry.podSelector) (empty .Values.registry.allowedAuthOrigins) -}}
+{{- fail "nonempty Registry/Dragonfly Pod selectors and allowedAuthOrigins are required" -}}
+{{- end }}
+{{- if empty .Values.registry.ports -}}
+{{- fail "registry.ports must be a nonempty list of explicit TCP ports" -}}
+{{- end -}}
+{{- range .Values.registry.ports -}}
+{{- if or (not (regexMatch "^[1-9][0-9]*$" (toString .))) (gt (int .) 65535) -}}
+{{- fail "registry.ports must contain integers between 1 and 65535" -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.dragonfly.proxyCheckEnabled (not .Values.dragonfly.proxyLoggingVerified) -}}
+{{- fail "proxy checks require dragonfly.proxyLoggingVerified after credential-safe logging is verified with dummy credentials" -}}
+{{- end -}}
+{{- if and .Values.dragonfly.proxyCheckEnabled (hasPrefix "https://" .Values.registry.url) (empty .Values.dragonfly.proxyCAFile) -}}
+{{- fail "HTTPS proxy checks require dragonfly.proxyCAFile inside each seed" -}}
+{{- end -}}
+{{- if .Values.networkPolicy.enabled -}}
+{{- if not .Values.networkPolicy.existingClientsReviewed -}}
+{{- fail "review existing ingress coverage for BuildKit and direct clients before enabling networkPolicy.existingClientsReviewed" -}}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.networkPolicy.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: registry-connectivity
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: akernel
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml .Values.registry.podSelector | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.dragonfly.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.dragonfly.podSelector | nindent 14 }}
+      ports:
+        {{- range .Values.registry.ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ .Values.registry.deployment | quote }}]
+    verbs: [get]
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: ['']
+    resources: [configmaps]
+    resourceNames: [{{ printf "%s-state" .Release.Name | quote }}]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace .Release.Name }}
+  namespace: {{ .Values.dragonfly.namespace }}
+rules:
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: ['']
+    resources: [pods/exec]
+    resourceNames:
+      {{- toYaml .Values.dragonfly.seedNames | nindent 6 }}
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace .Release.Name }}
+  namespace: {{ .Values.dragonfly.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-%s" .Release.Namespace .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.json: |
+    {{- dict "namespace" .Release.Namespace "deployment" .Values.registry.deployment "registrySelector" .Values.registry.podSelector "registry" (required "registry.url is required" .Values.registry.url) "allowedAuthOrigins" .Values.registry.allowedAuthOrigins "repository" (required "registry.probeRepository is required" .Values.registry.probeRepository) "digest" (required "registry.probeDigest is required" .Values.registry.probeDigest) "seedNamespace" .Values.dragonfly.namespace "seedNames" .Values.dragonfly.seedNames "seedSelector" .Values.dragonfly.podSelector "seedContainer" .Values.dragonfly.container "seedProxy" .Values.dragonfly.proxy "proxyCheckEnabled" .Values.dragonfly.proxyCheckEnabled "proxyLoggingVerified" .Values.dragonfly.proxyLoggingVerified "registryCAFile" .Values.registry.caFile "authCAFile" .Values.registry.authCAFile "redirectCAFile" .Values.registry.redirectCAFile "proxyCAFile" .Values.dragonfly.proxyCAFile "stateConfigMap" (printf "%s-state" .Release.Name) "recheckSeconds" .Values.recheckSeconds | toJson | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-state
+  namespace: {{ .Release.Namespace }}
+# state.json belongs to the Job; Helm must never initialize/reset this field.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  suspend: {{ .Values.suspend }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 90
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          serviceAccountName: {{ .Release.Name }}
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: check
+              image: {{ $image | quote }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              env:
+                - name: PYTHONDONTWRITEBYTECODE
+                  value: '1'
+                - name: NO_PROXY
+                  value: '*'
+                - name: no_proxy
+                  value: '*'
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - {name: config, mountPath: /config, readOnly: true}
+                - {name: credentials, mountPath: /credentials, readOnly: true}
+          volumes:
+            - name: config
+              configMap:
+                name: {{ .Release.Name }}-config
+            - name: credentials
+              secret:
+                secretName: {{ required "registry.pullSecret is required" .Values.registry.pullSecret }}
+                defaultMode: 0440
