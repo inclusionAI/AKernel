@@ -28,21 +28,16 @@ def server(handler):
 
 @contextlib.contextmanager
 def local_exec():
-    class Client:
-        def __init__(self, configuration):
-            self.configuration = configuration
-        def close(self):
-            pass
-    class Core:
-        def __init__(self, client):
-            pass
-        def connect_get_namespaced_pod_exec(self):
-            pass
     class WS:
         opened, unread = True, True
         def __init__(self, command):
             self.command = command
         def write_stdin(self, config):
+            for line in config.splitlines():
+                if line.startswith("header ="):
+                    header = json.loads(line.split("=", 1)[1])
+                    if header.lower().startswith("authorization:"):
+                        assert header not in " ".join(self.command)
             self.result = subprocess.run(self.command, input=config.encode(), capture_output=True, timeout=10)
         def is_open(self):
             return self.opened
@@ -57,13 +52,14 @@ def local_exec():
             return False
         def close(self):
             self.opened = False
-    modules = {"kubernetes": NS(client=NS(ApiClient=Client, CoreV1Api=Core)), "kubernetes.stream": NS(stream=lambda method, *args, **kwargs: WS(kwargs["command"]))}
+    api = NS(ApiClient=lambda **kwargs: NS(close=lambda: None), CoreV1Api=lambda client: NS(connect_get_namespaced_pod_exec=None))
+    modules = {"kubernetes": NS(client=api), "kubernetes.stream": NS(stream=lambda method, *args, **kwargs: WS(kwargs["command"]))}
     with patch.dict("sys.modules", modules):
         yield check.SeedHTTP(NS(api_client=NS(configuration=None)), "test", "seed", "proxy")
 
 
 class RedirectTests(unittest.TestCase):
-    def verify(self, proxied, cross_origin=False, loop=False, limit=False):
+    def verify(self, proxied, cross_origin=False):
         layer, manifest = fixture()
         events = []
         dummy = "dummy-redirect-pull-token"
@@ -89,14 +85,10 @@ class RedirectTests(unittest.TestCase):
                         body = json.dumps({"token": dummy}).encode()
                     elif "/manifests/" in self.path:
                         body = manifest
-                    elif self.path.startswith("/objects/") and not limit:
+                    elif self.path.startswith("/objects/"):
                         body = layer
                     else:
                         target = f"http://127.0.0.1:{objects.server_port}/objects/blob?signature=DUMMY-SIGNED-QUERY" if cross_origin else "/objects/blob"
-                        if loop:
-                            target = self.path
-                        if limit:
-                            target = "/objects/" + str(len(events))
                         self.send_response(307)
                         self.send_header("Location", target)
                         self.send_header("Content-Length", "0")
@@ -126,23 +118,22 @@ class RedirectTests(unittest.TestCase):
             with server(Registry) as registry, server(Proxy) as proxy, local_exec() as seed_http:
                 cfg = configuration()
                 cfg.update(registry=f"http://127.0.0.1:{registry.server_port}", allowedAuthOrigins=[f"http://127.0.0.1:{registry.server_port}"], seedProxy=f"http://127.0.0.1:{proxy.server_port}", proxyCheckEnabled=proxied)
-                if loop or limit:
-                    with self.assertRaisesRegex(check.CheckFailed, "redirect (loop|limit)"):
-                        check.verify_seed(seed_http, cfg, {"username": "dummy", "password": "dummy"})
-                    self.assertLessEqual(len(events), check.MAX_REDIRECTS + 4)
+                result = check.verify_seed(seed_http, cfg, {"username": "dummy", "password": "dummy"})
+                self.assertTrue(result["passed"])
+                self.assertEqual(result["proxy_checked"], proxied)
+                self.assertNotIn(dummy, json.dumps(result))
+                auth_requests = [e for e in events if e[1].startswith("/auth?")]
+                self.assertTrue(auth_requests)
+                self.assertTrue(all(e[2].startswith("Basic ") for e in auth_requests))
+                objects_seen = [e for e in events if e[0] == "object"]
+                if cross_origin:
+                    self.assertEqual(len(objects_seen), 2 if proxied else 1)
+                    self.assertTrue(all(e[2] is None for e in objects_seen))
+                    self.assertTrue(all("signature=DUMMY-SIGNED-QUERY" in e[1] for e in objects_seen))
                 else:
-                    result = check.verify_seed(seed_http, cfg, {"username": "dummy", "password": "dummy"})
-                    self.assertTrue(result["passed"])
-                    self.assertEqual(result["proxy_checked"], proxied)
-                    objects_seen = [e for e in events if e[0] == "object"]
-                    if cross_origin:
-                        self.assertEqual(len(objects_seen), 2 if proxied else 1)
-                        self.assertTrue(all(e[2] is None for e in objects_seen))
-                        self.assertTrue(all("signature=DUMMY-SIGNED-QUERY" in e[1] for e in objects_seen))
-                    else:
-                        completed = [e for e in events if e[1] == "/objects/blob"]
-                        self.assertTrue(completed)
-                        self.assertTrue(all(e[2] == "Bearer " + dummy for e in completed))
+                    completed = [e for e in events if e[1] == "/objects/blob"]
+                    self.assertTrue(completed)
+                    self.assertTrue(all(e[2] == "Bearer " + dummy for e in completed))
 
     def test_same_origin_direct_and_proxy_redirects(self):
         for proxy in [False, True]:
@@ -155,8 +146,16 @@ class RedirectTests(unittest.TestCase):
                 self.verify(proxy, cross_origin=True)
 
     def test_redirect_loop_and_limit_fail(self):
-        self.verify(False, loop=True)
-        self.verify(False, limit=True)
+        for loop in [True, False]:
+            class HTTP:
+                calls = 0
+                def get(self, url, *args, **kwargs):
+                    self.calls += 1
+                    return 307, {"location": url if loop else f"/next/{self.calls}"}, b""
+            http = HTTP()
+            with self.assertRaisesRegex(check.CheckFailed, "redirect (loop|limit)"):
+                check.read_bootstrap(http, {}, "http://registry.test/blob", {})
+            self.assertLessEqual(http.calls, check.MAX_REDIRECTS + 1)
 
     def test_cross_origin_secrets_never_return_and_ca_is_per_origin(self):
         calls = []

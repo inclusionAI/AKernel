@@ -77,7 +77,8 @@ content bytes were received. Responses and bootstrap files are capped at 1 MiB,
 decompressed tar archives at 2 MiB, with at most two seeds checked concurrently.
 Keep the dedicated probe small; the default 256 MiB Job is not intended to
 inspect arbitrary task-image bootstraps. Oversized probes fail without advancing
-success state. A peak-RSS regression exercises the allowed bounds.
+success state. Size and decompression boundary regressions run in CI; peak-RSS
+qualification is a separate environment-dependent check.
 
 Only a complete all-seed success advances `<release>-state`. A failed Job
 logs redacted per-seed results and exits nonzero. Subsequent scheduled Jobs

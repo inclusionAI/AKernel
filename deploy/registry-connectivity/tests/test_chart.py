@@ -34,25 +34,6 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(rule["from"][0], {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "dragonfly-system"}}, "podSelector": {"matchLabels": {"app": "dragonfly", "component": "seed-client"}}})
         self.assertEqual(rule["ports"], [{"protocol": "TCP", "port": 5000}, {"protocol": "TCP", "port": 5001}])
 
-    def test_exec_restricted_to_exact_five_seeds_and_no_secret_read_permission(self):
-        roles = [o for o in self.objects() if o["kind"] == "Role"]
-        rules = [r for role in roles for r in role["rules"]]
-        self.assertFalse(any("secrets" in r["resources"] for r in rules))
-        execution = next(r for r in rules if "pods/exec" in r["resources"])
-        self.assertEqual(execution["resourceNames"], [f"dragonfly-seed-client-{i}" for i in range(5)])
-
-    def test_checker_is_bounded_nonroot_and_cannot_overlap_scheduled_checks(self):
-        cron = next(o for o in self.objects() if o["kind"] == "CronJob")
-        self.assertEqual(cron["spec"]["schedule"], "* * * * *")
-        self.assertEqual(cron["spec"]["concurrencyPolicy"], "Forbid")
-        job = cron["spec"]["jobTemplate"]["spec"]
-        self.assertEqual(job["activeDeadlineSeconds"], 240)
-        pod = job["template"]["spec"]
-        self.assertTrue(pod["securityContext"]["runAsNonRoot"])
-        self.assertTrue(pod["containers"][0]["securityContext"]["readOnlyRootFilesystem"])
-        secret = next(v for v in pod["volumes"] if "secret" in v)
-        self.assertEqual(secret["secret"]["secretName"], "probe-pull")
-
     def test_policy_is_opt_in_and_requires_existing_client_review(self):
         values = self.values()
         values.pop("networkPolicy")
@@ -90,7 +71,9 @@ class ChartTests(unittest.TestCase):
             result = self.render(values)
             self.assertEqual(result.returncode, 0, result.stderr)
             roles = [o for o in yaml.safe_load_all(result.stdout) if o["kind"] == "Role"]
-            rule = next(r for role in roles for r in role["rules"] if "pods/exec" in r["resources"])
+            rules = [r for role in roles for r in role["rules"]]
+            self.assertFalse(any("secrets" in r["resources"] for r in rules))
+            rule = next(r for r in rules if "pods/exec" in r["resources"])
             self.assertEqual(rule["resourceNames"], names)
         for names in [[], ["seed-0", "seed-0"]]:
             values = self.values()

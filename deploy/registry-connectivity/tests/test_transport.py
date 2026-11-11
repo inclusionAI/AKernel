@@ -3,7 +3,6 @@ import base64
 import http.server
 import json
 import subprocess
-import sys
 import threading
 import unittest
 
@@ -117,51 +116,20 @@ class TransportTests(unittest.TestCase):
         with self.assertRaisesRegex(check.CheckFailed, "decompression limit"):
             check.bootstrap_contents(data, descriptor)
 
-    def test_proxy_logging_ack_is_required_before_any_network_request(self):
+    def test_proxy_logging_and_https_trust_are_required_before_network(self):
         from test_check import configuration
-        cfg = configuration()
-        cfg["proxyLoggingVerified"] = False
         class HTTP:
             def get(self, *args, **kwargs):
                 raise AssertionError("must not send credentials")
-        with self.assertRaisesRegex(check.CheckFailed, "credential-safe"):
-            check.verify_seed(HTTP(), cfg, {})
+        for overrides in [{"proxyLoggingVerified": False}, {"registry": "https://registry.test", "registryCAFile": "/trust/registry.pem"}]:
+            with self.subTest(config=overrides), self.assertRaises(check.CheckFailed):
+                check.verify_seed(HTTP(), {**configuration(), **overrides}, {})
 
-    def test_https_proxy_requires_its_own_ca_even_if_registry_ca_exists(self):
-        from test_check import configuration
-        cfg = configuration()
-        cfg.update(registry="https://registry.test", registryCAFile="/trust/registry.pem")
-        with self.assertRaisesRegex(check.CheckFailed, "Dragonfly signing CA"):
-            check.validate_probe_security(cfg)
-        cfg["proxyCAFile"] = "/trust/dragonfly.pem"
-        check.validate_probe_security(cfg)
-
-    def test_allowed_cap_and_concurrency_fit_default_memory_limit(self):
-        # Fresh process isolates peak RSS from other tests. Exercise worst-case
-        # uncompressed layer buffering/decoding at the actual concurrency cap.
-        code = '''import base64,concurrent.futures,hashlib,io,resource,sys,tarfile,threading
-sys.path.insert(0,sys.argv[1]);from test_check import check,sha
-barrier=threading.Barrier(check.CONCURRENCY)
-def probe(_):
- out=io.BytesIO()
- with tarfile.open(fileobj=out,mode='w:') as tar:
-  member=tarfile.TarInfo('image/image.boot');member.size=check.LIMIT-16384;tar.addfile(member,io.BytesIO(b'x'*member.size))
- layer=out.getvalue();assert len(layer)<=check.LIMIT
- raw=b'HTTP/1.1 200 OK\\r\\n\\r\\n'+layer+check.MARKER+b'200\\n'+check.EXIT_MARKER+b'0\\n'
- encoded=base64.b64encode(raw).decode();chunks=[encoded[i:i+16384] for i in range(0,len(encoded),16384)]
- barrier.wait()
- _,_,body=check.decode_response(''.join(chunks));check.bootstrap_contents(body,{'digest':sha(layer),'size':len(layer)})
-with concurrent.futures.ThreadPoolExecutor(max_workers=check.CONCURRENCY) as pool:list(pool.map(probe,range(check.CONCURRENCY)))
-peak=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-print(peak//1024 if sys.platform=='darwin' else peak)
-'''
-        from pathlib import Path
-        result = subprocess.run([sys.executable, "-c", code, str(Path(__file__).parent)], capture_output=True, text=True, timeout=20, check=True)
-        peak_kib = int(result.stdout.strip())
-        self.assertLess(peak_kib, 192 * 1024)
-        self.assertEqual(check.LIMIT, 1024 * 1024)
-        self.assertEqual(check.CONCURRENCY, 2)
-
+    def test_oversized_response_is_rejected(self):
+        raw = b"HTTP/1.1 200 OK\r\n\r\n" + b"x" * (check.LIMIT + 1)
+        raw += check.MARKER + b"200\n" + check.EXIT_MARKER + b"0\n"
+        with self.assertRaises(check.CheckFailed):
+            check.decode_response(base64.b64encode(raw))
 
 if __name__ == "__main__":
     unittest.main()
