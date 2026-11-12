@@ -61,9 +61,13 @@ runs:
         import adx_environment
         import akernel_sdk
         from akernel_sdk import ComposeProject, DockerRuntime, ServiceHandle, ServiceProcessHandle
+        from akernel_sdk import BackendOperationError, InsufficientResourcesError, SchedulingError
         from importlib.resources import files
 
         assert all(callable(value) for value in (ComposeProject, DockerRuntime, ServiceHandle, ServiceProcessHandle))
+        assert issubclass(InsufficientResourcesError, SchedulingError)
+        assert issubclass(SchedulingError, BackendOperationError)
+        assert SchedulingError("smoke").reasons == ("unknown",)
         for helper in ("_image_bridge_guest.py", "_docker_network_guest.py", "_service_process_guest.py"):
             assert files("akernel_sdk").joinpath(helper).read_text()
 

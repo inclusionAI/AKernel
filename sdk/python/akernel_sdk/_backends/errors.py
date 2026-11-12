@@ -16,6 +16,8 @@
 
 from typing import TYPE_CHECKING, Any
 
+from ._scheduling import explain_scheduling_failure
+
 if TYPE_CHECKING:
     from ..types import CommandResult
 
@@ -109,6 +111,43 @@ class RateLimitException(BackendOperationError):
 
 class ServiceBusyException(BackendOperationError):
     """The service is temporarily unavailable; inspect retry/outcome context."""
+
+
+class SchedulingError(BackendOperationError):
+    """A service-confirmed scheduling cancellation with placement diagnostics.
+
+    ``reasons`` contains positive rejection keys when no worker is eligible,
+    ``queue_timeout`` when workers are eligible, or ``unknown`` for unusable
+    diagnostics. ``resource_shortages`` lists contributing CPU/memory/disk
+    dimensions; other constraints may also contribute. ``suggestions`` offers
+    recovery advice without authorizing a retry or changing service context.
+    Original diagnostics remain in ``scheduling_failure`` and the native error
+    in ``__cause__``. Rejection counts can overlap and are not a node total.
+    """
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        """Reported rejection keys, or the queue_timeout/unknown classification."""
+        return explain_scheduling_failure(self.scheduling_failure).reasons
+
+    @property
+    def resource_shortages(self) -> tuple[str, ...]:
+        """Contributing resources: cpu, memory and/or disk; empty when unconfirmed."""
+        return explain_scheduling_failure(self.scheduling_failure).resource_shortages
+
+    @property
+    def suggestions(self) -> tuple[str, ...]:
+        """Actions to consider before deliberately creating a new request."""
+        return explain_scheduling_failure(self.scheduling_failure).suggestions
+
+
+class InsufficientResourcesError(SchedulingError):
+    """No worker is eligible and CPU, memory or disk shortages contribute.
+
+    Runtime, placement or volume constraints may also contribute; inspect
+    ``reasons`` and ``suggestions`` rather than assuming resources are the
+    sole blocker. The snapshot does not predict capacity after scaling.
+    """
 
 
 class CommandExitException(BackendOperationError):

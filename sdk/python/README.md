@@ -1469,6 +1469,79 @@ original identity when querying or retrying. Do not infer execution or cleanup
 from a timeout message. `status_code` describes the service failure (including
 an SSE final event's error code); it need not equal the stream's HTTP status.
 
+Confirmed scheduling cancellations with structured diagnostics raise
+`SchedulingError`, a subclass of `BackendOperationError`. If no worker is
+eligible and CPU, memory or disk shortages contribute, the exception is the
+more specific `InsufficientResourcesError`, which also subclasses
+`SchedulingError`. Existing `except BackendOperationError` handlers still work.
+Both expose:
+
+- `reasons`: a tuple of positive worker rejection keys from the service, sorted
+  by key. Counts can overlap; their sum is not a worker count. Unknown future
+  rejection keys are retained.
+- `resource_shortages`: contributing resource names (`"cpu"`, `"memory"`,
+  `"disk"`), in that order. Other constraints can also contribute.
+- `suggestions`: a tuple of concrete recovery suggestions. The exception message
+  includes these suggestions, readable requested resources, and rejection counts.
+
+```python
+from akernel_sdk import InsufficientResourcesError, Sandbox, SchedulingError
+
+try:
+    sandbox = Sandbox(cpu=2000, memory=8192, storage_mb=20480)
+except InsufficientResourcesError as error:
+    print("Unavailable resources:", ", ".join(error.resource_shortages))
+    print(error)  # Summary and actions; this does not retry the request.
+    print("All placement blockers:", error.reasons)
+except SchedulingError as error:
+    print(error)  # Runtime, devices, placement, volumes, workers, or queue budget.
+else:
+    sandbox.kill()
+```
+
+| Reported blocker | Action to consider |
+| --- | --- |
+| `insufficient_cpu`, `insufficient_memory`, `insufficient_disk` | Reduce the request, release idle sandboxes, or add suitable worker capacity. |
+| `runtime_fit`, `device_fit` | Select a supported runtime or available accelerator model/count, or add compatible workers. |
+| `node_available`, `no_workers` | Ask the operator to check worker health/registration and register healthy workers. |
+| `node_affinity`, `placement_groups`, `environment_affinity`, `topology_spread` | Adjust placement constraints or add workers that satisfy them. |
+| `waiting_for_volume`, `volume_topology` | Wait for the volume to be released or select workers with access to its storage. |
+
+For example, a mixed rejection produces a message like:
+
+```text
+create sandbox failed: the cluster has insufficient resources for this request;
+no worker satisfies all resource and placement requirements.
+Requested: 2 CPU, 8 GiB memory, 20 GiB disk.
+Worker rejections: insufficient memory (14), unsupported runtime (1).
+Suggestions: Reduce the memory request, release idle sandboxes, or add workers
+with more available memory. Select a supported runtime or add workers that
+advertise the requested runtime.
+```
+
+When the snapshot still has eligible workers, `reasons` is `("queue_timeout",)`
+and `resource_shortages` is empty: the queue budget expired, but resource shortage
+is not established. Missing or unusable diagnostic fields produce
+`reasons=("unknown",)` and retain the raw diagnostic for investigation. Older
+services without a structured diagnosis keep their existing exception behavior.
+Plain transport timeouts, initialization failures, backend rate limits and
+uncertain outcomes do not become scheduling errors just because their message
+mentions resources or a deadline.
+
+The service's `code`, `retry`, `outcome`, IDs and original `scheduling_failure`
+are preserved; the native message remains in `__cause__`. No additional attempt,
+backoff or queue budget is introduced. `retry="never"` means this queue wait is
+finished; after addressing the blockers, callers may deliberately start a new
+create request. Unknown outcomes keep their original same-operation semantics.
+
+Capacity and available maxima in the raw diagnostic span all workers, including
+workers rejected by runtime or placement filters. Each resource maximum can
+come from a different worker. They do not establish that a suitable worker can
+run the request, or reliably distinguish temporary occupancy from an oversized
+request on compatible workers. The default summary therefore presents the
+requested resources and blockers without presenting those maxima as usable
+capacity. Diagnostics describe the expiry snapshot, not capacity after scaling.
+
 
 ### Client-managed Docker/Compose runtime
 

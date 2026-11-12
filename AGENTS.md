@@ -725,6 +725,12 @@ the pinned native PermissionDenied exception without inventing a missing status.
 `BackendOperationError` preserves optional structured service fields and the
 original cause; missing context remains `None`. Keep retry/outcome semantics
 backend-owned and document public error fields in `sdk/python/README.md`.
+Confirmed cancelled queue requests with structured diagnostics use
+`SchedulingError` and, when scalar shortages contribute with no eligible worker,
+`InsufficientResourcesError`. Preserve raw diagnostics and native causes while
+explaining all blockers; eligible workers or unusable diagnostics must not be
+presented as confirmed resource shortages. Keep classification independent of
+retry policy and do not infer usable capacity from global per-dimension maxima.
 
 Keep sandbox cleanup explicit through context managers or `kill()`, with
 observable, retryable deletion failures and workload exceptions preserved on
