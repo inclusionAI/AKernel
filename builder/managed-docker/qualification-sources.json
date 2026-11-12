@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "stage": "source-preview",
-  "scope": "Review/build provenance only; deployment versions and load results require separate runtime receipts.",
+  "scope": "Build provenance for the managed Docker runtime.",
   "upstream_baselines": {
     "akernel": {
       "branch": "develop",
@@ -35,11 +35,11 @@
     "version": "0.1.0rc4",
     "publication_commit": "6a4c6d872edd6596361da3cb0e27ca55c3f5e1b0",
     "package_source_commit": "e611b9e4a83dcd6da5346bd17c2f6af28e244952",
-    "note": "Dependency resolution uses the published package pinned in sdk/python/pyproject.toml. Harbor client overrides and existing cluster qualification apply only to their separately recorded source and image revisions."
+    "note": "The package index dependency is pinned in sdk/python/pyproject.toml."
   },
   "afs_enabled": false,
   "envd_enabled": false,
-  "publication_requirement": "The default amd64 platform/Execd URL and checksum pairs select the same official Agent DX daily build and matching static Execd bytes. Verify architecture and complete manifests before packaging. This managed-runtime integration remains a preview; official dependency publication does not establish completed cluster qualification. Sandboxd is fixed to official main after merged #101 (including R1 checkpoint-lease preflight), #102, and #105 (image PATH precedence over a request fallback); gVisor uses the organization-published complete .4 bundle. The native Python SDK dependency remains index-resolved rc4; separately pinned Harbor source-client qualification is recorded outside this package.",
+  "publication_requirement": "The AMD64 platform and Execd archives must come from the same Agent DX build. Verify their SHA-256 checksums, manifests, and ELF architecture before packaging.",
   "agent_dx_platform_artifacts": {
     "source_commit": "d86a2ee9b9dfbf08d0655197ae20e7bb3e1f41a3",
     "publication": "https://buildkite.com/agent-dx/agent-dx/builds/271",
@@ -47,17 +47,6 @@
     "platform_sha256": "79a7288851cd7b3e440ffa8bbb1dd170f4ddfca26914e5269fff4aecc9289827",
     "execd_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261112132215-d86a2ee9b9df/linux/amd64/adx-execd.tar.gz",
     "execd_sha256": "12f001fd6753c2c7ab2d6e0e5d86d789550bc0b68ea73a940e3971d959066543",
-    "status": "Official OBS daily artifacts of merged upstream master. Complete manifests, source, architecture and matching static Execd bytes verified; cluster qualification remains separate."
-  },
-  "integrated_upstream_changes": {
-    "sandboxd": {
-      "source_commit": "d23687d62ef0afd643b4028aedbcbc0e8bd346dc",
-      "merged_pull_requests": [
-        "https://github.com/inclusionAI/sandboxd/pull/101",
-        "https://github.com/inclusionAI/sandboxd/pull/102"
-      ],
-      "includes_checkpoint_lease_preflight_review_fix": true,
-      "equivalent_qualified_candidate_tree": "bdc0b1f10c2a269fe59c13230346292f080e1b18"
-    }
+    "status": "Verified manifest contents, ELF architecture, and matching static Execd binaries."
   }
 }
