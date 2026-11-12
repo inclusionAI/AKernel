@@ -153,6 +153,19 @@ class SchedulingErrorTest(unittest.TestCase):
         self.assertIn("schedule_timeout", " ".join(error.suggestions))
         self.assertNotIn("insufficient memory", str(error))
 
+    def test_zero_eligible_workers_without_rejections_remains_unexplained(self):
+        details = diagnosis(nodeCount=15, eligibleNodes=0, rejections={})
+        error = self.convert(details)
+        self.assertIsInstance(error, SchedulingError)
+        self.assertNotIsInstance(error, InsufficientResourcesError)
+        self.assertEqual(error.reasons, ("unknown",))
+        self.assertEqual(error.resource_shortages, ())
+        self.assertIs(error.scheduling_failure, details)
+        self.assertIn("without a usable placement diagnosis", str(error))
+        self.assertIn("cluster operator", " ".join(error.suggestions))
+        self.assertNotIn("no workers", str(error))
+        self.assertEqual((error.retry, error.outcome), ("never", "not_started"))
+
     def test_incomplete_or_malformed_diagnoses_do_not_invent_shortages(self):
         for details in (
             {},

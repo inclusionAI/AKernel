@@ -1474,7 +1474,29 @@ Confirmed scheduling cancellations with structured diagnostics raise
 eligible and CPU, memory or disk shortages contribute, the exception is the
 more specific `InsufficientResourcesError`, which also subclasses
 `SchedulingError`. Existing `except BackendOperationError` handlers still work.
-Both expose:
+
+The service's `error.schedulingFailure` object is retained as
+`error.scheduling_failure`, with its original field names and values:
+
+| Field | Meaning |
+| --- | --- |
+| `snapshotRevision` | Revision of the scheduling snapshot at queue expiry; retained for diagnostics. |
+| `nodeCount` | Number of workers known to the scheduler. Zero establishes `no_workers`. |
+| `eligibleNodes` | Number passing all hard placement checks in that snapshot. A positive value produces `queue_timeout`. |
+| `requested` | Requested resources: `cpu_millis` in millicores, `memory_bytes` and `disk_bytes` in bytes. |
+| `maxCapacity`, `maxAvailable` | Resource objects with the same keys/units. Maxima span workers; available values already subtract reservations. |
+| `rejections` | Map of rejection keys to worker counts. Counts may overlap; zero counts do not establish blockers. |
+
+Counters and resource amounts use unsigned 64-bit integers; booleans, negative
+values and numeric strings are not coerced into valid evidence. Missing or
+unusable eligibility data cannot establish a resource shortage; classification
+also requires valid positive resource-rejection counts. Additional fields and
+future rejection keys remain available in the original object.
+Keep schema extensions aligned with ADX's `platform/api/http/error-contract.md`;
+adding compatible-worker capacity diagnostics requires a service-side contract
+before the SDK can distinguish temporary occupancy from an oversized request.
+
+The scheduling exceptions expose:
 
 - `reasons`: a tuple of positive worker rejection keys from the service, sorted
   by key. Counts can overlap; their sum is not a worker count. Unknown future
@@ -1524,6 +1546,9 @@ and `resource_shortages` is empty: the queue budget expired, but resource shorta
 is not established. Missing or unusable diagnostic fields produce
 `reasons=("unknown",)` and retain the raw diagnostic for investigation. Older
 services without a structured diagnosis keep their existing exception behavior.
+In particular, `nodeCount > 0`, `eligibleNodes == 0` and an empty `rejections`
+map produce `unknown`: workers exist, but the snapshot does not explain the
+rejection. This case establishes neither `no_workers` nor a resource shortage.
 Plain transport timeouts, initialization failures, backend rate limits and
 uncertain outcomes do not become scheduling errors just because their message
 mentions resources or a deadline.
