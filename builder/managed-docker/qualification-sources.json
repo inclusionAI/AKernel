@@ -5,20 +5,20 @@
   "upstream_baselines": {
     "akernel": {
       "branch": "develop",
-      "commit": "b58153276357a18d3cc0db28cdb10cb3a8072208"
+      "commit": "3e14027c3ea3651055260f47c19099ad4de811ee"
     },
     "sandboxd": {
       "branch": "main",
-      "commit": "03ea0a4db807c1d5dac4b11d02f2ec238083a8ae"
+      "commit": "63d4b2e09a270793051f7acc8b222fbd89885c30"
     },
     "agent_dx": {
       "branch": "master",
-      "commit": "3a444b3ea0ceaf3a2df9039cef16b18ecfcd2007"
+      "commit": "d86a2ee9b9dfbf08d0655197ae20e7bb3e1f41a3"
     }
   },
   "candidate_gitlinks": {
-    "sandboxd": "03ea0a4db807c1d5dac4b11d02f2ec238083a8ae",
-    "agent_dx": "3a444b3ea0ceaf3a2df9039cef16b18ecfcd2007"
+    "sandboxd": "63d4b2e09a270793051f7acc8b222fbd89885c30",
+    "agent_dx": "d86a2ee9b9dfbf08d0655197ae20e7bb3e1f41a3"
   },
   "pinned_runtime_artifacts": {
     "gvisor": {
@@ -26,8 +26,8 @@
       "release": "release-20261012.0-akernel.4"
     },
     "distill_fs": {
-      "source": "90227ac3a2f9fb919cfabc3e346b560ecae193e7",
-      "release": "v0.1.3"
+      "source": "c153e4c88b4efda972c52f045829929bb5003719",
+      "release": "v0.1.4"
     }
   },
   "native_adx_sdk": {
@@ -39,14 +39,14 @@
   },
   "afs_enabled": false,
   "envd_enabled": false,
-  "publication_requirement": "The default amd64 platform/Execd URL and checksum pairs select the same official Agent DX daily build and matching static Execd bytes. Verify architecture and complete manifests before packaging. This managed-runtime integration remains a preview; official dependency publication does not establish completed cluster qualification. Sandboxd is fixed to official main after merged #101 (including R1 checkpoint-lease preflight) and #102; gVisor uses the organization-published complete .4 bundle. The native Python SDK dependency remains index-resolved rc4; separately pinned Harbor source-client qualification is recorded outside this package.",
+  "publication_requirement": "The default amd64 platform/Execd URL and checksum pairs select the same official Agent DX daily build and matching static Execd bytes. Verify architecture and complete manifests before packaging. This managed-runtime integration remains a preview; official dependency publication does not establish completed cluster qualification. Sandboxd is fixed to official main after merged #101 (including R1 checkpoint-lease preflight), #102, and #105 (image PATH precedence over a request fallback); gVisor uses the organization-published complete .4 bundle. The native Python SDK dependency remains index-resolved rc4; separately pinned Harbor source-client qualification is recorded outside this package.",
   "agent_dx_platform_artifacts": {
-    "source_commit": "3a444b3ea0ceaf3a2df9039cef16b18ecfcd2007",
-    "publication": "https://buildkite.com/agent-dx/agent-dx/builds/270",
-    "platform_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261111093821-3a444b3ea0ce/linux/amd64/adx-release.tar.gz",
-    "platform_sha256": "7bfae3c9aa5bc6f4c81f9b9c01a916c4d45535efb1dd2fbe2d27c5b5b7f002c6",
-    "execd_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261111093821-3a444b3ea0ce/linux/amd64/adx-execd.tar.gz",
-    "execd_sha256": "cb541f263294227723e6cf706d95ac2ddc8b42991df4b52225526e4b36da3c5f",
+    "source_commit": "d86a2ee9b9dfbf08d0655197ae20e7bb3e1f41a3",
+    "publication": "https://buildkite.com/agent-dx/agent-dx/builds/271",
+    "platform_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261112132215-d86a2ee9b9df/linux/amd64/adx-release.tar.gz",
+    "platform_sha256": "79a7288851cd7b3e440ffa8bbb1dd170f4ddfca26914e5269fff4aecc9289827",
+    "execd_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261112132215-d86a2ee9b9df/linux/amd64/adx-execd.tar.gz",
+    "execd_sha256": "12f001fd6753c2c7ab2d6e0e5d86d789550bc0b68ea73a940e3971d959066543",
     "status": "Official OBS daily artifacts of merged upstream master. Complete manifests, source, architecture and matching static Execd bytes verified; cluster qualification remains separate."
   },
   "integrated_upstream_changes": {
