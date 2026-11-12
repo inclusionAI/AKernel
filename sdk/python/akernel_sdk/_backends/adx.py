@@ -52,6 +52,7 @@ from ..types import (
     SnapshotInfo,
     TrafficPolicy,
 )
+from ._scheduling import explain_scheduling_failure
 from .base import (
     Backend,
     BackendConfig,
@@ -66,10 +67,12 @@ from .base import (
 from .errors import (
     AuthenticationException,
     BackendOperationError,
+    InsufficientResourcesError,
     NotFoundException,
     PermissionDeniedException,
     RateLimitException,
     SandboxNotFoundException,
+    SchedulingError,
     ServiceBusyException,
     TimeoutException,
     UnsupportedBackendFeatureError,
@@ -292,6 +295,7 @@ def _convert_error(operation: str, error: Exception) -> BackendOperationError:
             TimeoutException,
             RateLimitException,
             ServiceBusyException,
+            SchedulingError,
         ),
     ):
         error_type = type(error)
@@ -299,8 +303,28 @@ def _convert_error(operation: str, error: Exception) -> BackendOperationError:
         error_type = NotFoundException
     elif isinstance(error, (TimeoutError, httpx.TimeoutException)):
         error_type = TimeoutException
+    scheduling_failure = getattr(error, "scheduling_failure", None)
+    if (
+        isinstance(scheduling_failure, dict)
+        and getattr(error, "code", None) == "DEADLINE_EXCEEDED"
+        and getattr(error, "retry", None) == "never"
+        and getattr(error, "outcome", None) == "not_started"
+        and status in (None, 504)
+    ):
+        explanation = explain_scheduling_failure(scheduling_failure)
+        error_type = (
+            InsufficientResourcesError
+            if explanation.resource_shortages
+            else SchedulingError
+        )
+    message = f"{operation} failed: {error}"
+    if issubclass(error_type, SchedulingError):
+        explanation = explain_scheduling_failure(scheduling_failure)
+        message = f"{operation} failed: {explanation.message}"
+        if explanation.suggestions:
+            message += " Suggestions: " + " ".join(explanation.suggestions)
     return error_type(
-        f"{operation} failed: {error}",
+        message,
         code=getattr(error, "code", None),
         retry=getattr(error, "retry", None),
         outcome=getattr(error, "outcome", None),

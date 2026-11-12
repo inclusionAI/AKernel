@@ -40,6 +40,9 @@ from typing import get_type_hints
 os.environ.pop('YR_HTTP_CONNECTION_NUM', None)
 import akernel_sdk
 import akernel_sdk.cli
+from akernel_sdk import InsufficientResourcesError, SchedulingError
+assert issubclass(InsufficientResourcesError, SchedulingError)
+assert 'akernel_sdk._backends.adx' not in sys.modules
 assert 'yr' not in sys.modules
 assert 'yr_sandbox' not in sys.modules
 assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
@@ -104,6 +107,8 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
                 "BackendNotInstalledError",
                 "UnsupportedBackendFeatureError",
                 "BackendOperationError",
+                "SchedulingError",
+                "InsufficientResourcesError",
                 "AuthenticationException",
                 "PermissionDeniedException",
                 "NotFoundException",
