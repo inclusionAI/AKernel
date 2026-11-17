@@ -340,6 +340,21 @@ class ComposeProject:
             or self._startup_attempted
         ):
             raise RuntimeError("Compose runtime startup is fresh-only")
+        if self._publication is not None:
+            expected = self._publication._images._config
+            actual = getattr(type(sandbox), "_bound_config", None)
+            if actual is None or (
+                actual.api_endpoint.base_url(),
+                actual.token,
+                actual.verify_tls,
+            ) != (
+                expected.api_endpoint.base_url(),
+                expected.token,
+                expected.verify_tls,
+            ):
+                raise ValueError(
+                    "Managed image ownership requires a Sandbox from the same Client"
+                )
         self._startup_attempted = True
         self._runtime.start(sandbox, network=self._descriptor["network"])
         self._sandbox = sandbox

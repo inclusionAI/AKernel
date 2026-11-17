@@ -175,7 +175,8 @@ class ManagedImages:
     def __init__(
         self, config: BackendConfig | None = None, *, tenant: str | None = None
     ):
-        self._config = config
+        # Handles must never follow a later environment switch into another cluster.
+        self._config = config if config is not None else _config_from_env()
         self._tenant = tenant
 
     def _request(
@@ -186,7 +187,7 @@ class ManagedImages:
         *,
         params: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        config = self._config or _config_from_env()
+        config = self._config
         if identity:
             _id(identity)
         path = "/api/environment/v1/managed-images" + (

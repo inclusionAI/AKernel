@@ -706,14 +706,24 @@ configure_network
     def verify(self):
         self.phase("build retained Nydus survivor")
         first, first_hash = self.context("single-context")
-        survivor = build_image(
-            first,
-            profile="qualification",
-            client=self.client,
-            retention=ImageRetention(),
-            request_id=self.run_id + "-survivor",
-            timeout=600,
-        ).managed_image
+        # Exercise the default build entry point as well as explicit Client calls.
+        connection = self.connection_environment()
+        previous = {key: os.environ.get(key) for key in connection}
+        try:
+            os.environ.update(connection)
+            survivor = build_image(
+                first,
+                profile="qualification",
+                retention=ImageRetention(),
+                request_id=self.run_id + "-survivor",
+                timeout=600,
+            ).managed_image
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
         self.publications.append(survivor.id)
         single = self.exercise(first, first_hash)
         second, second_hash = self.context("compose-context")
@@ -819,13 +829,7 @@ configure_network
             credentials,
             {"username": self.registry_auth[0], "password": self.registry_auth[1]},
         )
-        environment = {
-            **os.environ,
-            "AKERNEL_SERVER_ADDRESS": f"https://127.0.0.1:{self.control_port}",
-            "AKERNEL_GATEWAY_ADDRESS": f"https://127.0.0.1:{self.control_port}",
-            "AKERNEL_TOKEN": (self.data / "token").read_text().strip(),
-            "AKERNEL_VERIFY_TLS": "false",
-        }
+        environment = {**os.environ, **self.connection_environment()}
         result = subprocess.run(
             [
                 sys.executable,
@@ -845,6 +849,14 @@ configure_network
             env=environment,
         )
         return json.loads(result.stdout)
+
+    def connection_environment(self):
+        return {
+            "AKERNEL_SERVER_ADDRESS": f"https://127.0.0.1:{self.control_port}",
+            "AKERNEL_GATEWAY_ADDRESS": f"https://127.0.0.1:{self.control_port}",
+            "AKERNEL_TOKEN": (self.data / "token").read_text().strip(),
+            "AKERNEL_VERIFY_TLS": "false",
+        }
 
     def cleanup(self):
         errors = []

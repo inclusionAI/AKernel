@@ -9,7 +9,14 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from akernel_sdk import ImageRetention, ManagedImage, ManagedImages, build_image
+from akernel_sdk import (
+    ComposeProject,
+    DockerRuntime,
+    ImageRetention,
+    ManagedImage,
+    ManagedImages,
+    build_image,
+)
 from akernel_sdk._addresses import Endpoint
 from akernel_sdk._backends.base import BackendConfig
 from akernel_sdk._backends.errors import BackendOperationError
@@ -29,6 +36,36 @@ def view(state="preparing"):
 
 
 class ManagedImagesTest(unittest.TestCase):
+    def test_environment_connection_stays_bound_to_acquired_handles(self):
+        first = Endpoint("cluster-a.test", 443, "https", False)
+        second = Endpoint("cluster-b.test", 443, "https", False)
+        config_a = BackendConfig(first, first, "fixture-a", False)
+        config_b = BackendConfig(second, second, "fixture-b", False)
+        captured = []
+
+        def handle(request):
+            captured.append(request)
+            return httpx.Response(200, json=view())
+
+        original = httpx.Client
+        with (
+            patch(
+                "akernel_sdk._managed_images._config_from_env",
+                side_effect=[config_a, config_b, config_b],
+            ) as configuration,
+            patch(
+                "akernel_sdk._managed_images.httpx.Client",
+                side_effect=lambda **kw: original(
+                    transport=httpx.MockTransport(handle), **kw
+                ),
+            ),
+        ):
+            image = ManagedImages().begin("same-logical-request", ImageRetention())
+            hold = image.retain("reader")
+            hold.release()
+        self.assertEqual(configuration.call_count, 1)
+        self.assertEqual({request.url.host for request in captured}, {"cluster-a.test"})
+
     def test_acquisition_handle_releases_its_own_lease(self):
         images = MagicMock()
         images._request.return_value = view()
@@ -82,8 +119,9 @@ class ManagedImagesTest(unittest.TestCase):
             (Path(directory) / "Dockerfile").write_text("FROM scratch\n")
             images = MagicMock()
             images.begin.return_value = ManagedImage(images, view("publishing"))
+            connection = MagicMock(images=images)
             with (
-                patch("akernel_sdk._managed_build.ManagedImages", return_value=images),
+                patch("akernel_sdk._client.Client", return_value=connection),
                 patch("akernel_sdk.sandbox.Sandbox") as factory,
             ):
                 with self.assertRaises(BackendOperationError) as caught:
@@ -94,6 +132,7 @@ class ManagedImagesTest(unittest.TestCase):
                         retention=ImageRetention.ephemeral(),
                     )
             factory.assert_not_called()
+            connection.Sandbox.assert_not_called()
             self.assertEqual(caught.exception.publication_id, IMAGE_ID)
 
     def test_registration_precedes_native_publication_and_cleanup_keeps_hold(self):
@@ -129,9 +168,10 @@ class ManagedImagesTest(unittest.TestCase):
                 return CommandResult(json.dumps(payload) if payload else "", "", 0)
 
             builder.commands.run.side_effect = run
+            connection = MagicMock(images=images)
+            connection.Sandbox.return_value = builder
             with (
-                patch("akernel_sdk._managed_build.ManagedImages", return_value=images),
-                patch("akernel_sdk.sandbox.Sandbox", return_value=builder) as factory,
+                patch("akernel_sdk._client.Client", return_value=connection) as factory,
             ):
                 result = build_image(
                     directory,
@@ -141,15 +181,68 @@ class ManagedImagesTest(unittest.TestCase):
                 )
             self.assertEqual(events, ["plan", "native-publish", "publish"])
             self.assertEqual(result.managed_image.id, IMAGE_ID)
+            factory.assert_called_once_with()
             self.assertEqual(
-                factory.call_args.kwargs["extra_config"]["managedImagePublications"],
+                connection.Sandbox.call_args.kwargs["extra_config"][
+                    "managedImagePublications"
+                ],
                 [IMAGE_ID],
             )
             builder.kill.assert_called_once()
             self.assertNotIn("release", events)
 
+    def test_compose_rejects_a_sandbox_from_another_connection_before_startup(self):
+        first = Endpoint("cluster-a.test", 443, "https", False)
+        second = Endpoint("cluster-b.test", 443, "https", False)
+        expected = BackendConfig(first, first, "fixture", False)
+        wrong = BackendConfig(second, second, "fixture", False)
+        with tempfile.TemporaryDirectory() as directory:
+            compose = Path(directory) / "compose.yaml"
+            compose.write_text("services:\n  app:\n    image: alpine\n")
+            images = ManagedImages(expected)
+            with patch.object(images, "_request", return_value=view()):
+                project = ComposeProject.prepare(
+                    directory,
+                    [compose],
+                    runtime=DockerRuntime(profile="fixture"),
+                    image_client=images,
+                    retention=ImageRetention(),
+                )
+            sandbox = type("OtherCluster", (), {"_bound_config": wrong})()
+            with patch.object(DockerRuntime, "start") as startup:
+                with self.assertRaisesRegex(ValueError, "same Client"):
+                    project.start_runtime(sandbox)
+            startup.assert_not_called()
+
+    def test_compose_matches_api_identity_even_with_a_different_gateway_route(self):
+        endpoint = Endpoint("cluster.test", 443, "https", False)
+        gateway = Endpoint("gateway.test", 443, "https", False)
+        expected = BackendConfig(endpoint, endpoint, "fixture", False)
+        formatted = Endpoint("cluster.test", 443, "https", True)
+        equivalent = BackendConfig(formatted, gateway, "fixture", False)
+        with tempfile.TemporaryDirectory() as directory:
+            compose = Path(directory) / "compose.yaml"
+            compose.write_text("services:\n  app:\n    image: alpine\n")
+            images = ManagedImages(expected)
+            with patch.object(images, "_request", return_value=view()):
+                project = ComposeProject.prepare(
+                    directory,
+                    [compose],
+                    runtime=DockerRuntime(profile="fixture"),
+                    image_client=images,
+                    retention=ImageRetention(),
+                )
+            sandbox = type("SameCluster", (), {"_bound_config": equivalent})()
+            with patch.object(
+                DockerRuntime, "start", side_effect=RuntimeError("transport reached")
+            ) as startup:
+                with self.assertRaisesRegex(RuntimeError, "transport reached"):
+                    project.start_runtime(sandbox)
+            startup.assert_called_once()
+
     def test_pagination_rejects_repeated_token(self):
-        images = ManagedImages()
+        endpoint = Endpoint("fixture.test", 443, "https", False)
+        images = ManagedImages(BackendConfig(endpoint, endpoint, "fixture", False))
         with patch.object(
             images, "_request", return_value={"items": [], "next_page_token": IMAGE_ID}
         ):

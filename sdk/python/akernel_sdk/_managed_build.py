@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._backends.errors import BackendOperationError, retain_failure_context
-from ._managed_images import ImageRetention, ManagedImage, ManagedImages
+from ._managed_images import ImageRetention, ManagedImage
 
 if TYPE_CHECKING:
     from ._client import Client
@@ -113,7 +113,11 @@ def build_image(
         raise ValueError("request_id requires explicit managed image retention")
     publication = None
     if retention is not None:
-        images = client.images if client is not None else ManagedImages()
+        if client is None:
+            from ._client import Client as ConnectionClient
+
+            client = ConnectionClient()
+        images = client.images
         identity = request_id or uuid.uuid4().hex
         try:
             publication = images.begin(identity, retention)

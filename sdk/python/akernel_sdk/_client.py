@@ -102,5 +102,6 @@ class Client:
         class BoundSandbox(Sandbox):
             _bound_backend = backend
             _bound_gateway = gateway
+            _bound_config = config
 
         self.Sandbox = BoundSandbox
