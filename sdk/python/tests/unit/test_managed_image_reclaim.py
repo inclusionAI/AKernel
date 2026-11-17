@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 spec = importlib.util.spec_from_file_location(
-    "owned_publication_reclaim", Path(__file__).with_name("reclaim.py")
+    "owned_publication_reclaim",
+    Path(__file__).resolve().parents[4] / "builder/managed-docker/reclaim.py",
 )
 reclaimer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reclaimer)
