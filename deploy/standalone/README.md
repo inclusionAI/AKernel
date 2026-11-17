@@ -105,6 +105,21 @@ Explicit `storage_mb` quotas for runsc and Firecracker use the bounded ext4 file
 
 Runsc and Firecracker checkpoints use ADX local-only snapshots under `/home/akernel/adx/checkpoints`. Workloads trigger anonymous recovery points through `POST /checkpoint` on `/run/akernel/execd.sock`, and the SDK can reload the same logical sandbox from its latest usable point. Recovery points follow the sandbox lifecycle and are not reusable SDK objects.
 
+### Opt-in checkpoint and restore controls
+
+Images containing sandboxd's bounded operation controls accept the following host environment overrides. Unset variables leave the template and runtime defaults unchanged. Integer values must be between 0 and 1024; zero retains sandboxd's historical fallback, including the shared single-operation pool unless an independent restore pool is configured. These limits do not replace node memory reservations or per-sandbox serialization.
+
+| Environment variable | sandboxd setting |
+|---|---|
+| `AKERNEL_FIRECRACKER_CHECKPOINT_CONCURRENCY` | `[plugin.resource].firecracker_checkpoint_concurrency` |
+| `AKERNEL_FIRECRACKER_RESTORE_CONCURRENCY` | `[plugin.resource].firecracker_restore_concurrency` |
+| `AKERNEL_RUNSC_CLI_GOMAXPROCS` | `[plugin.runtime.runsc].cli_gomaxprocs` |
+| `AKERNEL_RUNSC_EXTRA_ARGS` | `[plugin.runtime.runsc].extra_args`, a JSON array of strings |
+
+For example, an isolated qualification profile can select checkpoint concurrency 8, restore concurrency 32, CLI parallelism 2 and `AKERNEL_RUNSC_EXTRA_ARGS='["--net-raw=true","--restore-page-prefetch=false","--restore-map-unit=65536"]'`. These are test settings, not a recommended capacity limit. The page flags require the matching gVisor demand-restore bundle. Demand loading preserves private per-child RAM and does not implement cross-sandbox RAM sharing; a software mapping unit is not a THP page-size setting.
+
+`extra_args` replaces the runtime's default list: include `--net-raw=true` if needed. An unset variable preserves the default; `[]` deliberately clears it. CLI parallelism does not change Sentry scheduling or sandbox CPU quotas. Custom templates must retain the tuning markers under the corresponding sections; configuring the same key both in the template and through an override is rejected before replacing the generated config. The Helm equivalent is `node.config.sandboxd.runtimeTuning` with `firecrackerCheckpointConcurrency`, `firecrackerRestoreConcurrency`, `runscCliGomaxprocs`, and `runscExtraArgs`; null omits a setting.
+
 ### Authentication and registry inputs
 
 Public-image startup needs no registry or OSS credentials. For private backends, edit the applicable files under `deploy/standalone/config/` before launch:

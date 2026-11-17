@@ -14,6 +14,7 @@ data:
 
   sandboxd_config.toml: |
 {{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
+{{- $sandboxdConfig = include "akernel.sandboxdRuntimeTuning" (dict "config" $sandboxdConfig "tuning" .Values.node.config.sandboxd.runtimeTuning) }}
 {{- $firecrackerBackend := .Values.node.config.sandboxd.firecrackerBackend | default "kvm" }}
 {{- if not (has $firecrackerBackend (list "kvm" "pvm")) }}
 {{- fail "node.config.sandboxd.firecrackerBackend must be kvm or pvm" }}

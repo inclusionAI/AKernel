@@ -104,6 +104,28 @@ class StartConfigTest(unittest.TestCase):
         self.assertNotIn("kata", config["plugin.runtime.runtime_binary"])
         self.assertEqual(self.resolver_output.read_text(), self.resolver_content)
 
+    def test_runtime_controls_reach_the_generated_config(self):
+        result = self.generate(
+            AKERNEL_FIRECRACKER_CHECKPOINT_CONCURRENCY="8",
+            AKERNEL_FIRECRACKER_RESTORE_CONCURRENCY="32",
+            AKERNEL_RUNSC_CLI_GOMAXPROCS="2",
+            AKERNEL_RUNSC_EXTRA_ARGS='["--net-raw=true","--restore-page-prefetch=false"]',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = self.read_sections()
+        self.assertEqual(config["plugin.resource"]["firecracker_checkpoint_concurrency"], "8")
+        self.assertEqual(config["plugin.resource"]["firecracker_restore_concurrency"], "32")
+        self.assertEqual(config["plugin.runtime.runsc"]["cli_gomaxprocs"], "2")
+        self.assertIn("--restore-page-prefetch=false", config["plugin.runtime.runsc"]["extra_args"])
+
+    def test_bad_runtime_control_rejects_before_resolver_or_config_changes(self):
+        self.config_output.write_text("existing config\n")
+        result = self.generate(AKERNEL_FIRECRACKER_RESTORE_CONCURRENCY="1025")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("between 0 and 1024", result.stderr)
+        self.assertEqual(self.config_output.read_text(), "existing config\n")
+        self.assertFalse(self.resolver_output.exists())
+
     def test_direct_source_is_under_runtime_and_node_source_is_preserved(self):
         for backend in ("iptables", "bpfnat"):
             with self.subTest(backend=backend):

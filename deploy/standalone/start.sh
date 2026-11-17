@@ -316,6 +316,9 @@ configure_gpu() {
 
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
+    # Reject invalid tuning before resolver/config side effects. Unset controls
+    # preserve the original template, including runsc's nil extra_args default.
+    python3 "${SCRIPT_DIR}/configure-runtime.py" --check "${CONFIG_DIR}/sandboxd_config.toml"
     local sed_args=(
         -E
         -e "s/^[[:space:]]*nat_backend[[:space:]]*=.*/nat_backend=\"${AKERNEL_NAT_BACKEND}\"/"
@@ -396,6 +399,7 @@ configure_network() {
         )
     fi
     sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
+    python3 "${SCRIPT_DIR}/configure-runtime.py" "${config_tmp}"
     mv "${config_tmp}" "${SANDBOXD_CONFIG_FILE}"
 
     if [[ "${AKERNEL_ENABLE_RUNC}" == "true" ]]; then

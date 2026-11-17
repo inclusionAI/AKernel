@@ -20,6 +20,7 @@ enable_network_acl=true
 enable_local_dnat=true
 
 [plugin.resource]
+# AKERNEL_RUNTIME_RESOURCE_TUNING
 cgroup_cache_size=800
 pids_max=4096
 netns_cache_size=1000
@@ -46,6 +47,7 @@ overlay_tmpfs_size="10G"
 sync_output=true
 
 [plugin.runtime.runsc]
+# AKERNEL_RUNTIME_RUNSC_TUNING
 background_restore=true
 
 [plugin.runtime.basic_spec]

@@ -444,6 +444,14 @@ node:
       firecrackerBackend: kvm
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
+      # Opt-in controls require a sandboxd image containing restore controls.
+      # Null omits each setting. Zero retains the historical daemon default.
+      # extraArgs replaces runsc's args; include --net-raw=true when required.
+      runtimeTuning:
+        firecrackerCheckpointConcurrency: null
+        firecrackerRestoreConcurrency: null
+        runscCliGomaxprocs: null
+        runscExtraArgs: null
       config: |-
         rootDir="/home/akernel/sandboxd/root"
         storeDir="/home/akernel/sandboxd/store"
@@ -460,6 +468,7 @@ node:
         enable_network_acl=true
 
         [plugin.resource]
+        # AKERNEL_RUNTIME_RESOURCE_TUNING
         cgroup_cache_size=800
         pids_max=4096
         netns_cache_size=1000
@@ -483,6 +492,7 @@ node:
         sync_output=true
 
         [plugin.runtime.runsc]
+        # AKERNEL_RUNTIME_RUNSC_TUNING
         background_restore=true
 
         [plugin.runtime.basic_spec]
