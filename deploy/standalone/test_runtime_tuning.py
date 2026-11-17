@@ -73,6 +73,19 @@ class RuntimeTuningTest(unittest.TestCase):
         output = sections(MODULE.render(TEMPLATE, {"AKERNEL_RUNSC_EXTRA_ARGS": json.dumps(args)}))
         self.assertEqual(json.loads(output["plugin.runtime.runsc"]["extra_args"]), args)
 
+    def test_checkpoint_memory_bytes_keep_exact_integer_output(self):
+        name = "AKERNEL_FIRECRACKER_CHECKPOINT_MEMORY_MAX_BYTES"
+        for value in ("0", "2147483648", "9223372036854771712"):
+            output = sections(MODULE.render(TEMPLATE, {name: value}))
+            self.assertEqual(output["plugin.resource"]["firecracker_checkpoint_memory_max_bytes"], value)
+            self.assertNotIn("firecracker_checkpoint_memory_max_bytes", output["plugin.runtime.runsc"])
+        for value in ("-1", "2GiB", "1.5", "1e9", "true", "01", " 4096", "4096\n", "9223372036854775808"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                MODULE.render(TEMPLATE, {name: value})
+        duplicate = TEMPLATE.replace(MODULE.MARKERS["plugin.resource"], MODULE.MARKERS["plugin.resource"] + "\nfirecracker_checkpoint_memory_max_bytes=0")
+        with self.assertRaisesRegex(ValueError, "already set"):
+            MODULE.render(duplicate, {name: "2147483648"})
+
     def test_missing_duplicate_misplaced_marker_and_existing_key_reject(self):
         marker = MODULE.MARKERS["plugin.resource"]
         cases = [

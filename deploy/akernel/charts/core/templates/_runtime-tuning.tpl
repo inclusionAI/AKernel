@@ -45,7 +45,7 @@
 {{- $config := .config -}}
 {{- $resource := dict -}}
 {{- $runsc := dict -}}
-{{- $names := dict "firecrackerCheckpointConcurrency" "firecracker_checkpoint_concurrency" "firecrackerRestoreConcurrency" "firecracker_restore_concurrency" "runscCliGomaxprocs" "cli_gomaxprocs" -}}
+{{- $names := dict "firecrackerCheckpointConcurrency" "firecracker_checkpoint_concurrency" "firecrackerRestoreConcurrency" "firecracker_restore_concurrency" "firecrackerCheckpointMemoryMaxBytes" "firecracker_checkpoint_memory_max_bytes" "runscCliGomaxprocs" "cli_gomaxprocs" -}}
 {{- range $name, $value := $tuning -}}
 {{- if not (or (hasKey $names $name) (eq $name "runscExtraArgs")) -}}
 {{- fail (printf "unknown node.config.sandboxd.runtimeTuning option: %s" $name) -}}
@@ -66,8 +66,24 @@
 {{- $_ := set $runsc "extra_args" (toJson $value) -}}
 {{- else -}}
 {{- $raw := toString $value -}}
+{{- if eq $name "firecrackerCheckpointMemoryMaxBytes" -}}
+{{- if not (kindIs "string" $value) -}}
+{{- if not (or (kindIs "float64" $value) (kindIs "int64" $value) (kindIs "int" $value)) -}}
+{{- fail "firecrackerCheckpointMemoryMaxBytes must be integer bytes or a decimal byte string" -}}
+{{- end -}}
+{{- $number := float64 $value -}}
+{{- if or (lt $number 0.0) (gt $number 9007199254740991.0) (ne $number (floor $number)) -}}
+{{- fail "firecrackerCheckpointMemoryMaxBytes must be exact nonnegative integer bytes; use a decimal string above 2^53-1" -}}
+{{- end -}}
+{{- $raw = printf "%.0f" $number -}}
+{{- end -}}
+{{- if or (not (regexMatch "^(0|[1-9][0-9]{0,18})$" $raw)) (and (eq (len $raw) 19) (gt $raw "9223372036854775807")) -}}
+{{- fail "firecrackerCheckpointMemoryMaxBytes must be between 0 and 9223372036854775807 bytes" -}}
+{{- end -}}
+{{- else -}}
 {{- if or (not (regexMatch "^(0|[1-9][0-9]{0,3})$" $raw)) (gt (int $raw) 1024) -}}
 {{- fail (printf "node.config.sandboxd.runtimeTuning.%s must be an integer between 0 and 1024" $name) -}}
+{{- end -}}
 {{- end -}}
 {{- $key := get $names $name -}}
 {{- if eq $name "runscCliGomaxprocs" -}}

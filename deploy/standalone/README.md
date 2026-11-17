@@ -140,18 +140,21 @@ Runsc and Firecracker checkpoints use ADX local-only snapshots under `/home/aker
 
 ### Opt-in checkpoint and restore controls
 
-Images containing sandboxd's bounded operation controls accept the following host environment overrides. Unset variables leave the template and runtime defaults unchanged. Integer values must be between 0 and 1024; zero retains sandboxd's historical fallback, including the shared single-operation pool unless an independent restore pool is configured. These limits do not replace node memory reservations or per-sandbox serialization.
+Images containing sandboxd's bounded operation controls accept the following host environment overrides. Unset variables leave the template and runtime defaults unchanged. Operation and CLI parallelism values must be between 0 and 1024; zero retains sandboxd's historical fallback, including the shared single-operation pool unless an independent restore pool is configured. These limits do not replace node memory reservations or per-sandbox serialization.
 
 | Environment variable | sandboxd setting |
 |---|---|
 | `AKERNEL_FIRECRACKER_CHECKPOINT_CONCURRENCY` | `[plugin.resource].firecracker_checkpoint_concurrency` |
 | `AKERNEL_FIRECRACKER_RESTORE_CONCURRENCY` | `[plugin.resource].firecracker_restore_concurrency` |
+| `AKERNEL_FIRECRACKER_CHECKPOINT_MEMORY_MAX_BYTES` | `[plugin.resource].firecracker_checkpoint_memory_max_bytes`, integer bytes |
 | `AKERNEL_RUNSC_CLI_GOMAXPROCS` | `[plugin.runtime.runsc].cli_gomaxprocs` |
 | `AKERNEL_RUNSC_EXTRA_ARGS` | `[plugin.runtime.runsc].extra_args`, a JSON array of strings |
 
 For example, an isolated qualification profile can select checkpoint concurrency 8, restore concurrency 32, CLI parallelism 2 and `AKERNEL_RUNSC_EXTRA_ARGS='["--net-raw=true","--restore-page-prefetch=none","--restore-map-unit=65536"]'`. These are test settings, not a recommended capacity limit. The page flags require the matching gVisor demand-restore bundle. Demand loading preserves private per-child RAM and does not implement cross-sandbox RAM sharing; a software mapping unit is not a THP page-size setting.
 
 `extra_args` replaces the runtime's default list: include `--net-raw=true` if needed. An unset variable preserves the default; `[]` deliberately clears it. CLI parallelism does not change Sentry scheduling or sandbox CPU quotas. Custom templates must retain the tuning markers under the corresponding sections; configuring the same key both in the template and through an override is rejected before replacing the generated config. The Helm equivalent is `node.config.sandboxd.runtimeTuning` with `firecrackerCheckpointConcurrency`, `firecrackerRestoreConcurrency`, `runscCliGomaxprocs`, and `runscExtraArgs`; null omits a setting.
+
+The optional memory override requires a matching sandboxd image with the cgroup v2 snapshot-cache budget. For example, `2147483648` sets a 2 GiB cap on newly charged native snapshot memory. Sandboxd validates host-page alignment and preserves stricter existing limits; zero or omission does not bypass an already installed private-group limit. Include this outside-sandbox-parent allowance in `memory_limit.total_reserve` and retain a finite common ancestor. It is not a disk-output quota or a cap on all checkpoint-related allocations, and reclaim/writeback may increase capture latency. Helm accepts `firecrackerCheckpointMemoryMaxBytes` as integer bytes or a quoted decimal byte string; use the string form above 2^53-1 to preserve exact bytes through YAML numeric conversion.
 
 ### Authentication and registry inputs
 

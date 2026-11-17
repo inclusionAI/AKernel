@@ -22,7 +22,9 @@ def render(tuning=None, config=None, **settings):
         sandboxd["config"] = config
     with tempfile.TemporaryDirectory() as temporary:
         values = Path(temporary) / "values.yaml"
-        values.write_text(yaml.safe_dump({"node": {"config": {"sandboxd": sandboxd}}}))
+        # JSON is also YAML and preserves the intended types for strings such
+        # as 1e9 across PyYAML's and Helm's different implicit scalar rules.
+        values.write_text(json.dumps({"node": {"config": {"sandboxd": sandboxd}}}))
         return subprocess.run(["helm", "template", "akernel", str(CHART), "--set", "adx.tls.existingSecret=test-tls", "-f", str(values)], capture_output=True, text=True, timeout=20)
 
 
@@ -59,6 +61,18 @@ class RuntimeTuningChartTest(unittest.TestCase):
         config = config_sections(result.stdout)
         self.assertEqual(config["plugin.resource"]["firecracker_restore_concurrency"], "0")
         self.assertEqual(config["plugin.runtime.runsc"]["extra_args"], "[]")
+
+    def test_checkpoint_memory_budget_preserves_exact_bytes(self):
+        for value in (0, 2147483648, "2147483648", "9223372036854771712"):
+            with self.subTest(value=value):
+                result = render({"firecrackerCheckpointMemoryMaxBytes": value})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                config = config_sections(result.stdout)
+                self.assertEqual(config["plugin.resource"]["firecracker_checkpoint_memory_max_bytes"], str(value))
+                self.assertNotIn("firecracker_checkpoint_memory_max_bytes", config["plugin.runtime.runsc"])
+        for value in (-1, True, [], {}, 1.5, "2GiB", "01", "1e9", "9223372036854775808", 9007199254740992):
+            with self.subTest(value=value):
+                self.assertNotEqual(render({"firecrackerCheckpointMemoryMaxBytes": value}).returncode, 0)
 
     def test_tuning_composes_with_native_filestore_and_reflink(self):
         args = ["--net-raw=true", "--restore-page-prefetch=none"]

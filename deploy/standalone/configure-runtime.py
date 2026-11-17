@@ -32,6 +32,12 @@ def render(text, environ):
         if not re.fullmatch(r"0|[1-9][0-9]{0,3}", value) or int(value) > 1024:
             raise ValueError(f"{name} must be an integer between 0 and 1024")
         fields[section][key] = str(int(value))
+    memory_name = "AKERNEL_FIRECRACKER_CHECKPOINT_MEMORY_MAX_BYTES"
+    memory = environ.get(memory_name, "")
+    if memory:
+        if not re.fullmatch(r"0|[1-9][0-9]{0,18}", memory) or int(memory) > 9223372036854775807:
+            raise ValueError(f"{memory_name} must be an integer between 0 and 9223372036854775807 bytes")
+        fields["plugin.resource"]["firecracker_checkpoint_memory_max_bytes"] = str(int(memory))
     raw_args = environ.get("AKERNEL_RUNSC_EXTRA_ARGS", "")
     if raw_args:
         try:

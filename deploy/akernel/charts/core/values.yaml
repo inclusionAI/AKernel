@@ -539,11 +539,13 @@ node:
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
       # Opt-in controls require a sandboxd image containing restore controls.
-      # Null omits each setting. Zero retains the historical daemon default.
+      # Null omits each setting. Zero uses the daemon's compatibility behavior.
+      # A zero memory cap retains any existing private checkpoint-group limit.
       # extraArgs replaces runsc's args; include --net-raw=true when required.
       runtimeTuning:
         firecrackerCheckpointConcurrency: null
         firecrackerRestoreConcurrency: null
+        firecrackerCheckpointMemoryMaxBytes: null
         runscCliGomaxprocs: null
         runscExtraArgs: null
       config: |-
