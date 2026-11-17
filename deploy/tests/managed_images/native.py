@@ -853,7 +853,7 @@ configure_network
     def connection_environment(self):
         return {
             "AKERNEL_SERVER_ADDRESS": f"https://127.0.0.1:{self.control_port}",
-            "AKERNEL_GATEWAY_ADDRESS": f"https://127.0.0.1:{self.control_port}",
+            "AKERNEL_GATEWAY_ADDRESS": f"http://127.0.0.1:{self.data_port}",
             "AKERNEL_TOKEN": (self.data / "token").read_text().strip(),
             "AKERNEL_VERIFY_TLS": "false",
         }

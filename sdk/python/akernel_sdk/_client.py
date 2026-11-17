@@ -96,7 +96,18 @@ class Client:
         if not isinstance(verify, bool):
             raise TypeError("verify_tls must be a boolean")
         config = BackendConfig(endpoint, gateway, credential.strip(), verify)
+        self._bind(config)
+
+    @classmethod
+    def _from_config(cls, config: BackendConfig) -> Client:
+        """Share an already normalized connection without reparsing its routes."""
+        connection = cls.__new__(cls)
+        connection._bind(config)
+        return connection
+
+    def _bind(self, config: BackendConfig) -> None:
         backend = new_backend(config)
+        gateway = config.gateway_endpoint
         self.images = ManagedImages(config)
 
         class BoundSandbox(Sandbox):

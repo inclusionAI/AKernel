@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._backends.errors import BackendOperationError, retain_failure_context
+from ._backends.registry import _config_from_env
 from ._managed_images import ImageRetention, ManagedImage
 
 if TYPE_CHECKING:
@@ -116,7 +117,7 @@ def build_image(
         if client is None:
             from ._client import Client as ConnectionClient
 
-            client = ConnectionClient()
+            client = ConnectionClient._from_config(_config_from_env())
         images = client.images
         identity = request_id or uuid.uuid4().hex
         try:

@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -121,7 +122,14 @@ class ManagedImagesTest(unittest.TestCase):
             images.begin.return_value = ManagedImage(images, view("publishing"))
             connection = MagicMock(images=images)
             with (
-                patch("akernel_sdk._client.Client", return_value=connection),
+                patch.dict(
+                    os.environ,
+                    {"AKERNEL_SERVER_ADDRESS": "api.test", "AKERNEL_TOKEN": "fixture"},
+                    clear=True,
+                ),
+                patch(
+                    "akernel_sdk._client.Client._from_config", return_value=connection
+                ),
                 patch("akernel_sdk.sandbox.Sandbox") as factory,
             ):
                 with self.assertRaises(BackendOperationError) as caught:
@@ -134,6 +142,51 @@ class ManagedImagesTest(unittest.TestCase):
             factory.assert_not_called()
             connection.Sandbox.assert_not_called()
             self.assertEqual(caught.exception.publication_id, IMAGE_ID)
+
+    def test_implicit_build_preserves_environment_gateway_selection(self):
+        cases = (
+            (
+                {
+                    "AKERNEL_SERVER_ADDRESS": "api.test",
+                    "AKERNEL_GATEWAY_ADDRESS": "https://gateway.test:8443",
+                },
+                "https://gateway.test:8443",
+            ),
+            ({"AKERNEL_SERVER_ADDRESS": "api.test"}, "http://api.test"),
+            ({"AKERNEL_SERVER_ADDRESS": "api.test:8443"}, "http://api.test:8443"),
+            (
+                {
+                    "AKERNEL_SERVER_ADDRESS": "api.test",
+                    "AKERNEL_GATEWAY_ADDRESS": "wss://gateway.test",
+                },
+                "wss://gateway.test",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "Dockerfile").write_text("FROM scratch\n")
+            for environment, gateway in cases:
+                with (
+                    self.subTest(environment=environment),
+                    patch.dict(
+                        os.environ,
+                        {**environment, "AKERNEL_TOKEN": "fixture"},
+                        clear=True,
+                    ),
+                    patch("akernel_sdk._client.new_backend") as factory,
+                    patch(
+                        "akernel_sdk._managed_images.ManagedImages.begin",
+                        side_effect=BackendOperationError("stop before publishing"),
+                    ),
+                ):
+                    with self.assertRaises(BackendOperationError):
+                        build_image(
+                            directory, profile="test", retention=ImageRetention()
+                        )
+                    factory.assert_called_once()
+                    config = factory.call_args.args[0]
+                    self.assertEqual(config.gateway_endpoint.base_url(), gateway)
+                    self.assertEqual(config.token, "fixture")
+                    factory.return_value.create.assert_not_called()
 
     def test_registration_precedes_native_publication_and_cleanup_keeps_hold(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -171,7 +224,18 @@ class ManagedImagesTest(unittest.TestCase):
             connection = MagicMock(images=images)
             connection.Sandbox.return_value = builder
             with (
-                patch("akernel_sdk._client.Client", return_value=connection) as factory,
+                patch.dict(
+                    os.environ,
+                    {
+                        "AKERNEL_SERVER_ADDRESS": "api.test",
+                        "AKERNEL_GATEWAY_ADDRESS": "https://gateway.test:8443",
+                        "AKERNEL_TOKEN": "fixture",
+                    },
+                    clear=True,
+                ),
+                patch(
+                    "akernel_sdk._client.Client._from_config", return_value=connection
+                ) as factory,
             ):
                 result = build_image(
                     directory,
@@ -181,7 +245,11 @@ class ManagedImagesTest(unittest.TestCase):
                 )
             self.assertEqual(events, ["plan", "native-publish", "publish"])
             self.assertEqual(result.managed_image.id, IMAGE_ID)
-            factory.assert_called_once_with()
+            factory.assert_called_once()
+            self.assertEqual(
+                factory.call_args.args[0].gateway_endpoint.base_url(),
+                "https://gateway.test:8443",
+            )
             self.assertEqual(
                 connection.Sandbox.call_args.kwargs["extra_config"][
                     "managedImagePublications"
