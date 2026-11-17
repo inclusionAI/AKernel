@@ -1,0 +1,2 @@
+# Integration-only password hashing for the owned Distribution htpasswd fixture.
+bcrypt==5.0.0

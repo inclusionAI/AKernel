@@ -24,7 +24,14 @@ ACCEPT = (
 
 
 class Registry:
-    def __init__(self, origin: str, bearer: str = "", *, allow_http: bool = False):
+    def __init__(
+        self,
+        origin: str,
+        bearer: str = "",
+        *,
+        allow_http: bool = False,
+        basic_auth: tuple[str, str] | None = None,
+    ):
         parsed = urlsplit(origin)
         if (
             parsed.scheme not in ({"https", "http"} if allow_http else {"https"})
@@ -37,9 +44,12 @@ class Registry:
         ):
             raise ValueError("An explicit trusted Registry origin is required")
         self.origin = origin.rstrip("/")
+        if bearer and basic_auth is not None:
+            raise ValueError("Select exactly one Registry authentication method")
         self.authority = parsed.netloc
         self.client = httpx.Client(
             headers={"Authorization": "Bearer " + bearer} if bearer else {},
+            auth=basic_auth,
             timeout=30,
             follow_redirects=False,
         )
@@ -159,7 +169,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image-id", required=True)
     parser.add_argument("--registry", required=True)
-    parser.add_argument("--registry-bearer-file", type=Path)
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--registry-bearer-file", type=Path)
+    credentials.add_argument(
+        "--registry-basic-auth-file",
+        type=Path,
+        help="Protected JSON file with username and password for this Registry",
+    )
     parser.add_argument(
         "--tenant", help="Explicit target tenant; requires an AKernel administrator"
     )
@@ -170,12 +186,24 @@ def main():
         help="Claim and delete the registered manifest worklist; default is dry-run",
     )
     args = parser.parse_args()
+    basic_auth = None
+    if args.registry_basic_auth_file:
+        path = args.registry_basic_auth_file
+        if path.stat().st_mode & 0o077 or path.stat().st_size > 16384:
+            raise ValueError("Registry credentials require a protected bounded file")
+        value = json.loads(path.read_text())
+        if not isinstance(value, dict) or set(value) != {"username", "password"}:
+            raise ValueError("Registry credentials require username and password")
+        if any(not isinstance(v, str) or not v for v in value.values()):
+            raise ValueError("Registry credentials must be nonempty strings")
+        basic_auth = (value["username"], value["password"])
     registry = Registry(
         args.registry,
         args.registry_bearer_file.read_text().strip()
         if args.registry_bearer_file
         else "",
         allow_http=args.allow_http,
+        basic_auth=basic_auth,
     )
     try:
         print(
