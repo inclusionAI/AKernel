@@ -114,8 +114,30 @@ this server-created metadata and reuses the retained collection. Missing or chan
 profile/collection fails closed. It must not rebuild, restart Docker or substitute
 an empty collection. Versioned checkpoints additionally retain their local collection
 lease marker; collection leases and checkpoint output must share a filesystem.
-Restore is same-node only. Per-tenant Registry credential issuance, cross-node collection reconstruction
-and automatic Registry artifact GC are not provided by this profile.
+Restore is same-node only. Per-tenant Registry credential issuance, cross-node collection reconstruction and automatic Registry blob GC are not provided by this profile. Explicit managed image ownership requires a supporting control-plane API and the planning-capable tools below.
+
+## Managed image reclamation
+
+Candidate views expose `eligible_for_reclamation` independently of the deletion enable switch. Dry-run can inspect those candidates while reclamation remains disabled; `--apply` requires the explicit operator switch as well as administrator authorization.
+
+Enrolled builds register a durable publication before creating the builder. `--plan-only --publication-id <id>` computes the complete native output mapping without starting a publisher; the SDK persists it before actual Bake execution. Repositories include `/publications/<id>/` under the session's authorized prefix. All Compose services, including image-only conversions, share one publication. Builds without enrollment keep existing names and lifetime behavior. Incomplete or unknown publication never becomes an expiry candidate.
+
+Deploy the matching backend API and planning-capable managed tools before enrolling clients. Coordinator `managed_image_reclamation` defaults to false; activation requires separate deployment authorization and runtime/storage qualification. No runtime pin or deployment is changed by installing this SDK. Preserve authoritative Redis data; after restoring an older backup, disable reclaimers and reconcile surviving runtime/Snapshot/publication inventories before re-enabling deletion.
+
+`reclaim.py` runs outside sandboxes with an AKernel management identity and a narrowly scoped Registry pull/delete Bearer token. It validates the selected Registry origin, walks exact OCI manifest/index dependencies, claims a durable repository-scoped worklist, deletes manifests by digest, verifies absence and acknowledges completion. It never deletes blobs or Registry files. Partial failure leaves Deleting state and blocks new consumers; retry resumes the same worklist. Supply a valid scoped token for each invocation; this tool does not refresh tokens. Explicit `--tenant` selection requires an AKernel administrator.
+
+```sh
+python3 builder/managed-docker/reclaim.py \
+  --image-id <managed-publication-id> \
+  --registry https://registry.example.internal \
+  --registry-bearer-file /protected/reclaimer-token
+```
+
+Default dry-run updates lifecycle observations and reports candidates without Registry writes. Add `--apply` only for an explicitly authorized publication. Private HTTP requires `--allow-http` and a trusted isolated network. SDK credentials use the ordinary AKernel connection environment; keep credentials out of arguments, logs and Git.
+
+Manifest deletion does not guarantee immediate disk recovery. Distribution GC scans its whole physical storage domain, including historical unreferenced content; repository prefixes do not isolate that sweep. A shared production store needs separate GC authorization, verified recovery materials, stopped writers/read-only maintenance, dry-run and retained-digest checks. A separate physical storage domain can constrain future ephemeral GC without moving historical images. BuildKit and Dragonfly cache cleanup remain separate. Never use `--delete-untagged` as a substitute for the ledger or remove Registry storage files manually.
+
+The [isolated qualification](../../deploy/tests/managed_images/README.md) fixture tests public ownership APIs, manifest/index deletion and actual GC on owned data. It is separate from native Nydus execution and checkpoint restore qualification required before activation.
 
 ## Packaging and compatibility
 

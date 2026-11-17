@@ -43,6 +43,12 @@ from ._backends.errors import (
 )
 from ._backends.registry import selected_backend
 from ._fork import ForkCleanupError
+from ._managed_images import (
+    ImageRetention,
+    ManagedImage,
+    ManagedImageLease,
+    ManagedImages,
+)
 from ._sandboxes import SandboxPaginator, SandboxQuery, SandboxState
 from ._snapshots import SnapshotPaginator
 from .types import (
@@ -66,6 +72,10 @@ from .types import (
 __all__ = [
     "Sandbox",
     "Client",
+    "ImageRetention",
+    "ManagedImage",
+    "ManagedImageLease",
+    "ManagedImages",
     "SandboxQuery",
     "SandboxState",
     "SandboxPaginator",

@@ -1009,6 +1009,8 @@ Collector-normalized log metadata and plain bodies.
 
 ## Managed Docker runtime
 
+Explicit image ownership uses `ImageRetention`, `ManagedImages`, `Client.images` and `BuiltImage.managed_image`. Keep SDK, control-plane API, runtime planning and operator reclamation synchronized. Register before publishing; use unique publication repositories; preserve durable caller holds, restored dependencies and unknown outcomes. Default builds and existing images remain outside reclamation. Registry manifest deletion and physical GC are separate; never perform Registry network I/O under the scheduler lock. See the SDK ownership guide, `builder/managed-docker/reclaim.py` and `deploy/tests/managed_images/README.md` before changing these contracts.
+
 `build_image()` accepts optional preparation CPU/memory scheduling requests while retaining its existing 1000 millicore/2048 MiB limits. Validate requests before creation and retain cleanup on all submission outcomes. Reservation overrides are explicit load-test inputs, not additional runtime capacity; ordinary callers keep the existing defaults.
 
 Managed profile storage metadata is derived by `builder/managed-docker/profile_metadata.py` from the same Sandboxd profile and advertised through ordinary ADXlet node labels. The ADX backend reserves the profile floor and constrains placement before creation; node-side authorization and storage checks remain authoritative. Managed YAML must reach official Compose unchanged, including native merge tags. Service handles become available after runtime service discovery. Keep authorization allowlists outside the snapshot compatibility fingerprint, while checking current authorization on every restore.

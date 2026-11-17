@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 from ._addresses import _parse_endpoint, api_endpoint_from_env
 from ._backends.base import BackendConfig
 from ._backends.registry import new_backend
+from ._managed_images import ManagedImages
 from ._tls import verification_from_env
 from .sandbox import Sandbox
 
@@ -96,6 +97,7 @@ class Client:
             raise TypeError("verify_tls must be a boolean")
         config = BackendConfig(endpoint, gateway, credential.strip(), verify)
         backend = new_backend(config)
+        self.images = ManagedImages(config)
 
         class BoundSandbox(Sandbox):
             _bound_backend = backend
