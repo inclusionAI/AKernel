@@ -88,6 +88,11 @@ node_image_tag            = "<release-tag>"
 # matching AKERNEL_ENABLE_RUNC=true profile setting.
 enable_runc = false
 
+# Explicit opt-in after qualifying the actual node image's cgroup v2 mode
+# and effective memory budget; the OS name alone does not establish support.
+sandbox_memory_limit_enabled = false
+sandbox_memory_total_reserve = "16GiB"
+
 # AKernel defaults YuanRong placement to "spread"; use "binpack" to compact.
 schedule_placement_policy = "spread"
 

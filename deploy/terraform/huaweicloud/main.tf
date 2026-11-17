@@ -87,6 +87,10 @@ locals {
   ]) : local.node_pool_bootstrap_script
 
   core_values = templatefile("${path.module}/values-akernel.yaml.tmpl", {
+    sandbox_memory_limit_enabled = var.sandbox_memory_limit_enabled
+    sandbox_memory_total_reserve = var.sandbox_memory_total_reserve
+
+    cluster_name                = var.cluster_name
     adx_public_service_enabled  = var.adx_public_service_enabled
     adx_service_type            = var.adx_service_type
     adx_control_port            = var.adx_control_port
@@ -103,6 +107,8 @@ locals {
     sandboxd_nat_backend        = var.sandboxd_nat_backend
     chunk_db_size               = var.chunk_db_size
     enable_runc                 = var.enable_runc
+    runsc_checkpoint_mode       = var.runsc_checkpoint_mode
+    native_filestore            = var.native_filestore
     node_secret_create          = var.node_secret_create
     node_home_use_csi_ephemeral = var.node_home_use_csi_ephemeral
     node_home_csi_storage_class = var.node_home_csi_storage_class
@@ -132,6 +138,7 @@ locals {
   })
 
   monitor_values = templatefile("${path.module}/values-monitor.yaml.tmpl", {
+    cluster_name                = var.cluster_name
     image_registry              = var.monitor_image_registry
     enable_kruise               = var.install_prereqs
     monitor_storage_class       = var.monitor_storage_class

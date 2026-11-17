@@ -1,0 +1,13 @@
+[Unit]
+Description=ACK registry mirror
+After=network-online.target NetworkManager.service kubelet.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B /etc/akernel/image-pull/bootstrap.py
+RemainAfterExit=yes
+Restart=no
+TimeoutStartSec=660
+UMask=0077
+[Install]
+WantedBy=multi-user.target

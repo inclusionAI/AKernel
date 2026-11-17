@@ -1,0 +1,24 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+umask 077
+/usr/bin/python3 - <<'PY'
+import base64,gzip,json,os,subprocess,sys
+p='/etc/akernel/image-pull'
+assert not os.path.islink('/etc/akernel')
+os.makedirs(p,0o700)
+d=json.loads(gzip.decompress(base64.b64decode('${bundle_gzip_b64}')))
+for n,v in [('bootstrap.py',d['helper']),('profile.json',json.dumps(d['profile'])),('standard.sh',d['bootstrap']),('post.sh',d['user_data'])]:
+    with open(p+'/'+n,'wb') as f:f.write(v.encode())
+u='akernel-image-pull.service'
+unit_path='/etc/systemd/system/'+u
+assert not os.path.lexists(unit_path)
+with open(unit_path,'w') as f:f.write(d['unit'])
+for n in ('standard.sh','post.sh'):
+    r=subprocess.call(['/bin/bash',p+'/'+n])
+    if r:break
+with open(p+'/original-user-data-exit-code','w') as f:f.write(str(r)+'\n')
+if r:sys.exit(r)
+for a in (['daemon-reload'],['enable',u],['start','--no-block',u]):
+    subprocess.check_call(['systemctl']+a)
+PY

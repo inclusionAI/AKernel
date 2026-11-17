@@ -14,6 +14,7 @@ kruise:
   enabled: ${enable_kruise}
 
 monitoring:
+  clusterName: "${cluster_name}"
   akernelEnv: "${akernel_env}"
 %{ if install_monitor ~}
   prometheusEndpoint: "prometheus.${monitor_namespace}.svc:9090"
@@ -78,6 +79,14 @@ node:
             values:
             - dragonfly-seed
             - dragonfly-server
+%{ if node_image_pull_auto ~}
+          - key: akernel.io/image-pull-profile
+            operator: In
+            values: ["ack-dragonfly-v1"]
+          - key: akernel.io/image-pull-ready
+            operator: In
+            values: ["true"]
+%{ endif ~}
   image:
     repository: "${node_image_repository}"
     tag: "${node_image_tag}"
@@ -136,6 +145,8 @@ node:
       cpuQuota: "100%"
     sandboxd:
       enableRunc: ${enable_runc}
+      runscCheckpointMode: ${jsonencode(runsc_checkpoint_mode)}
+      nativeFilestore: ${native_filestore}
       chunkDbSize: ${jsonencode(chunk_db_size)}
       config: |-
         rootDir="/home/akernel/sandboxd/root"
@@ -161,15 +172,27 @@ node:
         max_instance_num=1000
         enable_cache_in_stock_mode=true
 
+        [plugin.resource.memory_limit]
+        # Explicit opt-in requires qualified cgroup v2 nodes and sufficient memory.
+        enabled = ${sandbox_memory_limit_enabled}
+        total_reserve = ${jsonencode(sandbox_memory_total_reserve)}
+
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
         # The Aliyun module mounts a dedicated filesystem at /home/akernel.
-        # Leave filestore_dir_size unset so sandboxd consumes the native XFS
-        # directory instead of creating a loop-backed bounded filesystem.
+        # An empty size keeps the native XFS directory.
+        filestore_dir_size="" # AKERNEL_NATIVE_FILESTORE
         filestore_dir="/home/akernel/filestore"
         filestore_xfs_enabled=false
         loop_device_dir="/dev"
         overlay_tmpfs_size="10G"
+
+        [plugin.runtime.checkpoint_sync]
+        sync_output=true
+
+        [plugin.runtime.runsc]
+        # AKERNEL_RUNSC_CHECKPOINT_MODE
+        background_restore=true
 
         [plugin.runtime.basic_spec]
         runsc="/home/akernel/images/config.json"

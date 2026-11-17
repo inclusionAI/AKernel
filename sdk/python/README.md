@@ -1,5 +1,7 @@
 # AKernel Python SDK
 
+The experimental [managed remote-build runtime](../../builder/managed-docker/README.md) uses official Buildx remote and native Compose rather than the legacy Dockerfile interpreter. Its operator-prepared fresh descriptor binds with `ComposeProject.bind_runtime(sandbox, descriptor)`; this performs no upload, daemon startup, image preparation or build. After checkpoint restore, use `ComposeProject.attach()` so captured services and tunnels are reused. Docker `network_mode: service:...` follows the native namespace owner when exposing a bridge-accessible model tunnel.
+
 `akernel-sdk` is the Python interface for creating and managing remote AKernel
 sandboxes. Applications use one stable API for commands, files, interactive
 PTYs, port forwarding, and reverse tunnels.
@@ -17,6 +19,8 @@ PTYs, port forwarding, and reverse tunnels.
   - [Filesystem](#filesystem)
   - [Interactive PTYs](#interactive-ptys)
   - [Port forwarding](#port-forwarding)
+  - [Lifecycle compatibility](#lifecycle-compatibility)
+  - [Reusable snapshots](#reusable-snapshots)
   - [Local failover and reload](#local-failover-and-reload)
   - [Reverse tunnels](#reverse-tunnels)
   - [Rootfs and mounts](#rootfs-and-mounts)
@@ -29,6 +33,11 @@ PTYs, port forwarding, and reverse tunnels.
 ## Install and configure
 
 AKernel SDK requires Python 3.10 or newer.
+
+This guide describes the SDK at the selected source revision or release tag.
+For package installations, read the guide at the corresponding release tag and
+consult the [release notes](https://github.com/inclusionAI/AKernel/releases) for
+version-specific feature availability and changes.
 
 Install the stable SDK from PyPI:
 
@@ -43,14 +52,17 @@ python -m pip install --pre akernel-sdk
 ```
 
 Choose an SDK version compatible with the deployed backend and pin its exact
-published version for reproducible installations. For an unpublished source
-revision, install from the repository root:
+published version for reproducible installations. To install from source, pin
+the tested commit and run from the repository root:
 
 ```bash
 python -m pip install ./sdk/python
 ```
 
-The SDK's ADX dependency is declared in `pyproject.toml`.
+For source builds, record the commit and artifact digest as well as the package
+version; version metadata alone may not identify unpublished source changes.
+
+The SDK's ADX dependency is declared in [pyproject.toml](./pyproject.toml).
 The ADX adapter translates the public AKernel `Sandbox` API
 to `adx_environment.Environment`. Deploy a matching ADX release exposing
 `/api/environment/v1` for lifecycle, resources and command subscriptions.
@@ -74,8 +86,18 @@ Address behavior is deterministic:
   public sandbox URLs use HTTP/WS on that explicit port.
 - `AKERNEL_GATEWAY_ADDRESS` overrides only the port-forwarding and reverse
   tunnel data endpoint for nonstandard ports or TLS gateways. An override
-  without a scheme uses HTTP/WS. Exec and file transfer continue to use
-  `AKERNEL_SERVER_ADDRESS`.
+  without a scheme uses HTTP/WS. Scheme-qualified overrides without a port
+  use 443 for HTTPS/WSS and 80 for HTTP/WS; an explicit port is preserved.
+  Exec and file transfer continue to use `AKERNEL_SERVER_ADDRESS`.
+
+For a shared HTTPS control and tunnel entrypoint, set both addresses explicitly:
+
+```bash
+export AKERNEL_SERVER_ADDRESS="https://akernel.example.com"
+export AKERNEL_GATEWAY_ADDRESS="$AKERNEL_SERVER_ADDRESS"
+```
+
+The shell expands the double-quoted variable in this example. The SDK does not expand `$NAME` or `${NAME}` within address values and rejects unresolved variables before creating a sandbox. Use literal URLs in configuration files whose loader does not expand variables.
 
 ### TLS certificate verification
 
@@ -447,6 +469,35 @@ handle.close_stdin()
 result = handle.wait(timeout=15)
 ```
 
+Commands can be reattached by stable `command_id` (preferred) or an observed
+PID without submitting them again. A returned handle binds its stable ID once;
+reusing the same PID for another command cannot redirect its identity, wait,
+stdin or kill operations. Direct PID operations remain convenience lookups:
+
+```python
+handle = sandbox.commands.run("sleep 2; printf done", background=True)
+command_id = handle.command_id
+sandbox.close()
+attached = Sandbox.connect(sandbox.sandbox_id)
+try:
+    result = attached.commands.connect(command_id).wait(timeout=30, check=True)
+finally:
+    attached.close()
+```
+
+`check=True` on run/wait opts into `CommandExitException` for nonzero exit,
+retaining stdout, stderr and exit_code, and `TimeoutException` for an unfinished
+observation. The default continues returning `CommandResult`. Authentication,
+permission, missing-resource, timeout, rate-limit and service-busy exceptions
+subclass `BackendOperationError` and retain structured service context.
+
+An ADX foreground command deadline raises `TimeoutException` with its native
+error code and any available partial `command_result`. Its message identifies
+the deadline; stdout/stderr remain command output. A wait deadline does not
+establish a terminal remote exit. Managed builds and Compose operations retain
+available partial output in their configured logs, preserving the original
+exception if local log persistence fails.
+
 Foreground commands return a backend-neutral `CommandResult`. Background
 commands return an AKernel `CommandHandle`; its lifecycle operations are
 delegated to the selected backend.
@@ -533,6 +584,414 @@ with Sandbox(port_forwardings=[8080]) as sandbox:
 deployment operator explicitly wants the direct ADX Ingress address instead of the
 public gateway.
 
+## Lifecycle compatibility
+
+These APIs follow E2B's Python naming while preserving AKernel's existing
+constructor, ID, detached cleanup, command-result and creation-budget contracts.
+
+```python
+from akernel_sdk import Client, SandboxQuery, SandboxState
+
+client = Client(api_url="https://akernel.example.com", api_key="<tenant-key>",
+                verify_tls=True)
+# An explicit Client captures its own API/gateway/token. It neither changes
+# os.environ nor redirects top-level Sandbox operations. Specify gateway_address
+# when the data gateway differs. Addresses must be HTTP(S) origins without paths.
+source = client.Sandbox.create(image="python:3.13-slim", idle_timeout=600)
+identity = source.sandbox_id  # source.id remains supported
+try:
+    source.files.write("/tmp/progress", "saved")
+    assert source.pause()  # beta_pause() is an alias; already paused returns False
+    source.close()         # closes local transports, retaining the remote sandbox
+    restored = client.Sandbox.connect(identity)
+    try:
+        assert restored.sandbox_id == identity
+        assert restored.files.read("/tmp/progress") == "saved"
+    finally:
+        restored.close()
+    print(client.Sandbox.get_info(identity))  # get_by_id(identity) also supported
+    pages = client.Sandbox.list(limit=20,
+        query=SandboxQuery(state=[SandboxState.RUNNING, SandboxState.PAUSED]))
+    while pages.has_next:
+        for info in pages.next_items():
+            print(info.sandbox_id, info.state)
+finally:
+    source.close()
+    client.Sandbox.kill(identity)  # bool: False means already absent
+```
+
+`connect` attaches to Running or resumes Paused under the **same logical ID**.
+It does not create a replacement, rerun a Dockerfile, restart a command, or create
+`cwd`. It waits for Pausing/Resuming to settle and errors on other states. Its
+`timeout` is a logical connection/resume wait budget; transport retry margins and
+tunnel initialization can add elapsed time. Supply `port_forwardings` and
+`reverse_tunnel` again to reconstruct local routing; do not reuse old PTYs or
+streams. A failed attachment closes only local resources and never deletes the
+existing sandbox. As with fresh sandboxes, a connected handle's context manager
+owns remote deletion unless `detached=True`; use `close()` to retain it.
+
+Pause creates an anonymous in-place checkpoint with permanent retention until
+explicit deletion. It is separate from `create_snapshot()`'s reusable catalog
+snapshot and `from_snapshot()`'s new ID. The SDK stops its own reverse tunnel
+before pause so that its reconnect loop cannot immediately demand-resume the
+sandbox. Other connected clients or inbound traffic may still resume it.
+Pause errors and unknown outcomes propagate; False means authoritatively paused.
+
+| Operation | Ownership and result |
+| --- | --- |
+| `sandbox.close()` | Idempotent local disconnect; does not delete the remote sandbox. Closing PTYs terminates their interactive processes. |
+| `sandbox.kill()` / context exit | Existing behavior: owned handles delete remote state and close locally; detached handles only close locally. Returns None. |
+| `sandbox.kill(delete_remote=True)` | Explicit remote deletion, including detached or previously closed handles. Failures remain retryable. |
+| `Sandbox.kill(id)` / `Sandbox.kill_by_id(id)` | Canonical by-ID deletion, returns bool. False means already absent; permission/network/unknown errors propagate. |
+| `Sandbox.delete(sandbox_id=id)` | Explicit by-ID deletion returning None; existing positional `Sandbox.delete(name)` continues to delete a named detached sandbox. |
+| `sandbox.get_info()` / `Sandbox.get_info(id)` | Handle or canonical directory query; `get_by_id(id)` is an explicit class alias. |
+| `Sandbox.list(query=..., limit=20, next_token=None)` | Lazy paginator. `next_items()` fetches one filtered page, `has_next` and `next_token` retain progress. Errors do not advance the cursor. Default states are Running and Paused. |
+
+### Timeouts and supported backend surface
+
+All budgets use seconds. The constructor, fresh `Sandbox.create()`,
+`Sandbox.create(snapshot_id=...)` and compatible `Sandbox.from_snapshot()`
+accept `init_timeout=30`, an integer in 1..86400. Booleans are rejected.
+The constructor's `create_timeout` and factory/restore `timeout` have identical
+logical creation-budget semantics:
+
+- Omitted: derive `schedule_timeout + init_timeout + 30`.
+- Explicit: require at least that minimum, preserving the supplied value exactly.
+  Invalid combinations raise `ValueError` before allocating an environment;
+  fork validates before capturing its temporary snapshot. The 30-second reserve
+  follows the supported ADX create contract. AKernel prevents native automatic
+  budget expansion rather than silently changing an explicit caller limit.
+- Defaults stay scheduling 30, initialization 30, logical creation 90 seconds.
+  `ADX_ENVIRONMENT_CREATE_TIMEOUT` does not override the public SDK budget.
+
+```python
+# A 120-second initialization policy derives a 180-second create budget.
+with Sandbox(init_timeout=120, failover=True) as sandbox:
+    print(sandbox.commands.run("echo ready").stdout)
+# Sandbox(init_timeout=120, create_timeout=150) raises before allocation.
+```
+
+| Budget | Covered stages and limits |
+| --- | --- |
+| `schedule_timeout` | Central scheduling queue, where that path is used; default 30. |
+| `init_timeout` during fresh create / reusable-snapshot restore | Execd initialization and readiness after backend preparation, within the remaining total create deadline. Cold image/checkpoint preparation and runtime start also consume the logical creation budget. |
+| `init_timeout` during in-place reload / same-node failover | The retained server execution policy bounds the initialization attempt, including execution preparation, checkpoint materialization, runtime restore, Execd readiness and route activation. It does not bound prior teardown or all reconciliation/cleanup. |
+| `create_timeout` / factory `timeout` | Logical creation of a new environment, including admission, preparation, start and publication. Not a running lifetime or a wall-clock guarantee for the Python call or physical cleanup. |
+| Client observation / transport | Separate deadlines. Native create transport adds its communication margin; tunnel setup and client bootstrap have independent bounds. Native reload uses 300 seconds plus communication margin (default 30) per transport attempt, with the same operation identity on transport retries. |
+| `idle_timeout` | Inactivity before reclamation, not a maximum lifetime. |
+
+The stage coverage above describes the pinned backend packaged by this revision;
+initialization is not only Execd work on every lifecycle path. A larger
+initialization policy does not extend unrelated backend RPC, transport, task or
+command-wait deadlines. Configure cold-image total budgets separately.
+`reload()` does not accept per-call initialization or observation overrides.
+A `False` reload result is not proof that a server operation was canceled.
+
+Initialization policy persists on the server and is reused by manual reload and
+automatic failover, including after `connect()`. Named creation can reuse an
+existing environment and does not replace that policy. Reusable-snapshot
+restore creates a new environment with the requested policy (default 30), not
+a policy inferred from snapshot metadata.
+
+Enable DEBUG logging for `akernel_sdk._backends.adx` to see resolved request
+budgets. These diagnostics contain budget scalars and operation/identity fields,
+not tokens, environment variables, mounts, runtime configuration or request bodies.
+A reused/connected environment's actual policy cannot be queried by this SDK;
+reload diagnostics mark it as server-owned rather than reporting a local default
+as its effective policy. Creation errors retain server `failure`, `probe_failure`,
+request ID and operation ID when supplied; their reason/message identify the
+failing stage. Missing server context remains unknown. For reload returning
+False, inspect server lifecycle diagnostics for the environment ID; do not retry
+rollback or replay the business command to obtain diagnostics.
+The maintained `ak` CLI currently exposes inventory, exec and delete, without a
+create or restore command.
+
+Timeout configuration uses the Environment lifecycle operations supported by
+the declared ADX dependency. The deployed backend must support the documented
+creation and recovery semantics.
+Custom user metadata and filtering, a running-lifetime deadline/set_timeout,
+live command-output callbacks, and per-command user selection are outside this
+public SDK surface. They require separately reviewed backend capabilities; the
+SDK does not emulate them with scheduler labels, idle timers or output replay.
+
+## Reusable snapshots
+
+Reusable snapshots require a cluster and runtime that support reusable
+memory/filesystem snapshots. Unsupported operations fail with the backend's
+structured error.
+
+```python
+from akernel_sdk import Sandbox
+
+snapshot = None
+try:
+    with Sandbox(image="python:3.12-slim") as source:
+        source.files.write("/tmp/progress", "turn 10")
+        snapshot = source.create_snapshot(name="turn-10", timeout=300)
+        print(Sandbox.get_snapshot(snapshot.snapshot_id))
+        # Source resumes after capture; it can also be deleted independently.
+
+    with Sandbox.create(snapshot.snapshot_id) as restored:
+        assert restored.files.read("/tmp/progress") == "turn 10"
+finally:
+    if snapshot is not None:
+        Sandbox.delete_snapshot(snapshot.snapshot_id)
+```
+
+| API | Result / semantics |
+| --- | --- |
+| `sandbox.create_snapshot(name=None, *, timeout=300)` | `SnapshotInfo(snapshot_id, names)`; captures runtime memory and filesystem, then the source continues. Timeout is 1..3600 seconds. |
+| `Sandbox.get_snapshot(snapshot_id)` | Query catalog metadata by opaque ID; pending deletion may still return metadata. |
+| `Sandbox.list_snapshots(name=None, limit=None, next_token=None)` | Lazy `SnapshotPaginator`; `limit` is the page size. Returns the accessible catalog, optionally filtered by name. |
+| `Sandbox.delete_snapshot(snapshot_id)` | Idempotent when absent, returns `None` after acceptance; active references can reject deletion with `SNAPSHOT_IN_USE`. |
+| `Sandbox.create(snapshot_id, ...)` | New `Sandbox`, new ID and fresh commands/files/PTY facades; does not delete or change the source. Accepts an ID or `SnapshotInfo`. |
+| `Sandbox.from_snapshot(snapshot_id, ...)` | Retained compatibility entry point with the same options, validation, errors and ownership as `create`. |
+
+The naming and paginator pattern follow E2B, including
+`Sandbox.create(snapshot.snapshot_id)`. Without a snapshot ID,
+`Sandbox.create(image=...)` creates a fresh sandbox, and `Sandbox.create()`
+uses the cluster default rootfs. Existing constructors and
+`Sandbox.from_snapshot(...)` remain supported. AKernel does not resolve E2B
+or agentenv template aliases or another platform's snapshot IDs.
+Listing is a class-level catalog operation, including when accessed through an
+instance; delete returns `None` because the backend does not distinguish absent from
+newly deleted snapshots. Only memory/filesystem capture is exposed; no
+unsupported filesystem-only mode or fabricated timestamps/storage metrics.
+
+```python
+pages = Sandbox.list_snapshots(name="turn-10", limit=20)
+while pages.has_next:
+    for snapshot in pages.next_items():
+        print(snapshot.snapshot_id, snapshot.names)
+# Save pages.next_token between pages to resume a listing later.
+```
+
+Restore inherits captured runtime and CPU/memory geometry rather than applying
+constructor defaults. It does not replay a Dockerfile, image ENTRYPOINT, CMD or
+working-directory creation. `cwd` only sets the command default. `idle_timeout`
+(default 300), `schedule_timeout` (30), `init_timeout` (30), `timeout` (schedule timeout + init timeout + 30), `name`,
+`detached`, `failover`, `node_id`, `port_forwardings`, `mounts`, `reverse_tunnel`
+and `network_policy` configure the new environment/client. Rebind the local
+`HttpReverseTunnel` target explicitly; source client sockets/PTYs/Python handles
+are not restored. Supply `network_policy` explicitly to preserve restrictions:
+the pinned ADX backend does not inherit captured execution policy on restore.
+An omitted or empty policy uses the backend default. A supplied policy is
+applied during creation, before the restored workload is made available.
+For mounted external data, consistency and availability remain the caller's
+responsibility; restore does not copy node-local HostPath storage.
+
+Snapshots outlive their source and do not expire automatically. Delete them
+explicitly. Current ADX rejects deletion with `BackendOperationError` code
+`SNAPSHOT_IN_USE` while environments or templates retain references. Release
+those users and retry; a rejected delete has not marked the snapshot for deletion.
+Older deployments can accept deletion before references are released. On either
+version, an acknowledged delete prevents new restores and never kills existing
+sandboxes; physical collection is asynchronous. Catalog records may remain
+queryable while Deleting, so a successful
+`get_snapshot()` is not a readiness or physical-deletion check. Once collection
+marks the snapshot Deleted, the backend returns not-found. The
+current backend descriptor exposes only ID and names, not catalog state; the
+service validates readiness on `create()` / `from_snapshot()`. Storage locality
+and cross-node restore depend on cluster configuration. Capturing complete
+process state does not imply a full physical copy: incremental/reflink storage
+is a runtime/deployment concern, not selected
+by this API. These APIs are separate from anonymous failover/reload checkpoints.
+
+A remote snapshot does not save the host harness conversation or cursor, model
+requests, or external service state. Quiesce tools and model streams and pair
+local harness state with the returned ID. A restore can execute concurrently
+with its source; the harness must fence the old instance before allowing a
+recovered agent to proceed. It must not also relaunch an agent whose process
+memory has been restored.
+
+`BackendOperationError` preserves status, code, retry/outcome, request ID and
+operation ID when supplied. Snapshot creation makes one request attempt. Restore
+uses the native transport's same-operation retries (stable request ID); the
+public SDK does not initiate a second logical restore. On unknown outcome,
+reconcile using the supplied identity instead of blindly calling create/restore
+again. Before creation is confirmed, native unknown-outcome context can contain
+a lookup name rather than a canonical ID; do not pass it blindly to `ak delete`.
+After creation is confirmed, failure context retains the canonical ID. Read-only
+route checks retry temporary 409/503 responses within a 10-second retry window,
+without recreating the sandbox. A blocking transport call is separately bounded.
+Initialization failures, including interruption during tunnel startup, attempt
+to delete the known-created clone and preserve the original error. Failed
+rollback errors remain in `cleanup_errors` for diagnosis and explicit retry.
+See [`examples/snapshots.py`](./examples/snapshots.py).
+
+`timeout` must be at least `schedule_timeout + init_timeout + 30` seconds; shorter budgets raise
+`ValueError` before a create request. This prevents the pinned native SDK from
+silently increasing the supplied budget. It is the frontend's logical creation
+budget, not a wall-clock deadline for the entire Python call: transport margins,
+tunnel/readiness setup, facade binding and cleanup can add elapsed time.
+
+## Fork a running sandbox
+
+`sandbox.fork(count=N)` captures one reusable memory/filesystem snapshot and
+derives N new running sandboxes. It returns an ordered `list[Sandbox | Exception]`
+with exactly one result per requested child. A child failure does not kill
+successful siblings; a capture failure raises for the whole call. The source
+keeps its ID and idle policy and continues after capture.
+
+```python
+from akernel_sdk import ForkCleanupError, Sandbox
+
+children = []
+pending_snapshot = None
+try:
+    with Sandbox(image="python:3.13-slim-bookworm") as source:
+        # Explicitly acknowledge this fresh example's unrestricted policy;
+        # older API versions omit creation ownership from their responses.
+        source.update_network_policy(None)
+        source.files.write("/tmp/state", "captured")
+        try:
+            results = source.fork(count=3)
+        except ForkCleanupError as error:
+            # Preserve handles even when resource cleanup was not acknowledged.
+            children.extend(r for r in error.results if isinstance(r, Sandbox))
+            children.extend(error.pending_sandboxes)
+            pending_snapshot = error.snapshot_id
+            raise
+        for result in results:
+            if isinstance(result, Exception):
+                print("child failed:", result)
+            else:
+                children.append(result)
+                print(result.id, result.files.read("/tmp/state"))
+finally:
+    # Production callers should attempt every deletion and retain failed IDs.
+    for child in children:
+        child.kill()
+    if pending_snapshot is not None:
+        Sandbox.delete_snapshot(pending_snapshot)
+```
+
+The maintained [`examples/fork.py`](./examples/fork.py) attempts cleanup for all
+known children even when one deletion fails, and preserves workload exceptions.
+
+| Parameter | Meaning |
+| --- | --- |
+| `count=1` | Integer 1..20; booleans are rejected. |
+| `idle_timeout=None` | Child idle timeout in seconds; omitted inherits the source's configured idle timeout. Zero disables idle expiry. |
+| `snapshot_timeout=300` | Capture operation deadline in seconds, 1..3600. |
+| `restore_timeout=None` | Logical creation budget per child in seconds; minimum/default is the handle's schedule timeout + effective child init timeout + 30. Checked before capture. |
+| `init_timeout=None` | Child initialization budget, integer seconds 1..86400. Omission inherits this handle's creation configuration; an override applies only to children. Connected handles use 30 by default. Named reuse retains the handle's requested configuration for children; neither path queries or changes the existing server initialization policy. |
+
+Children inherit captured resources. Fork explicitly supplies the source
+client's last acknowledged network policy with each create request, including
+successful policy updates since source creation. After an uncertain/interrupted
+policy update it refuses to capture until a policy is successfully reapplied.
+Serialize policy changes and captures in the application. This differs from a
+bare `from_snapshot()` call, which requires an explicit policy for restrictions.
+As with restore, the logical create budget excludes client/transport overhead;
+the client's cwd, declared ports, mounts and reverse tunnel are rebound with
+fresh handles. Children are non-detached owned handles even if the source is
+detached. Writes to each child's captured root filesystem and process memory
+are independent. External services and writable HostPath mounts remain shared
+external state. Quiesce model/tool streams before capture, reconnect affected
+connections afterwards, and do not relaunch processes already restored from
+memory. Deleting the source or one child does not delete its siblings.
+
+The count/ordered partial-result convention follows
+[E2B fork](https://docs.e2b.dev/sandbox/fork). Deliberate differences:
+
+- AKernel provides an instance method, not E2B's additional fork-by-ID
+  class variant. There is no separate all-or-nothing `clone()` operation.
+- The supported ADX SDK and packaged Environment API have
+  snapshot/create/delete primitives but no native batch fork method/route.
+  The ADX adapter captures once and then creates children **sequentially**;
+  this is multiple requests, not E2B's single server-side fork operation.
+- E2B fork's `timeout` is an absolute child lifetime. AKernel exposes
+  `idle_timeout` and named operation deadlines instead of promising a lifetime
+  its backend does not implement. There is no ambiguous `timeout` alias.
+- Only a confirmed new environment's creation policy is trusted. Named reuse
+  can retain an older specification even when the constructor succeeds; missing
+  ownership confirmation and connected handles are unconfirmed too. Fork fails
+  with `NETWORK_POLICY_UNCONFIRMED` before capture until the caller successfully
+  reapplies the intended policy with `update_network_policy(policy)`. Passing
+  constructor arguments again does not prove they changed an existing sandbox.
+- Temporary snapshot deletion is requested after all creates settle. When the
+  backend explicitly rejects it with `SNAPSHOT_IN_USE`/`not_started`, each child
+  exposes `fork_snapshot_id`; the SDK retains the snapshot and deletes it after
+  the last owned child's confirmed `kill()`. `close()` does not release a live
+  child's reference. Save the ID if deleting children by ID, from another client,
+  or after a client restart; then delete the snapshot explicitly after its users
+  are released. No background or garbage-collection deletion is performed.
+  Other initial cleanup failures raise `ForkCleanupError`: `results` retains
+  successful child handles, `snapshot_id` supports retrying deletion, and
+  `cleanup_error` preserves the original error. A failed client binding whose
+  child deletion fails or is unconfirmed is retained in `pending_sandboxes`;
+  retry `kill()` after deciding that remote deletion is intended.
+  Actual cleanup exceptions are in `child_cleanup_errors`; local-only closure
+  need not raise one. With no other cleanup error, `cleanup_error.code` is the
+  SDK-generated `CLEANUP_UNCONFIRMED` (`outcome="not_started"` for remote
+  deletion). If snapshot cleanup
+  fails on the last child kill, that call raises `ForkCleanupError` with the
+  snapshot ID; retry that child's `kill()` or delete the snapshot explicitly.
+  Confirmed child deletion is not repeated during that retry.
+
+Unknown capture/create outcomes preserve `BackendOperationError` request and
+lookup identity; the SDK does not initiate an extra logical attempt. An
+unconfirmed create may still exist remotely. Distinguish native lookup names
+from canonical IDs when reconciling. Confirmed-created IDs, including failures
+during native bootstrap or public binding, remain in `environment_id`; rollback
+failures remain in `cleanup_errors`. Interruption, including during final
+snapshot deletion, attempts ownership-aware rollback of every known child and
+deletion of the temporary snapshot, and re-raises the original exception
+object/type. Automatic rollback deletes only confirmed newly created children;
+false or missing ownership closes local resources only. Local closure is not
+remote deletion: these children stay pending with retryable handles, even when
+local closure succeeds. An explicit `kill()` can delete such a child by ID after
+the local client has closed. Reconciliation data
+on that exception includes `snapshot_id`, `created_environment_ids`,
+`pending_environment_ids`, `pending_sandboxes`, `cleanup_errors`, and
+`creation_errors`. Pending sandboxes are cleanup-only public handles: retry
+`kill()` without rebinding commands, files or tunnels. Query or connect separately
+if inspection is needed. Errors from a second interruption during cleanup are
+retained alongside other cleanup errors rather than replacing the first one.
+After releasing unresolved users, explicitly retry snapshot deletion. Unknown
+creation errors retain their lookup/request context; do not blindly delete a
+lookup name as though it were a confirmed-created ID.
+Restore readiness and native session/tunnel initialization can fail before a
+child reaches the fork result list. Secondary interruptions while closing or
+rolling back are retained on the original exception. Known unresolved bootstrap
+children still appear in the fork's pending IDs and cleanup-only handles; their
+failed automatic rollback is not repeated before returning the cancellation.
+`creation_errors` combines the complete backend result set with earlier public
+binding errors, deduplicated by exception identity. It preserves nested request,
+operation, lookup and rollback context even if binding an earlier child is
+interrupted. Uncertain creation errors do not grant ownership or trigger deletion
+of their lookup names.
+
+Run real isolation, partial-failure and cleanup acceptance on a supporting
+deployment using a complete image that contains Python 3 (not a CLI mount image):
+
+```bash
+AKERNEL_RUN_INTEGRATION=1 \
+AKERNEL_TEST_IMAGE=python:3.13-slim-bookworm \
+PYTHONPATH=sdk/python \
+python sdk/python/tests/integration/test_fork.py
+```
+
+The companion `tests/integration/test_fork_network.py` covers two independent
+tunnels (default and custom listen ports), private published-port responses,
+creation-time and updated deny policy, and isolated child policy clearing.
+It first verifies an allowed TCP baseline against `AKERNEL_TEST_EGRESS_HOST`
+(default `1.1.1.1`) and `AKERNEL_TEST_EGRESS_PORT` (443); an unreachable baseline
+fails instead of producing a false policy pass. Run both suites with:
+
+```bash
+AKERNEL_RUN_INTEGRATION=1 AKERNEL_TEST_IMAGE=python:3.13-slim-bookworm \
+PYTHONPATH=sdk/python python -m unittest \
+  tests.integration.test_fork tests.integration.test_fork_network -v
+```
+
+The partial-failure case injects one client-side error before its child create;
+the other two children are real. The cleanup case injects one deletion failure
+and verifies explicit retry. The suite checks real process memory/PID/open-file
+offsets, private writes, source/sibling independence, and snapshot collection.
+It never changes cluster configuration or induces a platform capacity failure.
+
 ## Local failover and reload
 
 `Sandbox(failover=True)` opts into same-node recovery of the same logical
@@ -551,8 +1010,9 @@ created by sandbox workloads through Execd's internal `POST /checkpoint`
 endpoint on `/run/akernel/execd.sock`. A successful request returns
 `{"status":"completed"}`; a concurrent checkpoint request returns HTTP 409.
 This Unix-socket protocol is experimental and is not a stable public AKernel
-SDK interface. The SDK deliberately does not expose checkpoint identifiers,
-restore, list, or delete operations.
+SDK interface. These anonymous checkpoints have no public catalog; use the
+separate reusable snapshot APIs above when you need an independent snapshot ID
+and restoration to a new sandbox.
 
 The bundled runsc and Firecracker runtimes support this recovery flow. The
 maintained example validates it with runsc and installs curl in the sandbox
@@ -734,12 +1194,12 @@ sandbox. For example, expose a prepared log directory on a selected runsc node:
 from akernel_sdk import Mount, Sandbox
 
 logs = Mount(
-    target="/apps/logs",       # Path inside the sandbox.
-    host_path="/apps/logs",    # Path visible to sandboxd on the selected node.
+    target="/app/logs",       # Path inside the sandbox.
+    host_path="/app/logs",    # Path visible to sandboxd on the selected node.
     read_only=False,           # Explicitly allow application log writes.
 )
 with Sandbox(node_id="<prepared-node-id>", mounts=[logs]) as sandbox:
-    print(sandbox.commands.run("ls -ld /apps/logs").stdout)
+    print(sandbox.commands.run("ls -ld /app/logs").stdout)
 ```
 
 `read_only=True` is the default. HostPath supports `type="bind"` only;
@@ -777,7 +1237,7 @@ leaves that file on the node:
 
 ```bash
 python sdk/python/examples/hostpath_mounts.py \
-  --node-id <prepared-node-id> --host-path /apps/logs --write
+  --node-id <prepared-node-id> --host-path /app/logs --write
 ```
 
 ## Launch from a Dockerfile
@@ -852,7 +1312,19 @@ sandbox.kill()             # closes local clients; remote sandbox remains
 Sandbox.delete("worker")   # terminates the named remote sandbox
 ```
 
-`sandbox.id` is the physical ID shown by `ak list`. `get_info()` returns a
+When the backend accepts creation with an existing successful name, it returns
+that sandbox and its original resource allocation; changed arguments never
+resize it. Some older deployments reject changed specifications with CONFLICT
+instead of reusing them. If local initialization fails while reusing a result,
+the SDK closes
+its local handle and preserves the original workload. Automatic rollback
+removes a remote instance only when the server confirms this create owns it.
+This applies to backend readiness and cwd setup, public facade construction,
+and Dockerfile COPY, RUN or startup-dispatch failures.
+Use `get_info()` to inspect the retained allocation, or delete the named
+sandbox before creating a replacement with a different specification.
+
+`sandbox.id` (also `sandbox.sandbox_id`) is the logical ID shown by `ak list`. `get_info()` returns a
 `SandboxInfo` containing `id`, state, requested CPU, memory, XPU and storage,
 and the OCI image when one was configured.
 
@@ -893,6 +1365,8 @@ Maintained examples are under [`examples/`](./examples):
 - `command_stdin.py`
 - `custom_image.py`
 - `dockerfile_launch.py`
+- `snapshots.py`
+- `lifecycle.py`
 - `failover_reload.py`
 - `gpu_sandbox.py`
 - `hostpath_mounts.py`
@@ -968,7 +1442,11 @@ not part of the default test suite.
 public exception: `code`, `retry`, `outcome`, `request_id`, `operation_id`,
 `environment_id`, `status_code`, `scheduling_failure`, `failure`,
 `probe_failure`, and `request_forwarded`. Fields absent from the backend response
-are `None`; the original exception remains in `__cause__`.
+are `None`; the original exception remains in `__cause__`. `cleanup_errors` is a
+tuple of rollback failures (empty when absent). Known-created IDs and these
+errors are also attached to interruption exceptions without changing their type.
+
+`first_error` retains the native client's first failed attempt when a later retry reports a different failure; otherwise it is `None`. The final exception's `code`, `retry` and `outcome` still govern retry and cleanup decisions. The original final native exception remains in `__cause__`.
 
 ```python
 from akernel_sdk import BackendOperationError, Sandbox
@@ -990,3 +1468,349 @@ results retain `outcome="unknown"` and `retry="same_operation"`; preserve the
 original identity when querying or retrying. Do not infer execution or cleanup
 from a timeout message. `status_code` describes the service failure (including
 an SSE final event's error code); it need not equal the stream's HTTP status.
+
+Confirmed scheduling cancellations with structured diagnostics raise
+`SchedulingError`, a subclass of `BackendOperationError`. If no worker is
+eligible and CPU, memory or disk shortages contribute, the exception is the
+more specific `InsufficientResourcesError`, which also subclasses
+`SchedulingError`. Existing `except BackendOperationError` handlers still work.
+
+The service's `error.schedulingFailure` object is retained as
+`error.scheduling_failure`, with its original field names and values:
+
+| Field | Meaning |
+| --- | --- |
+| `snapshotRevision` | Revision of the scheduling snapshot at queue expiry; retained for diagnostics. |
+| `nodeCount` | Number of workers known to the scheduler. Zero establishes `no_workers`. |
+| `eligibleNodes` | Number passing all hard placement checks in that snapshot. A positive value produces `queue_timeout`. |
+| `requested` | Requested resources: `cpu_millis` in millicores, `memory_bytes` and `disk_bytes` in bytes. |
+| `maxCapacity`, `maxAvailable` | Resource objects with the same keys/units. Maxima span workers; available values already subtract reservations. |
+| `rejections` | Map of rejection keys to worker counts. Counts may overlap; zero counts do not establish blockers. |
+
+Counters and resource amounts use unsigned 64-bit integers; booleans, negative
+values and numeric strings are not coerced into valid evidence. Missing or
+unusable eligibility data cannot establish a resource shortage; classification
+also requires valid positive resource-rejection counts. Additional fields and
+future rejection keys remain available in the original object.
+Keep schema extensions aligned with ADX's `platform/api/http/error-contract.md`;
+adding compatible-worker capacity diagnostics requires a service-side contract
+before the SDK can distinguish temporary occupancy from an oversized request.
+
+The scheduling exceptions expose:
+
+- `reasons`: a tuple of positive worker rejection keys from the service, sorted
+  by key. Counts can overlap; their sum is not a worker count. Unknown future
+  rejection keys are retained.
+- `resource_shortages`: contributing resource names (`"cpu"`, `"memory"`,
+  `"disk"`), in that order. Other constraints can also contribute.
+- `suggestions`: a tuple of concrete recovery suggestions. The exception message
+  includes these suggestions, readable requested resources, and rejection counts.
+
+```python
+from akernel_sdk import InsufficientResourcesError, Sandbox, SchedulingError
+
+try:
+    sandbox = Sandbox(cpu=2000, memory=8192, storage_mb=20480)
+except InsufficientResourcesError as error:
+    print("Unavailable resources:", ", ".join(error.resource_shortages))
+    print(error)  # Summary and actions; this does not retry the request.
+    print("All placement blockers:", error.reasons)
+except SchedulingError as error:
+    print(error)  # Runtime, devices, placement, volumes, workers, or queue budget.
+else:
+    sandbox.kill()
+```
+
+| Reported blocker | Action to consider |
+| --- | --- |
+| `insufficient_cpu`, `insufficient_memory`, `insufficient_disk` | Reduce the request, release idle sandboxes, or add suitable worker capacity. |
+| `runtime_fit`, `device_fit` | Select a supported runtime or available accelerator model/count, or add compatible workers. |
+| `node_available`, `no_workers` | Ask the operator to check worker health/registration and register healthy workers. |
+| `node_affinity`, `placement_groups`, `environment_affinity`, `topology_spread` | Adjust placement constraints or add workers that satisfy them. |
+| `waiting_for_volume`, `volume_topology` | Wait for the volume to be released or select workers with access to its storage. |
+
+For example, a mixed rejection produces a message like:
+
+```text
+create sandbox failed: the cluster has insufficient resources for this request;
+no worker satisfies all resource and placement requirements.
+Requested: 2 CPU, 8 GiB memory, 20 GiB disk.
+Worker rejections: insufficient memory (14), unsupported runtime (1).
+Suggestions: Reduce the memory request, release idle sandboxes, or add workers
+with more available memory. Select a supported runtime or add workers that
+advertise the requested runtime.
+```
+
+When the snapshot still has eligible workers, `reasons` is `("queue_timeout",)`
+and `resource_shortages` is empty: the queue budget expired, but resource shortage
+is not established. Missing or unusable diagnostic fields produce
+`reasons=("unknown",)` and retain the raw diagnostic for investigation. Older
+services without a structured diagnosis keep their existing exception behavior.
+In particular, `nodeCount > 0`, `eligibleNodes == 0` and an empty `rejections`
+map produce `unknown`: workers exist, but the snapshot does not explain the
+rejection. This case establishes neither `no_workers` nor a resource shortage.
+Plain transport timeouts, initialization failures, backend rate limits and
+uncertain outcomes do not become scheduling errors just because their message
+mentions resources or a deadline.
+
+The service's `code`, `retry`, `outcome`, IDs and original `scheduling_failure`
+are preserved; the native message remains in `__cause__`. No additional attempt,
+backoff or queue budget is introduced. `retry="never"` means this queue wait is
+finished; after addressing the blockers, callers may deliberately start a new
+create request. Unknown outcomes keep their original same-operation semantics.
+
+Capacity and available maxima in the raw diagnostic span all workers, including
+workers rejected by runtime or placement filters. Each resource maximum can
+come from a different worker. They do not establish that a suitable worker can
+run the request, or reliably distinguish temporary occupancy from an oversized
+request on compatible workers. The default summary therefore presents the
+requested resources and blockers without presenting those maxima as usable
+capacity. Diagnostics describe the expiry snapshot, not capacity after scaling.
+
+
+### Client-managed Docker/Compose runtime
+
+For a platform-owned deployment, use the [managed profile](#platform-managed-native-docker-builds). The client-managed API below requires a compatible runsc deployment with Sandboxd managed file-backed tmpfs support. Select reflink checkpoint mode and durable sync in deployment configuration; the SDK never modifies cluster settings. See [runtime prerequisites](../../builder/image-bridge/README.md).
+
+```python
+from pathlib import Path
+from akernel_sdk import DockerRuntime, Sandbox, prepare_compose_images
+
+images = prepare_compose_images(
+    "./project", ["./project/docker-compose.yaml"],
+    output_dir="./diagnostics/images",
+    bridge_binary="/opt/tools/akernel-image-bridge",
+)
+runtime = DockerRuntime(
+    images=images, bridge_binary=Path("/opt/tools/akernel-image-bridge"),
+    writable_mb=2048, writable_backing="file",
+)
+sandbox = Sandbox(
+    image=DockerRuntime.default_image, cpu=4000, memory=8192,
+    storage_mb=30720, cwd="/", failover=False,
+    **runtime.sandbox_options(),
+)
+try:
+    runtime.start(sandbox, network="bridge")
+    # Upload the original project; run ordinary docker compose build/up here.
+    # Persist any client-side state that must stay aligned with the snapshot.
+    snapshot = sandbox.create_snapshot(timeout=300)
+    sandbox.kill()  # Fence the source before creating a running clone.
+    restored = Sandbox.from_snapshot(
+        snapshot, cwd="/", failover=False, **runtime.sandbox_options(),
+        # Explicitly rebind any reverse_tunnel and current network_policy here.
+    )
+    try:
+        runtime.reconnect_network(restored)  # new outer TAP; no daemon restart
+        print(restored.commands.run("docker ps", check=True).stdout)
+        # Continue using restored, which wraps the captured processes. Do not
+        # call runtime.start(), rerun builds, or restart the agent command.
+    finally:
+        restored.kill()
+        Sandbox.delete_snapshot(snapshot.snapshot_id)
+finally:
+    sandbox.kill()
+```
+
+The SDK prepares manifest/config metadata only. Sandboxd's existing OCI/ROFS image manager supplies immutable shared lower roots; containerd uses a private managed upper. Credentials for metadata discovery and node layer fetching are separate. No task image build/push or user image plan is required. Original definitions are read without rewriting them. Managed bridge networking preserves original default/custom IPv4 bridge networks, service DNS and TCP/UDP userland port mappings; Harbor continues to own its normal service, bind, resource and verifier overlays.
+
+`from_snapshot(..., extra_config=...)` and `create(snapshot_id=..., extra_config=...)` forward validated, defensively copied runtime configuration. Supply the same managed-upper geometry and image mounts on restore. Native ADX DTOs, client connection/TLS handling and reconstructed commands/files/tunnel handles stay inside the SDK. Snapshot restore does not capture local Python harness state or external services; callers own alignment, fencing the previous execution and deleting snapshots.
+
+`DockerRuntime.default_image` is the public Docker Hub image
+`docker.io/library/docker:28.3.3-dind`. Fresh runtime startup installs missing
+Alpine support packages (Python 3, Bash, util-linux and related tools). This
+requires access to Docker Hub and Alpine package repositories; no custom runtime
+image build or registry push is needed. A compatible prebuilt image can still be
+selected explicitly to avoid installing packages during startup. Restore never
+repeats runtime installation or starts another Docker daemon.
+
+### Compose projects and service processes
+
+`ComposeProject`, `ServiceHandle` and `ServiceProcessHandle` expose project, service and process operations. They use the same managed Docker runtime and existing ROFS provider described above. Their backend-neutral operations use the Agent DX API. The managed file-backed upper profile additionally requires compatible Sandboxd support; installing this Python SDK alone does not enable it. The framework/runtime boundary and prerequisites are described in [managed Compose integration](docs/managed-compose.md). A complete client-side example is in [compose_checkpoint.py](examples/compose_checkpoint.py).
+
+`ComposeProject.prepare()` freezes a private local copy of the selected context and Compose bytes and produces sandbox options. The platform-managed profile resolves services through official Compose after `start_runtime()`; client-managed mode discovers image inputs locally. Put `output_dir` outside the input context. Keep build contexts inside the selected directory. The default `network="bridge"` preserves original Compose network definitions, Docker IPAM, DNS and published TCP/UDP ports. The explicit `network="host"` compatibility profile still adds host/loopback aliases and rejects explicit Compose networks. Scaled service process handles are rejected. Task files are not rewritten. Generic SDK defaults contain no Harbor service or artifact names.
+
+In client-managed automatic image mode, both Dockerfile bases and image-only services use pinned ROFS mounts. `pull()` verifies their Docker references and committed snapshots; `up()` verifies them again and prevents native repeat pulls. This includes `image: name:tag@sha256:...`, for which native Compose's missing policy can still request layer extraction. Tags are resolved once during preparation; missing or changed registrations fail without fallback. Without automatic images, native Compose pull behavior is retained.
+
+Client-managed discovery requires an image bridge reporting `discover_schema: 2`
+via `--mode capabilities`. Discovery
+confines build/Dockerfile and `.env` reads to the frozen context and receives
+only explicitly supplied project variables. `include` / `extends.file` and
+remote contexts are not supported in client-managed discovery. Valid shared chains
+across different manifests/configs are supported after OCI configuration checks.
+
+```python
+from pathlib import Path
+from akernel_sdk import ComposeProject, DockerRuntime, Sandbox
+
+project = ComposeProject.prepare(
+    "./project", ["./project/docker-compose.yaml"],
+    runtime=DockerRuntime(bridge_binary=Path("/opt/tools/akernel-image-bridge"),
+                          writable_mb=2048, writable_backing="file"),
+    auto_images=True, output_dir="./artifacts/compose",
+)
+sandbox = Sandbox(image=DockerRuntime.default_image, cpu=4000,
+                  memory=8192, storage_mb=30720, cwd="/", failover=False,
+                  **project.sandbox_options())
+try:
+    project.start_runtime(sandbox)       # fresh creation only
+    project.build(timeout=600)
+    project.pull(timeout=600)
+    # Apply the application's running network policy here if required.
+    project.up(wait_timeout=600)
+    worker = project.service("worker")
+    print(worker.exec("uname -s").stdout)  # POSIX sh by default
+    process = worker.start_command("exec ./worker", cwd="/app")
+    snapshot = sandbox.create_snapshot(timeout=300)
+    project_state, command_id = project.descriptor, process.command_id
+    # Persist these JSON descriptors with application/harness state as needed.
+    sandbox.kill()                      # fence source before creating running clone
+    restored = Sandbox.from_snapshot(snapshot, cwd="/", failover=False,
+                                     **project.sandbox_options())
+    try:
+        attached = ComposeProject.attach(restored, project_state)
+        attached.reconnect_network()    # rebind owned NAT/forwarding rules only
+        original = restored.commands.connect(command_id)  # no build/up/relaunch
+    finally:
+        restored.kill()
+        Sandbox.delete_snapshot(snapshot.snapshot_id)
+finally:
+    sandbox.kill()
+```
+
+`ServiceHandle` provides exec, upload/download (including directories), stop and process start. `start_command()` starts native Compose exec through the sandbox command API without installing a service monitor or requiring Python in the service. Its handle PID belongs to the outer Docker CLI; persist its stable `command_id` and reconnect through `restored.commands.connect(command_id)` after whole-sandbox restore. The runtime captures the Docker CLI, dockerd and inner process together. Do not use the outer PID to signal an inner service process. Whole-sandbox checkpointing requires no application stop/continue or model-idle barrier.
+
+The separate explicit `start_process()` API returns a `ServiceProcessHandle` for callers that need inner PID/tree signalling. Select shell, login behavior, cwd, user and environment explicitly; the SDK does not assign a special main service. `ServiceProcessHandle` uses a stable process token, Docker container ID/start time and Linux process start time. Its in-service monitor and identity record are captured with the sandbox. It supports inspect, tree stop/continue/terminate/kill and exit-code wait. Python 3 is required only for managed service processes, not ordinary service exec. The process is detached from the short-lived docker-exec submission; outer command PIDs are not used to signal the inner process.
+
+Unknown start failures retain `error.process_descriptor`; attach using that token to observe the original execution instead of submitting it again. A restarted/replaced container or changed process identity is rejected. A partial runtime startup is fresh-only and cannot be replayed on the same project object; delete the owned sandbox after failure. Compose failures retain phase, exit code, stdout/stderr and diagnostic logs. The SDK never silently retries a side-effecting Compose operation with an unknown outcome.
+
+`ComposeProject.attach()` only reconstructs client bindings. It does not upload files, start daemons, build images or recreate services. Snapshot restore must retain the same mount/upper options, rebind tunnels and the current network policy, and fence the previous execution before resuming it. Application conversation state and checkpoint timing remain with the application. Descriptors may contain explicit project environment values; store them with the same protection as application configuration.
+
+
+### Native Compose networking and model tunnels
+
+The Linux/amd64 runsc Docker profile requires Docker 28's operator-owned
+`--net-raw=true` and `--allow-packet-socket-write=true` flags. The outer runtime
+image supplies `ip`, `iptables-legacy` and `iptables-legacy-restore`. No task
+Dockerfile or Compose edit is needed. These are node/runtime prerequisites;
+the SDK never changes a deployment. Existing shared ROFS lower and file-backed
+upper mounts are independent of the network choice.
+
+The SDK enables IPv4 forwarding/SNAT inside the sandbox and keeps independent
+bridges from routing directly to each other. Docker owns bridge creation, IPAM,
+embedded DNS and TCP/UDP userland port proxies. Global dockerd iptables handling
+is disabled because this runsc lacks Docker's `addrtype` matcher. A daemon-only
+PATH selects legacy tools for Docker's per-container DNS DNAT; system symlinks
+and original user files are preserved. IPv6-only egress, non-bridge drivers and
+arbitrary Docker firewall/driver options are outside the supported profile.
+
+After restoring to a new outer TAP/address, call `project.reconnect_network()`
+(or `DockerRuntime.reconnect_network(restored)` for the low-level API) before
+resuming work. It replaces only SDK-owned forwarding/NAT chains, retaining
+conntrack and the captured bridges, containers, DNS/proxies and inner sockets.
+`attach()` itself remains free of remote operations. Established connections
+inside the sandbox, including through its published-port proxy, are retained.
+Connections to external peers do not acquire address-migration guarantees.
+
+An `HttpReverseTunnel` listens on the **outer** loopback. For a service on its
+own bridge, use the service-specific controlled entry point:
+
+```python
+# Pass the same HttpReverseTunnel on fresh creation and Sandbox.from_snapshot.
+url = project.service("worker").expose_tunnel(tunnel)
+process = project.service("worker").start_process(
+    "exec python3 worker.py", envs={"MODEL_BASE_URL": url},
+)
+```
+
+`expose_tunnel()` binds an ephemeral port only on an attached IPv4 gateway and
+accepts only that service's IP. It relays TCP bytes without changing URLs,
+authentication headers, HTTP or SSE. An internal bridge can use its local
+gateway without gaining general egress. Host-network services retain the
+original loopback URL. The relay and JSON descriptor enter the sandbox snapshot;
+restored projects reuse the entry point without starting another listener.
+Container replacement, a missing relay descriptor on restore, or ambiguous
+launch outcomes fail closed. Network-none and IPv6-only services cannot use this
+IPv4 entry point.
+
+Run the opt-in real network regression only against an owned test instance:
+
+```sh
+AKERNEL_RUN_COMPOSE_TESTS=1 \
+AKERNEL_TEST_DIND_IMAGE='<compatible-dind-image>' \
+AKERNEL_TEST_IMAGE_BRIDGE_BINARY='/absolute/path/akernel-image-bridge' \
+python -m unittest tests.integration.test_compose_network -v
+```
+
+It checks default/custom DNS, aliases, disjoint-network isolation, TCP/UDP port
+mappings, peer-restricted model HTTP/auth/SSE, new egress, and original service
+and published-port TCP sockets across two snapshot/delete/restore cycles. All
+owned environments and snapshots are deleted; no deployment is changed.
+
+Explicit service process-tree control freezes waiters before descendants and thaws descendants before waiters, preserving Bash job-control wait semantics. Numeric PID order is not used as ancestry. Whole-sandbox checkpointing does not require these signals.
+
+### Platform-managed native Docker builds
+
+When an operator enables a named managed-runtime profile, clients submit its
+capability name. They do not need Docker, Kubernetes access, a Registry route,
+Registry credentials, a node path or an image-bridge executable:
+
+```python
+from akernel_sdk import ComposeProject, DockerRuntime, Sandbox, build_image
+
+artifact = build_image("./environment", profile="harbor-v1")
+sandbox = Sandbox(image=artifact.reference, env=artifact.envs)
+# Use artifact.cwd / artifact.user as the task's execution defaults.
+sandbox.kill()
+
+project = ComposeProject.prepare(
+    "./environment", ["./environment/docker-compose.yaml"],
+    runtime=DockerRuntime(profile="harbor-v1"), network="bridge",
+)
+sandbox = Sandbox(**project.sandbox_options())
+project.start_runtime(sandbox)
+project.build()  # Official Buildx remote; native Dockerfile frontend and cache.
+project.pull()   # Runtime prepares ROFS and registers the immutable references.
+project.up()
+service = project.service("main")
+# Existing service/process and snapshot interfaces apply unchanged.
+sandbox.kill()
+```
+
+The node authorizes the ADX tenant and supplies the pinned tool image, official
+Buildx endpoint, private Registry account, collection capability and Docker
+runtime configuration. The runtime pushes native Nydus OCI artifacts directly;
+Dragonfly and Sandboxd's existing ROFS image manager distribute shared lowers.
+The SDK only transfers task files, submits operations and returns artifact/service
+handles. It does not interpret Dockerfiles or start a local Docker daemon.
+
+`no_cache=True` is an explicit rebuild choice; fresh environments retain native
+BuildKit cache use by default. Build failure stdout/stderr can be retained using
+`build_image(..., log_path=...)`. Cleanup failures retain environment identity.
+`artifact.has_startup_command` reports whether the effective OCI ENTRYPOINT/CMD
+is nonempty. Pass it as `Sandbox(..., inherit_entrypoint=artifact.has_startup_command)`
+when the task should run the image's startup command. Images that clear both
+commands still support interactive sandbox creation with inheritance disabled.
+Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the
+temporary preparation sandbox's scheduling reservation. Its existing limits
+remain 1000 millicores and 2048 MiB; each request must be positive and no greater
+than its limit. Omit these options to preserve the default reservations. Lower
+requests do not provide additional physical capacity for concurrent workloads.
+The managed resource-geometry probe coalesces concurrent reads within one
+authenticated SDK backend and reuses successful views for at most one second.
+Errors are not cached. Creation still reaches the scheduler individually, and
+node authorization and storage validation remain authoritative on every request.
+Restore uses `ComposeProject.attach()` and saved descriptors; it never rebuilds
+or reruns Docker startup. Snapshot metadata contains an opaque server-created
+collection identity, checked against the tenant and profile on restore.
+
+This opt-in profile requires same-node retained collections and the same mount
+view. Version-1 collections use durable local live/checkpoint leases and are
+retired after their last reference disappears; retained checkpoints keep their
+ROFS mounts pinned. Service restart recovers these leases before admission.
+Legacy collections require an operator drain. This local mount cleanup does not
+delete Registry artifacts. Cross-node reconstruction, Pod replacement with a
+changed provider identity, and automatic Registry artifact GC remain outside
+the qualified contract.
+Operators own Registry TLS and repository-scoped authorization. A shared
+Registry account does not provide per-tenant image isolation.

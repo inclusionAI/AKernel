@@ -22,6 +22,7 @@ from enum import Enum, auto
 from typing import Any, Protocol
 
 from .._addresses import Endpoint
+from .._sandboxes import SandboxQuery
 from ..types import (
     CommandInfo,
     CommandResult,
@@ -31,6 +32,7 @@ from ..types import (
     NetworkPolicy,
     S3Config,
     SandboxInfo,
+    SnapshotInfo,
 )
 
 
@@ -81,6 +83,62 @@ class SandboxSpec:
     storage_limit_mb: int
     network_policy: NetworkPolicy | None
     extra_config: Mapping[str, object]
+    create_timeout: int | None = None
+    init_timeout: int = 30
+
+
+@dataclass(frozen=True)
+class SnapshotRestoreSpec:
+    """Restore inputs, deliberately excluding fresh-boot resource defaults."""
+
+    snapshot_id: str
+    idle_timeout: int
+    schedule_timeout: int
+    timeout: int
+    name: str | None
+    command_cwd: str | None
+    port_forwardings: tuple[int, ...]
+    mounts: tuple[Mount, ...]
+    reverse_tunnel: HttpReverseTunnel | None
+    detached: bool
+    failover: bool
+    node_id: str | None
+    network_policy: NetworkPolicy | None
+    extra_config: Mapping[str, object] = field(default_factory=dict)
+    xpu: str | None = None
+    storage_mb: int | None = None
+    inherit_entrypoint: bool = False
+    init_timeout: int = 30
+
+
+@dataclass(frozen=True)
+class SandboxConnectSpec:
+    """Local attachment options; never fresh-boot or change remote resources."""
+
+    environment_id: str
+    timeout: int
+    command_cwd: str | None
+    port_forwardings: tuple[int, ...]
+    reverse_tunnel: HttpReverseTunnel | None
+    detached: bool
+    idle_timeout: int = 300
+    schedule_timeout: int = 30
+    network_policy: NetworkPolicy | None = None
+    mounts: tuple[Mount, ...] = ()
+    extra_config: Mapping[str, object] = field(default_factory=dict)
+    xpu: str | None = None
+    storage_mb: int | None = None
+    inherit_entrypoint: bool = False
+    failover: bool = False
+    init_timeout: int = 30
+
+
+@dataclass(frozen=True)
+class CommandReference:
+    """Atomic command attachment; PID alone is not a durable identity."""
+
+    pid: int
+    command_id: str | None
 
 
 class CommandsDriver(Protocol):
@@ -102,15 +160,21 @@ class CommandsDriver(Protocol):
         envs: Mapping[str, str] | None,
         cwd: str | None,
         stdin: bool,
-    ) -> int: ...
+    ) -> CommandReference: ...
 
-    def wait(self, pid: int, timeout: int | None) -> CommandResult: ...
+    def wait(self, command: str | int, timeout: int | None) -> CommandResult: ...
 
-    def kill(self, pid: int) -> bool: ...
+    def kill(self, command: str | int) -> bool: ...
 
-    def send_stdin(self, pid: int, data: str, eof: bool) -> None: ...
+    def send_stdin(self, command: str | int, data: str, eof: bool) -> None: ...
 
     def list(self) -> list[CommandInfo]: ...
+
+    def connect(self, command: str | int) -> CommandReference: ...
+
+    def command_id(self, pid: int) -> str | None: ...
+
+
 
 
 class FilesystemDriver(Protocol):
@@ -170,6 +234,23 @@ class BackendSession(Protocol):
 
     def get_info(self) -> SandboxInfo: ...
 
+    @property
+    def fork_snapshot_id(self) -> str | None: ...
+
+    def pause(self, timeout: int) -> bool: ...
+
+    def create_snapshot(self, name: str | None, timeout: int) -> SnapshotInfo: ...
+
+    def fork(
+        self,
+        count: int,
+        idle_timeout: int | None,
+        snapshot_timeout: int,
+        restore_timeout: int | None,
+        *,
+        init_timeout: int | None = None,
+    ) -> ForkOutcome: ...
+
     def reload(self) -> bool: ...
 
     def wait_entrypoint(self) -> int: ...
@@ -179,9 +260,25 @@ class BackendSession(Protocol):
 
     def update_network_policy(self, policy: NetworkPolicy | None) -> None: ...
 
+    def rollback_creation(self) -> bool:
+        """Release local resources; return True only for confirmed remote deletion.
+
+        Unconfirmed ownership permits local closure only and returns False.
+        """
+        ...
+
     def terminate(self) -> None: ...
 
     def close(self) -> None: ...
+
+
+@dataclass
+class ForkOutcome:
+    """Known child results and acknowledgement of temporary snapshot deletion."""
+
+    snapshot_id: str
+    results: list[BackendSession | Exception]
+    cleanup_error: Exception | None = None
 
 
 class Backend(Protocol):
@@ -192,6 +289,26 @@ class Backend(Protocol):
     capabilities: frozenset[Capability]
 
     def create(self, spec: SandboxSpec) -> BackendSession: ...
+
+    def from_snapshot(self, spec: SnapshotRestoreSpec) -> BackendSession: ...
+
+    def connect(self, spec: SandboxConnectSpec) -> BackendSession: ...
+
+    def get_sandbox(self, sandbox_id: str) -> SandboxInfo: ...
+
+    def delete_sandbox(self, sandbox_id: str) -> bool: ...
+
+    def list_sandboxes(
+        self, query: SandboxQuery, next_token: str | None, limit: int
+    ) -> tuple[list[SandboxInfo], str | None]: ...
+
+    def get_snapshot(self, snapshot_id: str) -> SnapshotInfo: ...
+
+    def list_snapshots(
+        self, name: str | None, next_token: str | None, limit: int | None
+    ) -> tuple[list[SnapshotInfo], str | None]: ...
+
+    def delete_snapshot(self, snapshot_id: str) -> None: ...
 
     def pty_for(self, instance_id: str) -> PtyDriver: ...
 

@@ -8,10 +8,104 @@ AKernel ships in three deployment modes. Pick the one that matches your target.
 | **Kubernetes (Helm)** | Existing K8s cluster | [`akernel/`](./akernel/) |
 | **Multi-Cloud (Terraform)** | Alibaba Cloud ACK / Huawei Cloud CCE | [`terraform/`](./terraform/) |
 
-For shared checkpoint capture and cross-node restore, see the
-[JuiceFS / AFS deployment guide](shared-storage/README.md). The Helm profile
-uses ADX's `distributed_fs` interface and mounts the same storage in Coordinator
-and nodes. The filesystem clients, PostgreSQL and Ceph remain deployment-owned.
+For cross-node checkpoint/restore with native gVisor reflink, see the
+[S3 and HA deployment guide](shared-storage/production.md). ADX's S3 backend
+uses local XFS capture and restore inputs with an S3-compatible object store.
+The separate [JuiceFS / AFS profile](shared-storage/README.md) remains available
+when a shared filesystem is independently required.
+
+For one deployment serving both native and E2B SDKs with version-independent
+application logs, see [the dual SDK/logging profile](docs/dual-sdk-and-application-logs.md).
+
+For private Registries serving Nydus through Dragonfly, install the
+[Registry connectivity guard](registry-connectivity/README.md). It maintains
+namespace-and-Pod ingress selectors and verifies all configured seeds after Registry
+moves or rollouts without changing Registry placement or storage.
+
+## Aggregate sandbox memory budget
+
+The direct Helm chart enables the cgroup v2 aggregate sandbox memory policy by
+default for the ordinary KVM backend profile:
+
+```toml
+[plugin.resource.memory_limit]
+enabled = true
+total_reserve = "16GiB"
+```
+
+Effective node memory is the minimum of host `MemTotal` and visible finite
+ancestor cgroup limits. Sandboxd subtracts the reserve, rounds the result down
+to a page boundary and preserves any existing stricter `/akernel/memory.max`.
+The sandboxd resource socket is clipped to that effective parent ceiling,
+without subtracting the reserve a second time. Helm and cloud Adxlet configs
+consume that socket. For example, effective memory of 64 GiB and this reserve
+produce a candidate of 48 GiB; an existing 40 GiB cap remains 40 GiB.
+
+Standalone keeps the policy disabled by default, with `total_reserve="16GiB"`
+available for explicit configuration. Its bundled ADX profile retains the
+`auto` resource source, including PVM, trace and shared-storage variants.
+`auto` does not guarantee public scheduling capacity follows the sandbox parent
+ceiling. Before enabling the policy, operators must configure a compatible ADX
+`resource_source` and qualify memory capacity against the parent budget,
+allocation and release after sandbox create/delete, and schedulable CPU. This
+also applies to custom ADX configurations. The disabled default does not repair
+or qualify resource-source behavior; CPU discovery is unchanged by this policy.
+
+Enabling the policy requires cgroup v2 and effective memory greater than the
+reserve, with enough remaining capacity for the requested sandboxes.
+Docker/OrbStack VM limits and visible ancestor limits participate in this
+calculation. Use a matching node image built with the pinned sandboxd's
+`total_reserve` support. On a smaller node, explicitly choose a smaller positive
+`total_reserve` or keep `enabled=false` in the sandboxd TOML before starting.
+Standalone reads its source config template; Helm uses
+`node.config.sandboxd.config` (`core.node.config.sandboxd.config` in the umbrella
+chart). Cloud profiles expose the enabled flag and reserve described below,
+alongside their existing complete-config override. Values use integer bytes or
+`B`, `KiB`, `MiB`, `GiB`, `TiB`; `16G`, percentages and `auto` are not accepted.
+Verify schedulable CPU from the selected resource provider as well as memory
+before rollout, including when using Helm's sandboxd source.
+
+The PVM profile keeps this policy disabled by default because enabled parent
+enforcement has not been qualified on its matching host. Selecting PVM overrides
+the TOML `enabled` value through standalone
+`AKERNEL_PVM_MEMORY_LIMIT_ENABLED=false` or Helm
+`node.config.sandboxd.pvmMemoryLimitEnabled=false` (`core.` prefix in the umbrella
+chart). Explicitly set that switch to `true` and choose a suitable positive
+`total_reserve` in the source TOML or complete Helm config to opt in for host
+qualification. Both switches accept only `true` or `false` and affect only PVM.
+PVM CI retains the disabled policy and does not claim parent-limit coverage.
+
+Both cloud Terraform profiles keep the policy disabled by default. Their
+`sandbox_memory_limit_enabled` input is an explicit opt-in, with
+`sandbox_memory_total_reserve="16GiB"`. Guided profiles expose the same inputs:
+
+```bash
+make config SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB
+```
+
+Select and qualify a cgroup v2 node image before enabling it: the current standard Aliyun
+`node_pool_image_type="AliyunLinux3"` default uses cgroup v1, and Huawei's
+selected node image also needs cgroup-mode verification. These options do not
+change the node operating system or migrate existing nodes to cgroup v2.
+
+This reserve is deployment policy, not a measured component budget or a
+guarantee against host OOM. Distill-fs retains its independent 64 GiB limit and
+is not automatically deducted. Control components, other Pods and host kernel
+memory remain outside the sandbox parent; their limits, reclaim behavior and
+peak demand need separate consideration. In particular, kernel memory excluded
+by a host's `cgroup.memory=nokmem` setting is not covered by the parent limit.
+
+For existing nodes, adding a finite cap to an unlimited parent or lowering a
+cap requires an empty sandbox subtree and residual usage below the new limit.
+An equal or stricter existing cap can be reused with live sandboxes; a larger
+candidate never automatically raises it. Review the rollout before upgrading:
+ConfigMap checksums trigger Pod replacement, and the current chart permits
+200 unavailable nodes. Use a canary or a separately constrained rollout after
+draining, rather than enabling the policy across live nodes together. Custom
+TOML containing the removed reserve fields must be migrated even when the
+policy is disabled. See the pinned sandboxd
+[memory-limit guide](../src/sandboxd/doc/node-memory-limit.md) for migration and
+the complete startup contract.
 
 ## Guided deployment
 
@@ -33,7 +127,7 @@ make print-env
 make e2e
 ```
 
-The SDK depends on `adx-environment==0.1.0rc3` and uses `/api/environment/v1`.
+The SDK depends on `adx-environment==0.1.0rc4` and uses `/api/environment/v1`.
 The public `akernel_sdk.Sandbox` API retains its existing names. Source
 installs resolve the declared dependency from PyPI.
 See [image build downloads](../builder/README.md#environment-api-source-builds)
@@ -92,7 +186,132 @@ The node must support TC eBPF and bpffs. bpfnat does not manage host firewall
 policy, so custom host-network deployments must allow forwarding to and from
 the sandbox bridge when their `FORWARD` policy is `DROP`.
 
+Grafana uses a 15-second Prometheus datasource interval to match business
+sampling; Collector rate queries override it to 30 seconds. The 200-point target
+is approximate because Grafana rounds query steps to standard durations. Rate
+windows cover the actual step so wide views preserve bursts between samples.
+
+### Runc worker preparation and recovery
+
+With `node.config.sandboxd.enableRunc=true`
+(`core.node.config.sandboxd.enableRunc=true` in the umbrella chart), Helm runs
+`prepare-runc-filesystems` before starting the node services.
+The host kernel must support OverlayFS and EROFS, either built in or through
+modules. Already registered filesystems in `/proc/filesystems` need no module
+loading or module files. The host's `/lib` must resolve to a directory;
+Kubelet resolves the host path on usrmerged systems. It is mounted read-only at
+`/host/lib` in the init container, so absent `/lib/modules` does not prevent the
+already-registered path. Otherwise the host must supply a self-contained
+`/lib/modules/$(uname -r)` tree with matching modules and dependency metadata.
+The init uses `modprobe -d /host`; external absolute `.ko` symlinks are not
+relocated into this mount. The selected node image must provide `/bin/sh`,
+`grep`, `uname`, and a compatible `modprobe` (the bundled image includes kmod).
+Host policy must permit its privileged root process to load modules,
+including any module-signing or lockdown requirements. A privileged Pod cannot
+provide missing kernel support or override the host's module-loading policy.
+
+Preparation fails closed if loading fails or either filesystem remains
+unregistered. Kubernetes retries the init container; the Pod can remain in
+`Init:Error` or `Init:CrashLoopBackOff`. A volume setup failure instead appears
+in Pod events before the command starts. The entire AKernel node Pod is blocked,
+including other runtimes configured in it. A Kubernetes `Ready` node therefore
+does not establish usable AKernel capacity. A fresh worker blocked here has not
+started adxlet to register its resources; an existing worker's retained ADX
+record must not be mistaken for a live, schedulable worker.
+
+Qualify each host image/kernel, node image, and node-pool provisioning profile
+on an idle dedicated deployment before admitting workloads. All probe modes
+require the complete visible running/paused sandbox inventory to be empty.
+Negative mode also requires an empty resource view, including no retained node
+records; it cannot be run against a deployment with other registered workers:
+
+1. Record the candidate and base commits, deployed init/node `imageID` values,
+   component release identities and SDK version. Retain the host kernel,
+   filesystem registration/module availability, Pod UID, observation timestamps,
+   and SHA-256 of the actual rendered init script. Exercise preparation twice,
+   including a filesystem not yet registered when safe on that disposable
+   worker. Real loading must use the selected image's shell, grep, uname, kmod
+   and libraries; substituting host kmod does not qualify those image tools.
+   An already-registered host validates only the skip path.
+2. Use the configured SDK credentials with the maintained probe below. Keep
+   fresh evidence files outside Git. `inventory` records the complete resource
+   view, including nodes filtered out by `ak resources`; match the target's
+   `NodeInfo.id`, status, capacity and allocatable resources. `positive` targets
+   that worker for a real runc command/private write and deletes its sandbox:
+
+   ```bash
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode inventory --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/inventory.json"
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode positive --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/positive.json"
+   ```
+
+3. On the disposable worker, qualify unavailable modules or denied loading while
+   a required filesystem is unregistered. Record Pod events, init status/logs,
+   and the fault source: synthetic injection or a real host/module-policy
+   failure. While the worker is blocked, require a target-specific rejection:
+
+   ```bash
+   python deploy/tests/kubernetes/runc_filesystems.py \
+     --mode negative --node-id "$NODE_ID" --schedule-timeout 8 \
+     --output "$EVIDENCE/negative.json"
+   ```
+
+   Only a structured scheduling rejection during sandbox construction is an
+   expected negative result. Communication, command or deletion failures must
+   fail the probe; they do not prove unavailable capacity. Record the resource
+   view as well as the create outcome rather than inferring capacity from Pod
+   status alone.
+4. Restore the supported profile and repeat `positive` with a fresh output path.
+   Record the recovery action and all fixture/sandbox cleanup results. Keep
+   Kind fault-injection/capacity-recovery evidence separate from real first
+   module-loading evidence, with untested boundaries explicit. Shell fixtures
+   do not replace worker qualification. Normal Pod replacement does not qualify
+   hard host-loss detection or recovery.
+
+For detection, compare the expected workers with initialized node Pods and
+usable ADX resources within the operator's provisioning deadline. Monitor
+DaemonSet unavailable Pods and persistent init failures through the cluster's
+monitoring, or inspect them directly (use the selected namespace and Pod):
+
+```bash
+kubectl -n akernel-system get pods -l app=node -o wide
+kubectl -n akernel-system describe pod <node-pod>
+kubectl -n akernel-system logs <node-pod> -c prepare-runc-filesystems
+```
+
+Add `--previous` to retrieve a prior init attempt. The node's own Collector
+cannot report while its main container has not started.
+
+This chart does not install automatic node replacement for init failures.
+Document the selected node pool/autoscaler's actual health signal and timeout:
+a scheduled Pod failing initialization is not an unschedulable Pod waiting for
+CPU or memory, and generic autoscaling or Kubernetes `NodeReady` checks do not
+establish recovery for this condition. The fallback is operator detection and
+repair of the host modules, permissions or selected image, followed by a retry
+and the acceptance probe above; replace an incompatible worker with a qualified
+host profile if repair is unsuitable. Drain existing sandboxes before replacing
+an existing worker. Repeatedly replacing workers from the same incompatible
+profile does not fix the prerequisite.
+
 ### systemd container identity
+
+Helm stops node ADX services with `systemctl stop adx.service` and control
+services with `adxctl stop`; control Collectors receive SIGTERM. Pod termination
+grace is 150s for nodes, 120s for Coordinator and 210s for Ingress/API.
+
+For Coordinator restart, worker outage and Node Pod deletion regression, run
+`deploy/tests/kubernetes/node_lifecycle.py --help` with the ADX SDK installed.
+Run this opt-in fault test only on an **idle dedicated cluster**. For shared
+checkpoint storage, pass `--shared-storage-path` with the configured container
+mount path; omit it for local checkpoint storage.
+
+For native unknown-Restore qualification, use Python 3.12+ to run
+`deploy/tests/native_restore/run.py --help`. Supply an empty dedicated Sandboxd
+with the pinned runtime bundle and identical checkpoint paths on the test host.
+The fixture exercises production ADX Controllers with an in-process authority.
 
 The all-in-one image, Helm node template, and standalone launcher set
 `container=oci` so PID 1 systemd recognizes the container and does not remount
@@ -119,6 +338,13 @@ With two or more Ingress replicas, rolling updates replace one old replica at
 a time and keep the others available. This also allows updates when pod
 anti-affinity already occupies every eligible node. A single replica retains
 surge-first updates.
+
+The default standalone and Helm OCI specifications mount a private 64 MiB tmpfs
+at `/dev/shm` with mode `1777`, `nosuid`, `nodev` and `noexec`. Non-root processes,
+including PostgreSQL, can create POSIX shared-memory objects there. This mount
+belongs to the sandbox and follows its checkpoint/restore; it is not the node's
+shared-memory directory. Custom OCI specifications own their mount options.
+Drain existing sandboxes and snapshots before replacing their OCI mount layout.
 
 ### Network ACLs
 
@@ -255,6 +481,9 @@ The default chart runs ADX Ingress and API Server in one
 `akernel-adx-ingress-api` Pod, with 2 CPU requested and an 8 CPU limit.
 Override `core.adx.ingressApi.resources` for your node shape and workload.
 Measure capacity with the [Create benchmark](../sdk/python/benchmarks/create_throughput/README.md).
+For larger installations, use the opt-in [production control-plane capacity
+profile](docs/control-plane-capacity.md), including placement, SSD selection,
+capacity qualification and existing-PVC migration requirements.
 
 The `monitor` subchart remains optional and contains Prometheus, Grafana, Loki,
 and Tempo. Kubernetes nodes must support privileged Pods and the runtime
@@ -308,8 +537,10 @@ and persistently revokes removed keys. Tenant keys are preserved. Old keys
 cannot be reused, even after restart. Existing ingress caches remain bounded by
 the configured authentication TTL (10 seconds here); in-flight requests and
 established streams are not canceled by rotation. Keep Redis data during rotation.
-This requires an ADX release containing administrator reconciliation; #71 does
-not contain it. The rollout procedure has not been validated on a live cluster.
+Use an ADX release with administrator reconciliation. Before production rotation,
+qualify the procedure on an isolated deployment using the selected image: verify
+new-key access, old-key rejection after the cache TTL and Coordinator restart,
+and continued tenant-key access. Record that deployment's validation results.
 
 ### Install with managed Redis
 

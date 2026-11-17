@@ -12,4 +12,11 @@ data:
 {{ .Files.Get "files/otel-collector/config.yaml" | indent 4 }}
   control.yaml: |
 {{ .Files.Get "files/otel-collector/control.yaml" | indent 4 }}
+  ingress-api.yaml: |
+{{- /* Ingress and API share the control Collector; only the API scrape job differs. */}}
+{{- $ingress := .Files.Get "files/otel-collector/control.yaml" | fromYaml }}
+{{- $prometheus := index $ingress.receivers "prometheus/adx" }}
+{{- $api := dict "job_name" "adx-apiserver" "scrape_interval" "15s" "static_configs" (list (dict "targets" (list "127.0.0.1:19093") "labels" (dict "component_name" "adx-apiserver"))) }}
+{{- $_ := set $prometheus.config "scrape_configs" (append $prometheus.config.scrape_configs $api) }}
+{{ toYaml $ingress | indent 4 }}
 {{- end }}

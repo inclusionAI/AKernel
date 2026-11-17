@@ -46,7 +46,7 @@ def main():
     run(["mkdir", "-p", root])
     try:
         for label, path in [
-            ("node", "builder/config/otel-collector-config.yaml"),
+            ("node", "deploy/akernel/charts/core/files/otel-collector/config.yaml"),
             ("control", "deploy/akernel/charts/core/files/otel-collector/control.yaml"),
         ]:
             content = (

@@ -16,11 +16,13 @@ import os
 import unittest
 from unittest.mock import patch
 
+from akernel_sdk import Sandbox
 from akernel_sdk._addresses import (
     api_endpoint_from_env,
     exec_endpoint_from_env,
     gateway_endpoint_from_env,
 )
+from akernel_sdk._backends import registry
 
 
 def endpoint_tuple(endpoint):
@@ -87,10 +89,72 @@ class AddressConfigTest(unittest.TestCase):
                 ("https", "gw.example.com", 9443, True),
             )
 
+    def test_gateway_override_uses_scheme_default_port(self):
+        cases = (
+            ("https://gw.example.com", "https", 443, True),
+            ("wss://gw.example.com", "wss", 443, True),
+            ("http://gw.example.com", "http", 80, False),
+            ("ws://gw.example.com", "ws", 80, False),
+            ("gw.example.com", "http", 80, False),
+            ("https://gw.example.com:80", "https", 80, True),
+        )
+        for address, scheme, port, tls in cases:
+            with (
+                self.subTest(address=address),
+                patch.dict(
+                    os.environ,
+                    {"AKERNEL_GATEWAY_ADDRESS": address},
+                    clear=True,
+                ),
+            ):
+                endpoint = gateway_endpoint_from_env()
+                self.assertEqual(
+                    endpoint_tuple(endpoint), (scheme, "gw.example.com", port, tls)
+                )
+                if address == "https://gw.example.com":
+                    self.assertEqual(endpoint.base_url(), address)
+
     def test_missing_server_address_is_clear(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "AKERNEL_SERVER_ADDRESS"):
                 api_endpoint_from_env()
+
+    def test_unexpanded_variables_are_rejected_in_control_and_gateway_addresses(self):
+        for address in (
+            "$AKERNEL_SERVER_ADDRESS",
+            "${AKERNEL_SERVER_ADDRESS}",
+            "https://$AKERNEL_SERVER_ADDRESS:443",
+        ):
+            for setting, resolve in (
+                ("AKERNEL_SERVER_ADDRESS", api_endpoint_from_env),
+                ("AKERNEL_GATEWAY_ADDRESS", gateway_endpoint_from_env),
+            ):
+                with (
+                    self.subTest(setting=setting, address=address),
+                    patch.dict(os.environ, {setting: address}, clear=True),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "unexpanded"):
+                        resolve()
+
+    def test_invalid_gateway_fails_before_backend_creation(self):
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "AKERNEL_SERVER_ADDRESS": "https://api.example",
+                    "AKERNEL_GATEWAY_ADDRESS": "$AKERNEL_SERVER_ADDRESS",
+                    "AKERNEL_TOKEN": "test-token",
+                },
+                clear=True,
+            ),
+            patch.object(registry, "_loaded_backend", None),
+            patch.object(registry, "_selected_backend", "adx"),
+            patch.object(registry, "_is_installed", return_value=True),
+            patch.object(registry, "new_backend") as create,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "unexpanded"):
+                Sandbox(image="ubuntu:24.04")
+        create.assert_not_called()
 
 
 if __name__ == "__main__":

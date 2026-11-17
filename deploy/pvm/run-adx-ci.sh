@@ -64,6 +64,9 @@ for name,section,key in [('firecracker','vmm','binary_sha256'),('vmlinux','guest
 PAYLOAD
 docker image inspect --format '{{.Id}}' "$IMAGE" > "${out}/image-id.txt"
 export AKERNEL_FIRECRACKER_BACKEND=pvm AKERNEL_CHUNK_DB_SIZE=1GiB
+# Aggregate parent enforcement remains outside the qualified PVM profile.
+export AKERNEL_PVM_MEMORY_LIMIT_ENABLED=false
+unset AKERNEL_TEST_EXPECT_MEMORY_BYTES AKERNEL_TEST_EXPECT_CPU_MILLIS
 export AKERNEL_CONTAINER_PROXY=http://10.0.2.2:3128
 export AKERNEL_CONTAINER_NO_PROXY=localhost,127.0.0.1,172.17.0.1,10.88.0.1
 # Keep Redis AOF/control writes on the L1 root disk while snapshot writes use XFS.
@@ -144,7 +147,7 @@ export AKERNEL_TEST_CHECKPOINT_MEMORY_MIB=2048
 python3 - "$out" <<'SETTINGS'
 import json,sys
 from pathlib import Path
-(Path(sys.argv[1])/'qualification-settings.json').write_text(json.dumps({'runtime':'firecracker-pvm','virtiofs_enabled':True,'checkpoint_memory_mib':2048,'other_sdk_memory_mib':2048,'checkpoint_snapshot_type':'Full (requested explicitly by ADX)','debugctl_applied':False,'dedicated_pvm_profile':True},indent=2))
+(Path(sys.argv[1])/'qualification-settings.json').write_text(json.dumps({'runtime':'firecracker-pvm','virtiofs_enabled':True,'checkpoint_memory_mib':2048,'other_sdk_memory_mib':2048,'checkpoint_snapshot_type':'Full (requested explicitly by ADX)','debugctl_applied':False,'dedicated_pvm_profile':True,'sandbox_parent_memory_limit_enabled':False,'sandbox_parent_memory_limit_qualified':False},indent=2))
 SETTINGS
 export PYTHONPATH="${root}/sdk/python"
 export AKERNEL_TEST_IMAGE=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["oci"])' "$fixtures")

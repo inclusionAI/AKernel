@@ -1,0 +1,937 @@
+{
+  "uid": "adx-sandbox-lifecycle",
+  "title": "ADX Sandbox Lifecycle",
+  "description": "Create-call outcomes and successful actual-new-call latency, runtime interruptions, current recovery and collection coverage.",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "tags": [
+    "adx",
+    "sandbox",
+    "lifecycle"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Creation Call Success Ratio",
+      "type": "timeseries",
+      "description": "Includes confirmed scheduling, startup and business-timeout failures. Replays/retries are calls; unknown and cancelled are shown separately. Zero denominator means no data.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env)(increase(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",outcome=\"success\"}[$__rate_interval]))/sum by(cluster,adx_env)(increase(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",outcome=~\"success|failure\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 2,
+      "title": "Successful New-Create Call P95",
+      "type": "timeseries",
+      "description": "Actual successful initial-create calls only. Unknown, retries, replay and Running reuse do not contribute latency samples.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95,sum by(cluster,adx_env,le)(rate(adx_environment_create_success_call_duration_seconds_bucket{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval])))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 3,
+      "title": "Creation Call Results",
+      "type": "timeseries",
+      "description": "Number of create-call results in each rolling rate interval, split by outcome. Replays/retries are calls; this is different from new authoritative creations.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env,outcome)(increase(adx_environment_create_responses_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{outcome}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 4,
+      "title": "Creation Errors by Stage / Reason",
+      "type": "table",
+      "description": "Create-call errors grouped by outcome, stage and reason over the selected dashboard time range. Zero-count combinations are omitted. Prometheus increase extrapolates at range boundaries, so counts can be fractional. No rows means no matching samples; confirm API/Collector health before concluding there were no failures.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env,outcome,stage,reason)(increase(adx_environment_create_errors_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__range])) > 0",
+          "instant": true,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Failed calls (estimated)",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "cluster",
+                "adx_env",
+                "outcome",
+                "stage",
+                "reason",
+                "Value"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {
+              "cluster": 0,
+              "adx_env": 1,
+              "outcome": 2,
+              "stage": 3,
+              "reason": 4,
+              "Value": 5
+            },
+            "renameByName": {
+              "cluster": "Cluster",
+              "adx_env": "Environment scope",
+              "outcome": "Outcome",
+              "stage": "Stage",
+              "reason": "Reason",
+              "Value": "Failed calls (estimated)"
+            }
+          }
+        }
+      ],
+      "maxDataPoints": 1
+    },
+    {
+      "id": 5,
+      "title": "Current Queued / Starting",
+      "type": "timeseries",
+      "description": "Instant numbers waiting for assignment versus assigned and still creating. A terminal or removed record is not counted as starting.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_environment_creating{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 6,
+      "title": "Oldest Wait",
+      "type": "timeseries",
+      "description": "Age in seconds of the oldest currently waiting/starting request whose enqueue or creation time is known. Zero means no such known-age request.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(cluster,adx_env,state)(adx_environment_create_oldest_wait_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"})",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 7,
+      "title": "Unknown Wait Age",
+      "type": "timeseries",
+      "description": "Number of queued/starting records whose wait-start timestamp is unknown. It is a count, not a duration.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_environment_create_wait_age_unknown{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{state}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 8,
+      "title": "Interruptions by Reason",
+      "type": "timeseries",
+      "description": "Recorded interruption facts grouped by reason, accumulated over each rolling interval. A retry or repeated WARN line is not automatically another interruption.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env,reason)(increase(adx_environment_interruptions_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 9,
+      "title": "Recovery Results",
+      "type": "timeseries",
+      "description": "Recovery facts grouped as recovered, unrecoverable or closed by user, accumulated over each rolling interval. Ordinary Snapshot cloning is not failover recovery.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env,result)(increase(adx_environment_recovery_results_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{result}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 10,
+      "title": "Current Unrecovered Environments",
+      "type": "timeseries",
+      "description": "Current retained latest summaries. This is not the historical unique impact.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_environment_unrecovered{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 11,
+      "title": "Worker Incidents",
+      "type": "timeseries",
+      "description": "Worker-session incident count, not a unique-worker count for the selected time range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env)(increase(adx_worker_incidents_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 12,
+      "title": "Operations with Unknown Outcome after Node Loss",
+      "type": "timeseries",
+      "description": "Current invalidated Environments that had an in-flight operation when node loss made its outcome unconfirmable. This is not every API timeout or every retained backend Start uncertainty.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_environment_operation_unknown{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 13,
+      "title": "Collector Target Up",
+      "type": "stat",
+      "description": "One 0/1 result per matching scrape target. One means the scrape succeeded, not that all application operations succeeded. Target identity is job/instance; this is not a node count.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
+          "instant": true,
+          "legendFormat": "{{job}} / {{instance}}",
+          "range": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
+    },
+    {
+      "id": 14,
+      "title": "Business Snapshot Age",
+      "type": "stat",
+      "description": "Seconds since the Coordinator refreshed its cached business-observability snapshot. This differs from Environment runtime-stat age and from heartbeat age.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_observability_snapshot_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
+          "instant": true,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
+    },
+    {
+      "id": 15,
+      "title": "Normal Operation Results",
+      "type": "timeseries",
+      "description": "Lifecycle operation completions grouped by operation, intent and outcome over rolling intervals, such as explicit versus idle pause/delete. Includes rejected operations where recorded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env,operation,intent,outcome)(increase(adx_environment_lifecycle_operations_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{operation}} {{intent}} {{outcome}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 16,
+      "title": "Creation Rejections",
+      "type": "timeseries",
+      "description": "Create calls rejected before an accepted create attempt, grouped by bounded rejection reason, such as authentication or invalid input.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(cluster,adx_env,reason)(increase(adx_environment_create_rejections_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{cluster}} / {{adx_env}} {{reason}}",
+          "range": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 17,
+      "title": "History Coverage Known",
+      "type": "stat",
+      "description": "One means the retained business-counter history has a trustworthy start boundary. Zero means coverage is unknown, commonly after upgrading older persisted control state. It does not mean the current snapshot is unavailable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_observability_history_known{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}",
+          "instant": true,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
+    },
+    {
+      "id": 18,
+      "title": "Statistics Started At",
+      "type": "stat",
+      "description": "Earliest trustworthy retained business-history boundary, shown as a date. It is emitted only when History Coverage Known is 1. A deployment upgraded from older control state can have unknown coverage and no start timestamp; inventing a date would imply unsupported historical completeness.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "noValue": "Unknown coverage start"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_observability_started_timestamp_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\"} * 1000",
+          "instant": true,
+          "legendFormat": "{{cluster}} / {{adx_env}}",
+          "range": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none"
+      },
+      "maxDataPoints": 1
+    },
+    {
+      "id": 19,
+      "title": "Current Impact Query Boundary",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Query the private Coordinator `/observability/environments` endpoint for current unique env/worker totals, details and incident filters. Default: unresolved latest summaries. `include_resolved=true` includes recovery; `operation_unknown=true` lists node loss during a normal operation.\n\nCoverage is **current retained env, latest interruption only**. Deletion or a later interruption replaces earlier coverage. This dashboard does not provide complete arbitrary-window historical unique env/worker counts. Missing metrics or a low P95 alone do not establish healthy creation."
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(adx_environment_create_responses_total, cluster)",
+          "refId": "cluster"
+        },
+        "definition": "label_values(adx_environment_create_responses_total, cluster)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "sort": 1
+      },
+      {
+        "name": "adx_env",
+        "label": "adx_env",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(adx_environment_create_responses_total{cluster=~\"$cluster\"}, adx_env)",
+          "refId": "adx_env"
+        },
+        "definition": "label_values(adx_environment_create_responses_total{cluster=~\"$cluster\"}, adx_env)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "sort": 1
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Schedule",
+      "type": "link",
+      "url": "/d/adx-schedule",
+      "includeVars": true,
+      "keepTime": true
+    },
+    {
+      "title": "Schedule",
+      "type": "link",
+      "url": "/d/adx-schedule",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Environment Details",
+      "type": "link",
+      "url": "/d/adx-environments",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Environment Logs",
+      "type": "link",
+      "url": "/d/adx-environment-logs",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}

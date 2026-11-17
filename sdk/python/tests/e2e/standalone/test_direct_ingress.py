@@ -22,7 +22,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 from akernel_sdk import Sandbox
-from akernel_sdk._addresses import api_endpoint_from_env, gateway_endpoint_from_env
+from akernel_sdk._addresses import Endpoint, api_endpoint_from_env
 
 _ENABLED = (
     os.environ.get("AKERNEL_RUN_INTEGRATION") == "1"
@@ -62,9 +62,14 @@ class DirectIngressIntegrationTest(unittest.TestCase):
             self.assertIn(b"40 120", output)
 
     def test_http_data_port_serves_the_guest_payload(self):
-        endpoint = gateway_endpoint_from_env()
-        self.assertEqual(endpoint.scheme, "http")
-        self.assertNotEqual(endpoint.port, api_endpoint_from_env().port)
+        api = api_endpoint_from_env()
+        endpoint = Endpoint(
+            host=api.host,
+            port=int(os.environ.get("AKERNEL_TEST_HTTP_DATA_PORT", "80")),
+            scheme="http",
+            explicit_port=True,
+        )
+        self.assertNotEqual(endpoint.port, api.port)
         image = os.environ.get("AKERNEL_TEST_HTTP_IMAGE", "python:3.12-slim")
         port = 18081
         opener = build_opener(ProxyHandler({}))
@@ -85,7 +90,7 @@ class DirectIngressIntegrationTest(unittest.TestCase):
                 while True:
                     try:
                         with opener.open(
-                            sandbox.get_port_url(port), timeout=5
+                            f"{endpoint.base_url()}/{sandbox.id}/{port}", timeout=5
                         ) as response:
                             self.assertEqual(response.read(), b"DIRECT_DATA_OK\n")
                         break

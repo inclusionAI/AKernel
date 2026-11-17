@@ -114,8 +114,16 @@ def load_backend() -> Backend:
         backend_name = _selected_backend
         if backend_name is None or not _is_installed(_DISTRIBUTIONS[backend_name]):
             raise _not_installed_error(backend_name)
-        module = importlib.import_module(_MODULES[backend_name])
-        backend = module.create_backend(_config_from_env())
+        backend = new_backend(_config_from_env())
         _loaded_backend = backend
         atexit.register(backend.close)
         return backend
+
+
+def new_backend(config: BackendConfig) -> Backend:
+    """Construct an isolated backend without changing the global default."""
+    backend_name = _selected_backend
+    if backend_name is None or not _is_installed(_DISTRIBUTIONS[backend_name]):
+        raise _not_installed_error(backend_name)
+    module = importlib.import_module(_MODULES[backend_name])
+    return module.create_backend(config)

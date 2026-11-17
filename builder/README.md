@@ -2,6 +2,122 @@
 
 The shared `deploy/scripts/build-image.sh` helper builds the runtime rootfs and all-in-one node image for `make build` and `make standalone`. Downloads use official repositories and pinned upstream releases by default.
 
+## Optional E2B runtime
+
+The default build still creates AKernel's Execd-only runtime. To package envd,
+select the optional target and provide both archives from the same ADX build:
+
+```bash
+AKERNEL_ENABLE_E2B=true \
+ADX_RELEASE_URL="$RELEASE_URL" ADX_RELEASE_SHA256="$RELEASE_SHA256" \
+ADX_EXECD_URL="$EXECD_URL" ADX_EXECD_SHA256="$EXECD_SHA256" \
+make build
+```
+
+The selected ADX release must implement E2B compatibility. Its Execd component
+must contain `adx-runtime-rootfs.img`, `envd-manifest.json` and `envd-LICENSE`,
+covered by the component manifest. ADX's split-component CI builds the pinned
+envd by default; standalone ADX source builds require `ADX_ENVD_SOURCE`.
+AKernel still requires explicit archive URL/checksum pairs when enabling E2B,
+including when selecting its default pinned build. Keep the default platform
+and Execd pins aligned with `src/agent-dx`; validate the published manifests
+and archive checksums before updating them. Standard ADX split-component
+archives use a GNU release target even though Execd itself is a static musl
+executable.
+
+AKernel verifies the archive and component hashes and architecture, then uses
+the ADX EROFS image unchanged as `akernel-runtime-rootfs.img`. It contains Execd,
+envd, bash and the dependencies assembled by ADX. AKernel does not compile envd
+or maintain another copy of its upstream pins. The Node build also checks that
+the platform release and runtime component identify the same commit, target
+and Execd bytes; mismatches fail the build. Provenance and the envd license are
+installed under `/opt/akernel/runtime/metadata/`, with the envd manifest at
+`envd/manifest.json`.
+
+Packaging alone does not enable E2B routes. Supply a reviewed deployment YAML
+through the existing `AKERNEL_ADX_CONFIG` entry point. Keep its current runtime
+paths and bootstrap entrypoint, and add these fields to the corresponding
+sections (merge them into the existing maps):
+
+```yaml
+runtime_profile:
+  env:
+    ADX_ENVD_PATH: /__adx/usr/local/bin/envd
+    ADX_ENVD_SHA256: REPLACE_WITH_ENVD_MANIFEST_SHA256_FIELD
+    ADX_ENVD_DEFAULT_USER: user
+    ADX_ENVD_DEFAULT_WORKDIR: /home/user
+service_overrides:
+  apiserver:
+    config:
+      e2b:
+        domain: sandbox.example.com
+        envdVersion: REPLACE_WITH_ENVD_MANIFEST_VERSION_FIELD
+        envdIngressSources: [REPLACE_WITH_EXACT_RELAY_SOURCE_IPV4]
+  ingress:
+    env:
+      ADX_DATA_PLANE_INGRESS_E2B_ENABLED: "true"
+      ADX_DATA_PLANE_INGRESS_PORT_HOST_DOMAIN: sandbox.example.com
+```
+
+This fragment applies to profile-based standalone deployments. Explicit-service
+deployments put the same API configuration and Ingress environment in their
+existing service objects. Helm exposes `adx.e2b` for the shared native/E2B
+control plane and worker pool; see [dual SDK and persistent logs](../deploy/docs/dual-sdk-and-application-logs.md). Configure matching trusted profiles on API Server and workers. Select
+runsc, Firecracker or firecracker-pvm according to the ADX release's supported
+backends and the actual node capability. Firecracker `fromImage` uses OCI
+directory roots: enable `virtiofs_enabled = true` under
+`[plugin.runtime.firecracker]` in the dedicated worker's sandboxd TOML. The
+stock profile disables virtio-fs for its local EROFS runtime.
+E2B lifecycle requests also need their
+control-plane routes forwarded to API Server by Ingress; preserve the existing
+native routes and include `/sandboxes`, `/v2/sandboxes`, `/snapshots`, `/templates`,
+`/v2/templates` and `/v3/templates` as required by that release.
+
+Use ADX's E2B deployment instructions for the complete route allowlist, OCI
+capabilities, authentication, TLS/DNS and network isolation configuration.
+In gateway-authenticated mode envd has no guest token: restrict external and
+other-sandbox access to its port to the exact trusted Relay sources. This
+packaging option does not establish those network rules by itself. Use a
+dedicated matching worker profile and retain old runtime artifacts for existing
+instances and snapshots; building a new image does not migrate them.
+
+`make build-helper-test` checks target selection, rejection of missing or
+inconsistent artifacts, and byte-preserving assembly without compiling ADX or
+running a sandbox. A full image build and E2B/native SDK lifecycle tests against
+the resulting image remain separate acceptance steps.
+
+## API/Ingress-only maintenance image
+
+For a transport-only fix on an already qualified shared E2B/native deployment,
+`deploy/scripts/build-control-image.py` accepts a digest-pinned all-in-one base
+and a complete, clean amd64 ADX release archive with matching Execd/rootfs/envd
+provenance. Build the archive from a fixed source commit with ADX's normal
+`make platform-release`, `ADX_ENVD_SOURCE` set to its pinned upstream checkout,
+and the Redis 7.2.5 binary pair. Verify the normal release manifest first.
+Archive the directory contents, so `manifest.json` is at the archive root.
+
+```bash
+python3 deploy/scripts/build-control-image.py \
+  --base "$BASE_IMAGE_DIGEST" --archive "$ADX_RELEASE_ARCHIVE" \
+  --sha256 "$ADX_RELEASE_SHA256" --commit "$ADX_SOURCE_COMMIT" \
+  --tag "$CONTROL_IMAGE_TAG"
+```
+
+The helper sends only the explicit archive and installer into Docker's build
+context. Installation verifies the archive checksum, clean source identity,
+architecture and package's complete file manifest, then uses ADX's installer.
+It installs the full release under its new commit; it does not replace selected
+binaries under an old manifest. The qualified execution rootfs at
+`/opt/akernel/runtime/akernel-runtime-rootfs.img` must remain byte-identical.
+This image is for API/Ingress only. It is not a newly qualified worker image.
+
+Set `adx.ingressApi.image.repository/digest` to its verified image digest;
+keep `coordinator.image` and `node.image` unchanged. The default ingress image
+still inherits `coordinator.image`, then the global image. Qualify that exact
+mixed-role combination in isolation before changing the cluster, including old
+Snapshots. The roles must share the unchanged runtime profile and state services.
+Do not use this path to mix unrelated protocol or execution-runtime changes.
+
 ## Package repositories
 
 Select mirrors for one invocation without changing host package-manager or Docker daemon configuration:
@@ -49,7 +165,7 @@ Source version/revision labels and artifact URL overrides are declared near thei
 
 ### Environment API source builds
 
-The current AKernel source adapter uses `adx-environment==0.1.0rc3` and
+The current AKernel source adapter uses `adx-environment==0.1.0rc4` and
 `/api/environment/v1`. The Dockerfiles pin the platform and Execd archive
 URLs and SHA-256 values. Archive manifests identify the packaged binaries;
 `src/agent-dx/` is a source reference.

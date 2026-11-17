@@ -13,7 +13,7 @@ load_container_environment() {
   # Keep explicit service overrides and import only the ADX deployment contract.
   while IFS= read -r -d '' entry; do
     case "${entry}" in
-      AKERNEL_ADX_CONFIG=*|AKERNEL_ADX_MANAGED_CREDENTIALS=*|AKERNEL_ADX_STATE_DIR=*|ADX_REDIS_URL=*|NODE_NAME=*|INSTANCE_IP=*|AWS_ACCESS_KEY_ID=*|AWS_SECRET_ACCESS_KEY=*|AWS_SESSION_TOKEN=*|AWS_EC2_METADATA_DISABLED=*)
+      ENABLE_TRACE=*|AKERNEL_AFS_CHECKPOINTS=*|AKERNEL_AFS_CHECKPOINT_PREFIX=*|AKERNEL_ADX_CONFIG=*|AKERNEL_ADX_MANAGED_CREDENTIALS=*|AKERNEL_ADX_STATE_DIR=*|ADX_REDIS_URL=*|NODE_NAME=*|INSTANCE_IP=*|AWS_ACCESS_KEY_ID=*|AWS_SECRET_ACCESS_KEY=*|AWS_SESSION_TOKEN=*|AWS_EC2_METADATA_DISABLED=*)
         name="${entry%%=*}"
         if ! declare -p "${name}" >/dev/null 2>&1; then
           export "${entry}"
@@ -57,6 +57,25 @@ main() {
     ln -sfn "${state_dir}" /opt/adx/config
     ln -sfn "${state_dir}" /opt/adx/data
     ln -sfn "${state_dir}/run" /opt/adx/run
+  fi
+
+  # Derive optional standalone settings from the shared base profile.
+  # AFS validates the mount and aligns node writers with Coordinator reclaimers.
+  # Tracing configures local processes and Execd inside sandboxes, where the
+  # Collector is reached through the sandbox gateway rather than loopback.
+  # Reuse the generated profile for stop so adxctl sees the same configuration.
+  if [[ "${AKERNEL_ADX_MANAGED_CREDENTIALS:-local}" != external &&
+        ( "${AKERNEL_AFS_CHECKPOINTS:-false}" == true || "${ENABLE_TRACE:-false}" == true ) ]]; then
+    generated="${AKERNEL_ADX_STATE_DIR:-/home/akernel/adx}/standalone-overrides.yaml"
+    if [[ "${action}" == run ]]; then
+      local -a mount_args=()
+      if [[ "${AKERNEL_AFS_CHECKPOINTS:-false}" == true ]]; then
+        mount_args=(--mount /mnt/akernel-shared)
+      fi
+      python3 /usr/local/libexec/prepare-adx-config.py "${config}" "${generated}" \
+        --prefix "${AKERNEL_AFS_CHECKPOINT_PREFIX:-akernel/checkpoints}" "${mount_args[@]}"
+    fi
+    config="${generated}"
   fi
 
   case "${action}" in

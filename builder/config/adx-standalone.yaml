@@ -6,6 +6,8 @@ service_overrides:
   coordinator:
     config:
       placement: spread
+      metrics_listen: 127.0.0.1:19090
+      autoscaling_listen: 127.0.0.1:19092
     env:
       ADX_LOG_FORMAT: json
   adxlet:
@@ -13,6 +15,7 @@ service_overrides:
       ADX_LOG_FORMAT: json
     config:
       metrics_listen: 127.0.0.1:19091
+      metrics_interval_seconds: 15
       runtime_logs:
         directory: /home/akernel/adx/run/node/logs/runtime
       runtime_control:
@@ -23,6 +26,11 @@ service_overrides:
         ADX_EXECD_CONTROL_SOCKET_PATH: /run/akernel
       resource_source:
         disk_path: /home/akernel
+  apiserver:
+    config:
+      metrics_listen: 127.0.0.1:19093
+    env:
+      ADX_LOG_FORMAT: json
   ingress:
     env:
       ADX_LOG_FORMAT: json

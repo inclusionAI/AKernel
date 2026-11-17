@@ -22,20 +22,29 @@ Set AKERNEL_EXAMPLE_RUNC=true to include the optional runc runtime.
 """
 
 import os
+import sys
 
-from akernel_sdk import Sandbox
+from akernel_sdk import Sandbox, SchedulingError
 
 
 def run(runtime: str | None) -> None:
-    sandbox = (
-        Sandbox(cpu=1000, memory=2048)
-        if runtime is None
-        else Sandbox(
-            runtime=runtime,
-            cpu=1000,
-            memory=2048,
+    try:
+        sandbox = (
+            Sandbox(cpu=1000, memory=2048)
+            if runtime is None
+            else Sandbox(
+                runtime=runtime,
+                cpu=1000,
+                memory=2048,
+            )
         )
-    )
+    except SchedulingError as error:
+        print(error, file=sys.stderr)  # Includes blockers and recovery suggestions.
+        if error.resource_shortages:
+            print("Unavailable resources:", error.resource_shortages, file=sys.stderr)
+        print("Request ID:", error.request_id, file=sys.stderr)
+        # Preserve the failed result; changing runtime or retrying is caller policy.
+        raise
     with sandbox:
         result = sandbox.commands.run("uname -s")
         assert result.exit_code == 0, result.stderr

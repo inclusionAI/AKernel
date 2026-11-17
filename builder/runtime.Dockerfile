@@ -4,8 +4,8 @@
 
 ARG AKERNEL_RUNTIME_BASE_IMAGE=ubuntu:24.04
 ARG ADX_VERSION=v0.1.0rc2
-ARG ADX_EXECD_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261022184915-6fb53d733181/linux/amd64/adx-execd.tar.gz
-ARG ADX_EXECD_SHA256=47812ee97e842c811c9672e9eee0df0329ba5cd9326d0fc589ce181d83c3ef35
+ARG ADX_EXECD_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261113115925-18f9c673812d/linux/amd64/adx-execd.tar.gz
+ARG ADX_EXECD_SHA256=d258652483dd7c0f97d4d17524a47514529509d58a2adf87291ed0601980c7e4
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS adx-execd
 ARG ADX_EXECD_URL
@@ -30,6 +30,15 @@ RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-g
     sh /usr/local/libexec/verify-elf-arch.sh /opt/adx-execd/adx-execd "${TARGETARCH}"; \
     test -f /opt/adx-execd/manifest.json; \
     rm -f /tmp/adx-execd.tar.gz
+
+FROM adx-execd AS e2b-runtime
+ARG TARGETARCH
+COPY ./builder/scripts/prepare-e2b-runtime.py /usr/local/libexec/prepare-e2b-runtime.py
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    sh /tmp/apt-get-update.sh && \
+    apt-get install -y --no-install-recommends python3 erofs-utils && \
+    python3 /usr/local/libexec/prepare-e2b-runtime.py /opt/adx-execd /output "${TARGETARCH}" && \
+    fsck.erofs /output/akernel-runtime-rootfs.img
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS execd-runtime-rootfs
 
@@ -78,6 +87,10 @@ FROM erofs-builder-base AS execd-erofs-builder
 COPY --from=execd-runtime-rootfs / /rootfs
 RUN mkfs.erofs -E noinline_data /akernel-runtime-rootfs.img /rootfs && \
     fsck.erofs /akernel-runtime-rootfs.img
+
+FROM scratch AS runtime-e2b
+COPY --from=e2b-runtime /output/ /
+LABEL org.akernel.runtime.profile="execd-envd"
 
 FROM scratch AS runtime-execd
 COPY --from=execd-erofs-builder /akernel-runtime-rootfs.img /akernel-runtime-rootfs.img

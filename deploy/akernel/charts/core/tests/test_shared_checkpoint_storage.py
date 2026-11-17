@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -14,10 +16,14 @@ import yaml
 CHART = Path(__file__).resolve().parents[1]
 
 
-def render(*settings: str) -> dict[tuple[str, str], dict]:
+def render(
+    *settings: str, set_files: dict[str, Path] | None = None
+) -> dict[tuple[str, str], dict]:
     command = ["helm", "template", "akernel", str(CHART), "--namespace", "akernel-test"]
     for setting in settings:
         command.extend(["--set-string", setting])
+    for key, path in (set_files or {}).items():
+        command.extend(["--set-file", f"{key}={path}"])
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     return {
         (item["kind"], item["metadata"]["name"]): item
@@ -27,6 +33,226 @@ def render(*settings: str) -> dict[tuple[str, str], dict]:
 
 
 class SharedCheckpointStorageTests(unittest.TestCase):
+    def assert_memory_config(self, config, enabled, reserve):
+        resource = config["plugin"]["resource"]
+        self.assertEqual(
+            resource["memory_limit"],
+            {"enabled": enabled, "total_reserve": reserve},
+        )
+        self.assertIs(resource["memory_limit"]["enabled"], enabled)
+        self.assertEqual(resource["cgroup_root_name"], "/akernel")
+        self.assertEqual(resource["max_instance_num"], 1000)
+        self.assertIs(resource["enable_cache_in_stock_mode"], True)
+        self.assertEqual(config["plugin"]["image"]["cgroup_memory_limit"], "64GiB")
+
+    def test_default_parent_memory_limit_uses_16gib_total_reserve(self):
+        config = tomllib.loads(
+            render()[("ConfigMap", "akernel-node-config")]["data"][
+                "sandboxd_config.toml"
+            ]
+        )
+        self.assert_memory_config(config, True, "16GiB")
+
+    def test_complete_config_override_preserves_disabled_and_small_node_policy(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"][
+            "sandboxd_config.toml"
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-sandboxd.toml"
+            for enabled, reserve in ((False, "16GiB"), (True, "2GiB")):
+                with self.subTest(enabled=enabled, reserve=reserve):
+                    custom = default.replace(
+                        "enabled = true", f"enabled = {str(enabled).lower()}", 1
+                    ).replace(
+                        'total_reserve = "16GiB"', f'total_reserve = "{reserve}"', 1
+                    )
+                    path.write_text(custom)
+                    resources = render(set_files={"node.config.sandboxd.config": path})
+                    rendered = resources[("ConfigMap", "akernel-node-config")]["data"][
+                        "sandboxd_config.toml"
+                    ]
+                    self.assertEqual(rendered.rstrip(), custom.rstrip())
+                    self.assert_memory_config(tomllib.loads(rendered), enabled, reserve)
+
+    def test_pvm_parent_limit_is_disabled_unless_explicitly_enabled(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pvm-sandboxd.toml"
+            original = default.replace('total_reserve = "16GiB"', 'total_reserve = "2GiB"', 1)
+            for key in ("enabled", '"enabled"', "'enabled'"):
+                for source_enabled in ("false", "true"):
+                    path.write_text(original.replace("enabled = true", f"{key} = {source_enabled}", 1))
+                    for enabled in ("false", "true"):
+                        with self.subTest(key=key, source_enabled=source_enabled, enabled=enabled):
+                            resources = render(
+                                "node.config.sandboxd.firecrackerBackend=pvm",
+                                f"node.config.sandboxd.pvmMemoryLimitEnabled={enabled}",
+                                set_files={"node.config.sandboxd.config": path},
+                            )
+                            config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+                            self.assert_memory_config(config, enabled == "true", "2GiB")
+                            self.assertIn("firecracker_pvm", config["plugin"]["runtime"])
+            resources = render("node.config.sandboxd.firecrackerBackend=pvm")
+            config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+            self.assert_memory_config(config, False, "16GiB")
+
+    def test_pvm_memory_opt_in_does_not_override_kvm_memory_policy(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "kvm-sandboxd.toml"
+            path.write_text(default.replace("enabled = true", "enabled = false", 1))
+            resources = render(
+                "node.config.sandboxd.pvmMemoryLimitEnabled=true",
+                set_files={"node.config.sandboxd.config": path},
+            )
+            config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+            self.assert_memory_config(config, False, "16GiB")
+
+    def test_pvm_parent_switch_accepts_equivalent_toml_policy_forms(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        header = "[plugin.resource.memory_limit]"
+        section = r"(?ms)^\[plugin\.resource\.memory_limit\]\n.*?(?=^\[|\Z)"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pvm-sandboxd.toml"
+            for enabled, source in (("false", "true"), ("true", "false")):
+                canonical = default.replace("enabled = true", f"enabled = {source}", 1)
+                forms = {
+                    "canonical": canonical,
+                    "quoted": canonical.replace(header, '[plugin."resource".memory_limit]'),
+                    "escaped": canonical.replace(header, r'[plugin."res\u006furce".memory_limit]'),
+                    "inline": re.sub(
+                        section,
+                        f'memory_limit = {{ enabled = {source}, total_reserve = "16GiB" }}\n\n',
+                        canonical,
+                    ),
+                    "dotted": re.sub(
+                        section,
+                        f'memory_limit.enabled = {source}\nmemory_limit.total_reserve = "16GiB"\n\n',
+                        canonical,
+                    ),
+                }
+                expected = None
+                for form, candidate in forms.items():
+                    with self.subTest(enabled=enabled, form=form):
+                        self.assertEqual(tomllib.loads(candidate), tomllib.loads(canonical))
+                        path.write_text(candidate)
+                        resources = render(
+                            "node.config.sandboxd.firecrackerBackend=pvm",
+                            f"node.config.sandboxd.pvmMemoryLimitEnabled={enabled}",
+                            set_files={"node.config.sandboxd.config": path},
+                        )
+                        config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+                        self.assert_memory_config(config, enabled == "true", "16GiB")
+                        if expected is None:
+                            expected = config
+                        else:
+                            self.assertEqual(config, expected)
+
+    def test_pvm_preserves_omitted_disabled_memory_policy_but_rejects_opt_in(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        without_table = re.sub(
+            r"(?ms)^\[plugin\.resource\.memory_limit\]\n.*?(?=^\[|\Z)",
+            "", default,
+        )
+        without_enabled = default.replace("enabled = true\n", "", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-sandboxd.toml"
+            for custom, has_table in ((without_table, False), (without_enabled, True)):
+                with self.subTest(has_table=has_table):
+                    path.write_text(custom)
+                    resources = render(
+                        "node.config.sandboxd.firecrackerBackend=pvm",
+                        set_files={"node.config.sandboxd.config": path},
+                    )
+                    config = tomllib.loads(resources[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"])
+                    memory = config["plugin"]["resource"].get("memory_limit", {})
+                    self.assertFalse(memory.get("enabled", False))
+                    self.assertEqual("memory_limit" in config["plugin"]["resource"], has_table)
+                    if has_table:
+                        self.assertEqual(memory, {"total_reserve": "16GiB"})
+                    self.assertIn("firecracker_pvm", config["plugin"]["runtime"])
+                    self.assertIn("firecracker-pvm", config["plugin"]["runtime"]["runtime_binary"])
+                    with self.assertRaises(subprocess.CalledProcessError) as error:
+                        render(
+                            "node.config.sandboxd.firecrackerBackend=pvm",
+                            "node.config.sandboxd.pvmMemoryLimitEnabled=true",
+                            set_files={"node.config.sandboxd.config": path},
+                        )
+                    self.assertIn("boolean enabled field when opting in", error.exception.stderr)
+
+    def test_pvm_rejects_invalid_or_duplicate_memory_enabled_fields(self):
+        default = render()[("ConfigMap", "akernel-node-config")]["data"]["sandboxd_config.toml"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom-sandboxd.toml"
+            for field in ('enabled = "true"', "enabled = 1", '"enabled" = "true"', "'enabled' = 1",
+                          "enabled = true\nenabled = false", 'enabled = true\n"enabled" = false',
+                          "enabled = true\n'enabled' = false"):
+                for opt_in in ("false", "true"):
+                    with self.subTest(field=field, opt_in=opt_in):
+                        path.write_text(default.replace("enabled = true", field, 1))
+                        with self.assertRaises(subprocess.CalledProcessError) as error:
+                            render(
+                                "node.config.sandboxd.firecrackerBackend=pvm",
+                                f"node.config.sandboxd.pvmMemoryLimitEnabled={opt_in}",
+                                set_files={"node.config.sandboxd.config": path},
+                            )
+                        self.assertRegex(error.exception.stderr, "boolean enabled field|duplicate fields")
+
+    def test_pvm_rejects_invalid_memory_opt_in(self):
+        for value in ("1", "TRUE", "yes", ""):
+            with self.subTest(value=value):
+                with self.assertRaises(subprocess.CalledProcessError) as error:
+                    render(f"node.config.sandboxd.pvmMemoryLimitEnabled={value}")
+                self.assertIn("pvmMemoryLimitEnabled must be true or false", error.exception.stderr)
+
+    def test_control_service_budgets_protect_voluntary_disruption(self):
+        for replicas in (1, 3):
+            resources = render(f"adx.ingressApi.replicas={replicas}")
+            self.assertEqual(resources[("PodDisruptionBudget", "akernel-adx-coordinator")]["spec"]["minAvailable"], 1)
+            if replicas == 1:
+                self.assertNotIn(("PodDisruptionBudget", "akernel-adx-ingress-api"), resources)
+            else:
+                self.assertEqual(resources[("PodDisruptionBudget", "akernel-adx-ingress-api")]["spec"]["minAvailable"], 2)
+
+    def test_core_images_accept_a_shared_immutable_digest(self):
+        digest = "sha256:" + "a" * 64
+        resources = render("image.repository=example/akernel", f"image.digest={digest}")
+        for key in [("Deployment", "akernel-adx-coordinator"),
+                    ("Deployment", "akernel-adx-ingress-api"), ("DaemonSet", "akernel-node")]:
+            pod = resources[key]["spec"]["template"]["spec"]
+            self.assertEqual(pod["containers"][0]["image"], f"example/akernel@{digest}")
+        with self.assertRaises(subprocess.CalledProcessError):
+            render("image.digest=latest")
+
+    def test_control_services_use_control_pool_without_losing_mount_placement(self):
+        resources = self.shared_resources(
+            "adx.checkpointStorage.nodeSelector.storage=juicefs",
+            "adx.coordinator.nodeSelector.node-role=akernel-control-plane",
+            "adx.coordinator.tolerations[0].key=dedicated",
+            "adx.coordinator.tolerations[0].value=akernel-control-plane",
+            "adx.coordinator.tolerations[0].effect=NoSchedule",
+            "adx.ingressApi.nodeSelector.node-role=akernel-control-plane",
+        )
+        coord = resources[("Deployment", "akernel-adx-coordinator")]["spec"]["template"]["spec"]
+        self.assertEqual(coord["nodeSelector"], {"storage": "juicefs", "node-role": "akernel-control-plane"})
+        self.assertEqual(coord["tolerations"][0]["value"], "akernel-control-plane")
+        ingress = resources[("Deployment", "akernel-adx-ingress-api")]["spec"]["template"]["spec"]
+        self.assertEqual(ingress["nodeSelector"], {"node-role": "akernel-control-plane"})
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.shared_resources("adx.checkpointStorage.nodeSelector.pool=workers", "adx.coordinator.nodeSelector.pool=control")
+
+    def test_worker_selector_can_target_a_canary_without_selecting_coordinator(self):
+        resources = self.shared_resources(
+            "adx.checkpointStorage.nodeSelector.storage=juicefs",
+            "node.nodeSelector.generation=canary",
+        )
+        node = resources[("DaemonSet", "akernel-node")]["spec"]["template"]["spec"]
+        coordinator = resources[("Deployment", "akernel-adx-coordinator")]["spec"]["template"]["spec"]
+        self.assertEqual(node["nodeSelector"], {"storage": "juicefs", "generation": "canary"})
+        self.assertEqual(coordinator["nodeSelector"], {"storage": "juicefs"})
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.shared_resources("adx.checkpointStorage.nodeSelector.pool=clients", "node.nodeSelector.pool=other")
+
     def test_shared_consumers_use_mount_client_placement_and_keep_affinity(
         self,
     ) -> None:
@@ -109,7 +335,7 @@ class SharedCheckpointStorageTests(unittest.TestCase):
                 },
             )
 
-    def test_runtime_push_port_and_legacy_opt_out(self) -> None:
+    def test_runtime_push_port_and_required_lifecycle_events(self) -> None:
         resources = render("adx.runtimeControl.port=19023")
         node = yaml.safe_load(
             resources[("ConfigMap", "akernel-adx-config")]["data"]["node.yaml"]
@@ -118,11 +344,9 @@ class SharedCheckpointStorageTests(unittest.TestCase):
         self.assertEqual(
             node["runtime_control"]["advertised_address"], "http://${INSTANCE_IP}:19023"
         )
-        resources = render("adx.runtimeControl.enabled=false")
-        node = yaml.safe_load(
-            resources[("ConfigMap", "akernel-adx-config")]["data"]["node.yaml"]
-        )["services"][0]["config"]
-        self.assertNotIn("runtime_control", node)
+        with self.assertRaises(subprocess.CalledProcessError) as error:
+            render("adx.runtimeControl.enabled=false")
+        self.assertIn("lifecycle events require runtime control", error.exception.stderr)
 
     def test_runtime_push_rejects_invalid_ports(self) -> None:
         for port in ("0", "65536", "-1", "invalid", "19003.5"):

@@ -32,13 +32,28 @@ spec:
         app: akernel-adx-coordinator
       annotations:
         checksum/otel-collector-config: {{ include (print $.Template.BasePath "/otel-configmap.yaml") . | sha256sum }}
-        checksum/adx-config: {{ include (print $.Template.BasePath "/adx/configmap.yaml") . | sha256sum }}
+        checksum/adx-config: {{ include "core.adxRoleChecksum" (dict "root" . "key" "coordinator.yaml" "kind" "Deployment" "name" "akernel-adx-coordinator") }}
     spec:
+      terminationGracePeriodSeconds: 120
+      {{- $selector := dict }}
       {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
-      {{- with .Values.adx.checkpointStorage.nodeSelector }}
+      {{- $selector = deepCopy .Values.adx.checkpointStorage.nodeSelector }}
+      {{- end }}
+      {{- range $key, $value := .Values.adx.coordinator.nodeSelector }}
+      {{- if and (hasKey $selector $key) (ne (index $selector $key) $value) }}
+      {{- fail "Coordinator nodeSelector conflicts with checkpoint client placement" }}
+      {{- end }}
+      {{- $_ := set $selector $key $value }}
+      {{- end }}
+      {{- with $selector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.adx.coordinator.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.adx.coordinator.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -50,7 +65,14 @@ spec:
           imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
           command: [/opt/adx/current/bin/adxctl]
           args: [--config, /etc/akernel/adx-coordinator.yaml, run]
+          # The all-in-one image uses systemd's stop signal. This container runs
+          # adxctl as PID 1, so explicitly stop its supervisor and gRPC listener.
+          lifecycle:
+            preStop:
+              exec:
+                command: [/opt/adx/current/bin/adxctl, --config, /etc/akernel/adx-coordinator.yaml, stop]
           env:
+            {{- include "core.checkpointCredentialsEnv" . | nindent 12 }}
             {{- if eq .Values.adx.redis.mode "managed" }}
             - name: ADX_REDIS_PASSWORD
               valueFrom:
@@ -107,9 +129,15 @@ spec:
           imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.coordinator.image) }}
           command: [/usr/local/bin/otelcol-contrib]
           args: [--config=/etc/otel/control.yaml]
+          # This PID 1 is the Collector, not systemd; SIGTERM flushes exporters.
+          lifecycle:
+            preStop:
+              exec:
+                command: [/bin/sh, -c, 'kill -TERM 1']
           env:
             - {name: ADX_METRICS_TARGET, value: "127.0.0.1:19090"}
             - {name: ADX_METRICS_COMPONENT, value: adx-coordinator}
+            - {name: AKERNEL_CLUSTER_NAME, value: {{ .Values.monitoring.clusterName | quote }}}
             - {name: AKERNEL_ENV, value: {{ .Values.monitoring.akernelEnv | default "default" | quote }}}
             - {name: PROMETHEUS_ENDPOINT, value: {{ .Values.monitoring.prometheusEndpoint | quote }}}
             - {name: LOKI_ENDPOINT, value: {{ .Values.monitoring.lokiEndpoint | quote }}}

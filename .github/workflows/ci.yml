@@ -15,6 +15,34 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  image-bridge:
+    name: Managed Docker image bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up runtime adapter tests
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Test managed runtime adapters
+        run: python -m unittest discover -s builder/managed-docker -p 'test_*.py'
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.25.5'
+          cache-dependency-path: builder/image-bridge/go.sum
+      - name: Test and build the host/guest helper
+        working-directory: builder/image-bridge
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
+          GOOS=linux GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/akernel-image-bridge" .
+
   sdk-unit-tests:
     name: Python SDK unit tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -111,11 +139,21 @@ jobs:
         run: |
           make deploy-script-check
 
+      - name: Set up Terraform for ACK contract tests
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.13.4"
+          terraform_wrapper: false
+
+      - name: Test ACK image-pull bootstrap
+        run: make deploy-ack-image-pull-test
+
       - name: Check the maintained PVM host profile
         run: python3 deploy/pvm/test_host_profile.py -v
 
       - name: Test standalone deployment helpers
         run: |
+          python3 -m pip install 'tomli>=2,<3'
           make deploy-standalone-test
           make build-helper-test
   adx-integration-contracts:
@@ -127,6 +165,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Initialize pinned ADX configuration fixtures
+        run: git submodule update --init --depth 1 src/agent-dx
+
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -136,21 +177,34 @@ jobs:
 
       - name: Install contract-test dependencies
         run: |
-          python -m pip install PyYAML
+          python -m pip install PyYAML "websockets>=13"
           helm version --short
 
       - name: Verify ADX package, standalone, Helm, and Terraform contracts
         run: |
           python builder/scripts/test_adx_service.py -v
+          python builder/scripts/test_afs_config.py -v
+          python deploy/akernel/charts/core/tests/test_adx_observability.py -v
+          python deploy/akernel/charts/core/tests/test_adx_multicluster.py -v
           python builder/scripts/test_runtime_contract.py -v
           python deploy/standalone/test_start.py -v
           python deploy/scripts/test_ensure_adx_secret.py -v
           python deploy/scripts/test_get_adx_admin_key.py -v
+          python deploy/tests/kubernetes/test_node_lifecycle.py -v
+          python deploy/tests/kubernetes/test_runc_filesystems.py -v
           python deploy/akernel/charts/core/tests/test_adx_chart.py -v
+          python -m unittest discover -s deploy/registry-connectivity/tests -v
           python deploy/akernel/charts/core/tests/test_node_directories.py -v
           python deploy/akernel/charts/core/tests/test_shared_checkpoint_storage.py -v
           python deploy/akernel/charts/core/tests/test_prepare_checkpoint_storage.py -v
           python deploy/terraform/test_adx_contract.py -v
+
+      - name: Evaluate ADX multi-cluster dashboard queries
+        run: |
+          python deploy/tests/observability/metrics_collection_contract.py --output "$RUNNER_TEMP/adx-metrics-collection"
+          python deploy/tests/observability/dashboard_presentation_contract.py --output "$RUNNER_TEMP/adx-dashboard-presentation"
+          python deploy/tests/observability/dashboard_query_contract.py --docker --output "$RUNNER_TEMP/adx-dashboard-queries"
+          python deploy/tests/observability/dashboard_signal_contract.py --browser --output "$RUNNER_TEMP/adx-dashboard-signals"
 
       - name: Verify node-directory ownership with restricted Linux capabilities
         run: |
@@ -178,7 +232,7 @@ jobs:
 
       - name: Initialize build submodules
         run: |
-          git submodule update --init src/sandboxd
+          git submodule update --init src/sandboxd src/agent-dx
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -210,6 +264,14 @@ jobs:
             IMAGE_REPOSITORY=akernel-ci/all-in-one \
             IMAGE_TAG="${GITHUB_SHA}"
 
+      - name: Validate prepared configurations with packaged ADX
+        run: |
+          docker run --rm --entrypoint /usr/bin/python3 \
+            -e AKERNEL_TEST_ADXCTL=/opt/adx/current/bin/adxctl \
+            -v "${GITHUB_WORKSPACE}:/repo:ro" -w /repo \
+            "akernel-ci/all-in-one:${GITHUB_SHA}" \
+            builder/scripts/test_afs_config.py -v
+
       - name: Verify systemd container identity in the image
         run: |
           docker image inspect "akernel-ci/all-in-one:${GITHUB_SHA}" \
@@ -222,7 +284,7 @@ jobs:
             "akernel-ci/all-in-one:${GITHUB_SHA}" -euc '
               test -x /usr/local/bin/runsc
               test -x /usr/local/bin/containerd-shim-runsc-v1
-              for helper in checkpointgofer gvisor-sentry-prewarmer gvisor_sentry runsc-metric-server; do
+              for helper in checkpointgofer gvisor-sentry-prewarmer gvisor_sentry runsc-fd-parking runsc-metric-server; do
                 test -x "/usr/local/bin/gvisor-bin/${helper}"
               done
               test ! -e /usr/local/bin/containerd-shim-kata-v2
@@ -242,6 +304,14 @@ jobs:
             AKERNEL_CONTROL_BIND=127.0.0.1 \
             AKERNEL_DATA_BIND=127.0.0.1 \
             ./deploy/standalone/start.sh
+
+      - name: Trust the standalone HTTPS certificate
+        run: |
+          docker cp akernel-node:/home/akernel/adx/tls/ingress-public.pem \
+            "${RUNNER_TEMP}/akernel-public.pem"
+          test -s "${RUNNER_TEMP}/akernel-public.pem"
+          echo "SSL_CERT_FILE=${RUNNER_TEMP}/akernel-public.pem" >> "${GITHUB_ENV}"
+          echo "AKERNEL_VERIFY_TLS=1" >> "${GITHUB_ENV}"
 
       - name: Verify PID 1 detects its container
         run: |

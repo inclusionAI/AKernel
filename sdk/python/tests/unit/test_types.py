@@ -40,6 +40,9 @@ from typing import get_type_hints
 os.environ.pop('YR_HTTP_CONNECTION_NUM', None)
 import akernel_sdk
 import akernel_sdk.cli
+from akernel_sdk import InsufficientResourcesError, SchedulingError
+assert issubclass(InsufficientResourcesError, SchedulingError)
+assert 'akernel_sdk._backends.adx' not in sys.modules
 assert 'yr' not in sys.modules
 assert 'yr_sandbox' not in sys.modules
 assert 'YR_HTTP_CONNECTION_NUM' not in os.environ
@@ -72,6 +75,12 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
             set(akernel_sdk.__all__),
             {
                 "Sandbox",
+                "BuiltImage",
+                "build_image",
+                "Client",
+                "SandboxQuery",
+                "SandboxState",
+                "SandboxPaginator",
                 "S3Config",
                 "Mount",
                 "NetworkPolicy",
@@ -86,6 +95,8 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
                 "CommandHandle",
                 "EntryInfo",
                 "SandboxInfo",
+                "SnapshotInfo",
+                "SnapshotPaginator",
                 "NodeInfo",
                 "Pty",
                 "PtySession",
@@ -96,6 +107,17 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
                 "BackendNotInstalledError",
                 "UnsupportedBackendFeatureError",
                 "BackendOperationError",
+                "SchedulingError",
+                "InsufficientResourcesError",
+                "AuthenticationException",
+                "PermissionDeniedException",
+                "NotFoundException",
+                "SandboxNotFoundException",
+                "TimeoutException",
+                "RateLimitException",
+                "ServiceBusyException",
+                "CommandExitException",
+                "ForkCleanupError",
                 "DockerContext",
                 "DockerfileLaunch",
                 "DockerContextEntry",
@@ -109,6 +131,13 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
                 "DockerfileBuildError",
                 "DockerfileParseError",
                 "BuildInstruction",
+                "ComposeProject",
+                "ComposeOperationError",
+                "ServiceHandle",
+                "ServiceProcessHandle",
+                "DockerRuntime",
+                "ImageMountPlan",
+                "prepare_compose_images",
             },
         )
         for removed in (
@@ -184,9 +213,7 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
         )
 
     def test_host_path_mount_requires_explicit_writable_mode(self):
-        mount = Mount(
-            target="/apps/logs", host_path="/apps/logs", read_only=False
-        )
+        mount = Mount(target="/apps/logs", host_path="/apps/logs", read_only=False)
         self.assertEqual(mount.to_dict()["options"], ["rw"])
         self.assertFalse(mount.to_dict()["create_if_missing"])
 
@@ -197,18 +224,27 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
             {"s3_config": s3},
             {"image_url": "tools:v1", "s3_config": s3},
         ):
-            with self.subTest(extra=extra), self.assertRaisesRegex(
-                ValueError, "exactly one"
+            with (
+                self.subTest(extra=extra),
+                self.assertRaisesRegex(ValueError, "exactly one"),
             ):
                 Mount(target="/logs", host_path="/apps/logs", **extra)
 
     def test_host_path_rejects_relative_traversal_and_control_paths(self):
         for source in (
-            "", "apps/logs", "~/logs", "/apps/../logs", "/apps/./logs",
-            "/apps/\0logs", "/apps/\nlogs", "/apps/\x85logs", 123,
+            "",
+            "apps/logs",
+            "~/logs",
+            "/apps/../logs",
+            "/apps/./logs",
+            "/apps/\0logs",
+            "/apps/\nlogs",
+            "/apps/\x85logs",
+            123,
         ):
-            with self.subTest(source=source), self.assertRaisesRegex(
-                ValueError, "host_path"
+            with (
+                self.subTest(source=source),
+                self.assertRaisesRegex(ValueError, "host_path"),
             ):
                 Mount(target="/logs", host_path=source)
 
@@ -218,22 +254,26 @@ assert get_type_hints(apply_dockerfile)['sb'] is Sandbox
 
     def test_mount_read_only_must_be_boolean(self):
         for read_only in (0, 1, None, "false"):
-            with self.subTest(read_only=read_only), self.assertRaisesRegex(
-                TypeError, "read_only"
+            with (
+                self.subTest(read_only=read_only),
+                self.assertRaisesRegex(TypeError, "read_only"),
             ):
                 Mount(target="/logs", host_path="/apps/logs", read_only=read_only)
 
     def test_image_and_s3_mounts_remain_read_only(self):
         s3 = S3Config("https://s3.example.com", "data", "weights.img")
         for source in ({"image_url": "tools:v1"}, {"s3_config": s3}):
-            with self.subTest(source=source), self.assertRaisesRegex(
-                ValueError, "read.only"
+            with (
+                self.subTest(source=source),
+                self.assertRaisesRegex(ValueError, "read.only"),
             ):
                 Mount(target="/tools", read_only=False, **source)
         self.assertEqual(
             Mount("/tools", "tools:v1", None, "bind").to_dict(),
             {
-                "type": "bind", "target": "/tools", "options": ["ro"],
+                "type": "bind",
+                "target": "/tools",
+                "options": ["ro"],
                 "image_url": "tools:v1",
             },
         )

@@ -29,6 +29,9 @@ spec:
     metadata:
       annotations:
         checksum/prometheus-config: {{ include (print $.Template.BasePath "/prometheus/configmap.yaml") . | sha256sum }}
+{{- if .Values.prometheusServer.config.sharedStorage.enabled }}
+        checksum/shared-storage-rules: {{ include (print $.Template.BasePath "/prometheus/shared-storage-rules.yaml") . | sha256sum }}
+{{- end }}
       labels:
         {{- include "monitor.labels" . | nindent 8 }}
         component: prometheus
@@ -112,8 +115,17 @@ spec:
           periodSeconds: 5
       volumes:
       - name: prometheus-config
+{{- if .Values.prometheusServer.config.sharedStorage.enabled }}
+        projected:
+          sources:
+            - configMap:
+                name: prometheus-config
+            - configMap:
+                name: shared-storage-alert-rules
+{{- else }}
         configMap:
           name: prometheus-config
+{{- end }}
       - name: prometheus-storage
         persistentVolumeClaim:
           claimName: {{ .Values.prometheusServer.persistence.claimName | default "prometheus-pvc-ssd" }}

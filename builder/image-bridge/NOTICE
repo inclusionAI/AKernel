@@ -1,0 +1,5 @@
+Managed Docker image bridge source attribution
+
+The snapshotter derives from tianyuzhou95's agent-worker implementation at
+commit 9b3434d36086d920b6bb7f3322da642381a254b8. Retain this attribution when
+redistributing the derived helper. Repository license terms apply.

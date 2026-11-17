@@ -4,7 +4,11 @@
 
 from __future__ import annotations
 
+import copy
+import os
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,18 +17,21 @@ import yaml
 CHART = Path(__file__).resolve().parents[1]
 
 
-def render() -> tuple[list[dict], str]:
+def render(*settings: str, values: dict | None = None, umbrella: bool = False) -> tuple[list[dict], str]:
     result = subprocess.run(
         [
             "helm",
             "template",
             "akernel",
-            str(CHART),
+            str(CHART.parents[1] if umbrella else CHART),
             "--namespace",
             "akernel-system",
             "--set",
-            "adx.tls.existingSecret=adx-test-tls",
+            ("core." if umbrella else "") + "adx.tls.existingSecret=adx-test-tls",
+            "-f", "-",
+            *[argument for value in settings for argument in ("--set", value)],
         ],
+        input=yaml.safe_dump(values or {}),
         check=True,
         capture_output=True,
         text=True,
@@ -43,6 +50,98 @@ class AdxChartTest(unittest.TestCase):
                 return resource
         self.fail(f"missing {kind}/{name}")
 
+    def test_runc_filesystem_preparation_is_opt_in(self) -> None:
+        default = self.resource("DaemonSet", "akernel-node")["spec"]["template"]["spec"]
+        self.assertNotIn("prepare-runc-filesystems", [c["name"] for c in default["initContainers"]])
+        self.assertNotIn("runc-host-modules", [v["name"] for v in default["volumes"]])
+        resources, _ = render("node.config.sandboxd.enableRunc=true",
+                              "node.image.repository=registry.example.com/runc",
+                              "node.image.tag=qualified",
+                              "node.image.pullPolicy=Always")
+        pod = next(r for r in resources if r["kind"] == "DaemonSet")["spec"]["template"]["spec"]
+        prepare = pod["initContainers"][0]
+        self.assertEqual(prepare["name"], "prepare-runc-filesystems")
+        self.assertEqual(prepare["image"], pod["containers"][0]["image"])
+        self.assertEqual(prepare["imagePullPolicy"], "Always")
+        self.assertEqual(prepare["imagePullPolicy"], pod["containers"][0]["imagePullPolicy"])
+        self.assertEqual(prepare["securityContext"], {"privileged": True, "runAsUser": 0, "readOnlyRootFilesystem": True})
+        self.assertEqual(prepare["volumeMounts"], [{"name": "runc-host-modules", "mountPath": "/host/lib", "readOnly": True}])
+        volume = next(v for v in pod["volumes"] if v["name"] == "runc-host-modules")
+        self.assertEqual(volume["hostPath"], {"path": "/lib", "type": "Directory"})
+
+    def test_runc_volume_prerequisite_allows_missing_module_directory(self) -> None:
+        resources, _ = render("node.config.sandboxd.enableRunc=true")
+        pod = next(r for r in resources if r["kind"] == "DaemonSet")["spec"]["template"]["spec"]
+        volume = next(v for v in pod["volumes"] if v["name"] == "runc-host-modules")
+        source = volume["hostPath"]
+        self.assertEqual(source["type"], "Directory")
+        with tempfile.TemporaryDirectory() as directory:
+            host = Path(directory)
+            (host / "lib").mkdir()
+            # Model the rendered Directory prerequisite before any init command.
+            def directory_available(host_path: dict) -> bool:
+                self.assertEqual(host_path["type"], "Directory")
+                return (host / host_path["path"].lstrip("/")).is_dir()
+
+            self.assertTrue(directory_available(source))
+            # The previous /lib/modules Directory prerequisite rejects this host.
+            self.assertFalse(directory_available({"path": "/lib/modules", "type": "Directory"}))
+
+    def test_runc_filesystem_preparation_loads_only_missing_and_fails_closed(self) -> None:
+        resources, _ = render("node.config.sandboxd.enableRunc=true")
+        pod = next(r for r in resources if r["kind"] == "DaemonSet")["spec"]["template"]["spec"]
+        script = pod["initContainers"][0]["command"][-1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            filesystems, calls = root / "filesystems", root / "calls"
+            modprobe = root / "modprobe"
+            (root / "grep").symlink_to(shutil.which("grep"))
+            uname = root / "uname"
+            uname.write_text('#!/bin/sh\nprintf "test-kernel\\n"\n')
+            uname.chmod(0o755)
+            for index, (registered, mode, module_tree, expected_calls, success) in enumerate((
+                ("nodev\toverlay\nerofs\n", "missing-command", False, [], True),
+                ("nodev\toverlay\n", "load", True, ["-d /host erofs"], True),
+                ("", "load", True, ["-d /host overlay", "-d /host erofs"], True),
+                ("overlay-extra\nerofs-extra\n", "load", True, ["-d /host overlay", "-d /host erofs"], True),
+                ("nodev\toverlay\n", "fail", True, ["-d /host erofs"], False),
+                ("nodev\toverlay\n", "noop", True, ["-d /host erofs"], False),
+                ("nodev\toverlay\n", "load", False, [], False),
+                ("nodev\toverlay\n", "missing-command", True, [], False),
+            )):
+                with self.subTest(registered=registered, mode=mode, module_tree=module_tree):
+                    if modprobe.exists():
+                        modprobe.unlink()
+                    if mode != "missing-command":
+                        modprobe.write_text('#!/bin/sh\nprintf "%s %s %s\\n" "$1" "$2" "$3" >> "$CALLS"\n'
+                                            '[ "$#" -eq 3 ] && [ "$1" = -d ] && [ "$2" = /host ] || exit 24\n'
+                                            'case "$MODE" in fail) exit 23;; noop) exit 0;; esac\n'
+                                            'printf "%s\\n" "$3" >> "$FILESYSTEMS"\n')
+                        modprobe.chmod(0o755)
+                    module_root = root / str(index) / "lib/modules"
+                    if module_tree:
+                        (module_root / "test-kernel").mkdir(parents=True)
+                    filesystems.write_text(registered)
+                    calls.write_text("")
+                    env = dict(os.environ, PATH=str(root),
+                               CALLS=str(calls), FILESYSTEMS=str(filesystems), MODE=mode)
+                    command = script.replace("/proc/filesystems", str(filesystems))
+                    command = command.replace("/host/lib/modules", str(module_root))
+                    result = subprocess.run(["/bin/sh", "-ec", command],
+                                            env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, success, result.stderr)
+                    self.assertEqual(calls.read_text().splitlines(), expected_calls)
+                    if mode == "noop":
+                        self.assertIn("runc requires host filesystem erofs", result.stderr)
+                        self.assertIn("module load did not register it", result.stderr)
+                    if not success:
+                        self.assertIn("erofs", result.stderr)
+                        self.assertIn("test-kernel", result.stderr)
+                    if not success and not module_tree:
+                        self.assertIn("missing module directory", result.stderr)
+                    if not success and mode in ("fail", "missing-command"):
+                        self.assertIn("failed to load host filesystem erofs", result.stderr)
+
     def test_direct_ingress_has_no_external_proxy_resources(self) -> None:
         names = {item["metadata"]["name"] for item in self.resources}
         self.assertFalse(any("traefik" in name for name in names))
@@ -56,6 +155,20 @@ class AdxChartTest(unittest.TestCase):
                 self.assertNotIn("restart_limit", deployment)
                 self.assertEqual(deployment["restart_delay_ms"], 1000)
 
+    def test_pod_shutdown_drains_before_container_stop(self) -> None:
+        node = self.resource("DaemonSet", "akernel-node")["spec"]["template"]["spec"]
+        self.assertGreaterEqual(node["terminationGracePeriodSeconds"], 150)
+        container = next(c for c in node["containers"] if c["name"] == "akernel-node")
+        self.assertEqual(container["lifecycle"]["preStop"]["exec"]["command"],
+                         ["systemctl", "stop", "adx.service"])
+        for name, config, budget in (("coordinator", "coordinator", 120),
+                                      ("ingress-api", "ingress-api", 210)):
+            pod = self.resource("Deployment", "akernel-adx-" + name)["spec"]["template"]["spec"]
+            self.assertGreaterEqual(pod["terminationGracePeriodSeconds"], budget)
+            container = next(c for c in pod["containers"] if c["name"] == name)
+            self.assertEqual(container["lifecycle"]["preStop"]["exec"]["command"],
+                             ["/opt/adx/current/bin/adxctl", "--config", f"/etc/akernel/adx-{config}.yaml", "stop"])
+
     def test_uses_current_adx_role_names(self) -> None:
         config = self.resource("ConfigMap", "akernel-adx-config")["data"]
         self.assertIn("coordinator.yaml", config)
@@ -66,12 +179,29 @@ class AdxChartTest(unittest.TestCase):
         self.assertIn("role: adxlet", config["node.yaml"])
         self.assertIn("ADX_EXECD_CONTROL_SOCKET_PATH", config["node.yaml"])
         self.assertIn("ADX_DATA_PLANE_RELAY_BIND", config["node.yaml"])
+
         self.assertIn("ADX_DATA_PLANE_ALLOWED_INGRESS_CIDRS", config["node.yaml"])
         self.assertIn("/__adx/usr/local/bin/adx-execd", config["node.yaml"])
         self.assertNotIn("role: master", self.rendered)
         self.assertNotIn("role: node-manager", self.rendered)
         self.assertNotIn("role: api-server", self.rendered)
         self.assertNotIn("role: edge", self.rendered)
+
+    def test_collectors_receive_term_instead_of_the_image_systemd_signal(self) -> None:
+        rendered = subprocess.check_output([
+            "helm", "template", "akernel", str(CHART),
+            "--set", "adx.tls.existingSecret=adx-test-tls",
+            "--set", "monitoring.prometheusEndpoint=http://prometheus:9090/api/v1/write",
+        ], text=True)
+        pods = [r["spec"]["template"]["spec"] for r in yaml.safe_load_all(rendered)
+                if r and r["kind"] == "Deployment"
+                and r["metadata"]["name"] in ("akernel-adx-coordinator", "akernel-adx-ingress-api")]
+        self.assertEqual(len(pods), 2)
+        for pod in pods:
+            collector = next(c for c in pod["containers"] if c["name"] == "otel-collector")
+            self.assertEqual(collector["command"], ["/usr/local/bin/otelcol-contrib"])
+            self.assertEqual(collector["lifecycle"]["preStop"]["exec"]["command"],
+                             ["/bin/sh", "-c", "kill -TERM 1"])
 
     def test_port_host_domain_is_only_sent_to_ingress_when_configured(self) -> None:
         default_config = self.resource("ConfigMap", "akernel-adx-config")["data"]
@@ -564,6 +694,62 @@ class AdxChartTest(unittest.TestCase):
         names = {item["metadata"]["name"] for item in self.resources}
         self.assertNotIn("akernel-component-tls", names)
         self.assertNotIn("akernel-master-secret", names)
+
+    def test_production_profile_renders_in_core_and_umbrella(self) -> None:
+        profile = yaml.safe_load((CHART / "values-production.yaml").read_text())
+        for umbrella in (False, True):
+            with self.subTest(umbrella=umbrella):
+                values = {"core": profile, "monitor": {"enabled": False}} if umbrella else profile
+                resources, _ = render(values=values, umbrella=umbrella)
+                objects = {(r["kind"], r["metadata"]["name"]): r for r in resources}
+                for kind, name, role in (
+                    ("Deployment", "akernel-adx-coordinator", "coordinator"),
+                    ("Deployment", "akernel-adx-ingress-api", "ingressApi"),
+                    ("StatefulSet", "akernel-adx-redis", "redis"),
+                ):
+                    spec = objects[kind, name]["spec"]
+                    self.assertEqual(spec["template"]["spec"]["containers"][0]["resources"],
+                                     profile["adx"][role]["resources"])
+                self.assertEqual(objects["StatefulSet", "akernel-adx-redis"]["spec"]
+                                 ["volumeClaimTemplates"][0]["spec"]["resources"]["requests"]["storage"],
+                                 profile["adx"]["redis"]["persistence"]["size"])
+                for kind, name in (("DaemonSet", "akernel-node"), ("ConfigMap", "akernel-adx-config")):
+                    self.assertEqual(objects[kind, name], self.resource(kind, name))
+
+    def test_production_api_host_separation_and_disruption_budget(self) -> None:
+        for replicas in (4, 8):
+            with self.subTest(replicas=replicas):
+                resources, _ = render(f"adx.ingressApi.replicas={replicas}",
+                                      values=yaml.safe_load((CHART / "values-production.yaml").read_text()))
+                objects = {(r["kind"], r["metadata"]["name"]): r for r in resources}
+                api = objects["Deployment", "akernel-adx-ingress-api"]["spec"]
+                self.assertEqual(api["replicas"], replicas)
+                pod = api["template"]["spec"]
+                rule = pod["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0]
+                self.assertEqual(rule["topologyKey"], "kubernetes.io/hostname")
+                self.assertEqual(rule["labelSelector"]["matchLabels"], api["selector"]["matchLabels"])
+                self.assertEqual(pod["topologySpreadConstraints"][0]["whenUnsatisfiable"], "ScheduleAnyway")
+                self.assertEqual(api["strategy"]["rollingUpdate"], {"maxSurge": 0, "maxUnavailable": 1})
+                self.assertEqual(objects["PodDisruptionBudget", "akernel-adx-ingress-api"]["spec"]["minAvailable"],
+                                 replicas - 1)
+
+    def test_redis_placement_preserves_storage_and_container_configuration(self) -> None:
+        placement = {
+            "nodeSelector": {"pool": "control"},
+            "tolerations": [{"key": "control", "operator": "Exists", "effect": "NoSchedule"}],
+            "affinity": {"podAntiAffinity": {"preferredDuringSchedulingIgnoredDuringExecution": [{
+                "weight": 100, "podAffinityTerm": {
+                    "topologyKey": "kubernetes.io/hostname",
+                    "labelSelector": {"matchLabels": {"app": "akernel-adx-coordinator"}},
+                },
+            }]}},
+        }
+        resources, _ = render(values={"adx": {"redis": placement}})
+        actual = next(r for r in resources if r["kind"] == "StatefulSet" and
+                      r["metadata"]["name"] == "akernel-adx-redis")
+        expected = copy.deepcopy(self.resource("StatefulSet", "akernel-adx-redis"))
+        expected["spec"]["template"]["spec"].update(placement)
+        self.assertEqual(actual, expected)
 
     def test_multiple_coordinator_replicas_are_rejected(self) -> None:
         result = subprocess.run(

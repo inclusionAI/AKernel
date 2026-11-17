@@ -1,3 +1,12 @@
+{{- $logs := .Values.node.applicationLogs }}
+{{- if $logs.enabled }}
+{{- if or (not (regexMatch "^(/[A-Za-z0-9_-]+)+$" $logs.dataDiskRoot)) (not (regexMatch "^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $logs.relativePath)) (not (regexMatch "^[0-7]{4}$" $logs.mode)) }}
+{{- fail "applicationLogs requires a dedicated absolute disk root, safe relative directory and four-digit mode" }}
+{{- end }}
+{{- if and $logs.legacyMountPath (not (regexMatch "^/home/akernel/[A-Za-z0-9_-]+$" $logs.legacyMountPath)) }}
+{{- fail "temporary legacy log mount must be one non-system directory beneath /home/akernel" }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,7 +14,16 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   config.json: |
+{{- if and .Values.node.applicationLogs.enabled .Values.node.applicationLogs.mountInSandbox }}
+{{- $oci := .Values.node.config.ociConfig | fromJson }}
+{{- range ($oci.mounts | default list) }}
+{{- if eq .destination "/app/logs" }}{{ fail "applicationLogs owns /app/logs: remove a duplicate OCI baseline mount" }}{{- end }}
+{{- end }}
+{{- $_ := set $oci "mounts" (append ($oci.mounts | default list) (dict "destination" "/app/logs" "source" "/app/logs" "type" "bind" "options" (list "rbind" "rw" "rprivate"))) }}
+{{ $oci | toPrettyJson | indent 4 }}
+{{- else }}
 {{ .Values.node.config.ociConfig | indent 4 }}
+{{- end }}
 
   service-resource-control.conf: |
     [Slice]
@@ -14,10 +32,35 @@ data:
 
   sandboxd_config.toml: |
 {{- $sandboxdConfig := .Values.node.config.sandboxd.config }}
+{{- $saveMode := .Values.node.config.sandboxd.runscCheckpointMode | default "full" }}
+{{- $nativeFilestore := eq (toString (.Values.node.config.sandboxd.nativeFilestore | default false)) "true" }}
+{{- if not (has $saveMode (list "full" "reflink")) }}
+{{- fail "node.config.sandboxd.runscCheckpointMode must be full or reflink" }}
+{{- end }}
+{{- if eq $saveMode "reflink" }}
+{{- $localInputs := has .Values.adx.checkpointStorage.kind (list "local" "s3") }}
+{{- if not (and $nativeFilestore $localInputs) }}
+{{- fail "runsc reflink requires nativeFilestore and node-local checkpoint inputs (local or s3)" }}
+{{- end }}
+{{- if not (contains "# AKERNEL_RUNSC_CHECKPOINT_MODE" $sandboxdConfig) }}
+{{- fail "runsc reflink requires the # AKERNEL_RUNSC_CHECKPOINT_MODE marker in sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = replace "# AKERNEL_RUNSC_CHECKPOINT_MODE" "checkpoint_mode=\"reflink\"" $sandboxdConfig }}
+{{- end }}
+{{- if $nativeFilestore }}
+{{- if not (regexMatch "(?m)^[\\t ]*filestore_dir_size=.*# AKERNEL_NATIVE_FILESTORE$" $sandboxdConfig) }}
+{{- fail "nativeFilestore requires the filestore_dir_size # AKERNEL_NATIVE_FILESTORE marker in sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)filestore_dir_size=.*# AKERNEL_NATIVE_FILESTORE$" $sandboxdConfig "${1}filestore_dir_size=\"\" # Native node filesystem" }}
+{{- end }}
 {{- $sandboxdConfig = include "akernel.sandboxdRuntimeTuning" (dict "config" $sandboxdConfig "tuning" .Values.node.config.sandboxd.runtimeTuning) }}
 {{- $firecrackerBackend := .Values.node.config.sandboxd.firecrackerBackend | default "kvm" }}
 {{- if not (has $firecrackerBackend (list "kvm" "pvm")) }}
 {{- fail "node.config.sandboxd.firecrackerBackend must be kvm or pvm" }}
+{{- end }}
+{{- $pvmMemoryLimitEnabled := toString .Values.node.config.sandboxd.pvmMemoryLimitEnabled }}
+{{- if not (has $pvmMemoryLimitEnabled (list "true" "false")) }}
+{{- fail "node.config.sandboxd.pvmMemoryLimitEnabled must be true or false" }}
 {{- end }}
 {{- if eq $firecrackerBackend "pvm" }}
 {{- if not (and (contains "[plugin.runtime.firecracker]" $sandboxdConfig) (contains "firecracker=\"/usr/local/bin/firecracker\"" $sandboxdConfig)) }}
@@ -45,6 +88,13 @@ data:
 {{- end }}
 {{- $sandboxdConfig = replace $chunkDbMarker (printf "chunk_db_size=%s" ($chunkDbSize | quote)) $sandboxdConfig }}
 {{- end }}
+{{- if eq $firecrackerBackend "pvm" }}
+{{- if not (semverCompare ">=3.17.0" .Capabilities.HelmVersion.Version) }}
+{{- fail "PVM configuration requires Helm 3.17 or newer for TOML validation" }}
+{{- end }}
+{{- /* Parse after consuming template markers. Bind fromToml only on the PVM path. */}}
+{{- $sandboxdConfig = tpl (.Files.Get "scripts/pvm-memory-limit.tpl") (dict "Template" .Template "config" $sandboxdConfig "enabled" (eq $pvmMemoryLimitEnabled "true")) }}
+{{- end }}
 {{ $sandboxdConfig | indent 4 }}
 
   registry.json: |
@@ -63,3 +113,14 @@ data:
 
   prepare_checkpoint_storage.py: |
 {{ .Files.Get "scripts/prepare_checkpoint_storage.py" | indent 4 }}
+{{- if (.Values.node.runtimeRootfsPin | default dict).enabled }}
+
+  pin-runtime-rootfs.py: |
+{{ .Files.Get "scripts/pin-runtime-rootfs.py" | indent 4 }}
+{{- end }}
+
+{{- if .Values.node.applicationLogs.enabled }}
+
+  prepare-application-logs.py: |
+{{ .Files.Get "scripts/prepare-application-logs.py" | indent 4 }}
+{{- end }}

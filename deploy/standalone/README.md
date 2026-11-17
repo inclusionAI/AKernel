@@ -58,6 +58,39 @@ for inspection and retry. Data and credentials survive stopping.
 For an independent data profile, set an absolute `AKERNEL_STANDALONE_DATA_DIR`
 for every command. Only one standalone node can run per Docker daemon.
 
+Standalone keeps the aggregate sandbox memory limit disabled by default, with
+`total_reserve="16GiB"` available for explicit configuration. To enable it, edit
+`[plugin.resource.memory_limit]` in
+`deploy/standalone/config/sandboxd_config.toml` before startup. Qualify cgroup v2
+and effective memory above the selected positive reserve, including any
+Docker/OrbStack VM or visible ancestor limit, with room for sandbox requests.
+Editing only the generated data-directory TOML is insufficient because startup
+regenerates it. This also applies to `make standalone-source-test`. See
+[the memory budget and upgrade contract](../README.md#aggregate-sandbox-memory-budget)
+before enabling the policy on an existing profile.
+
+Selecting `AKERNEL_FIRECRACKER_BACKEND=pvm` keeps the parent limit disabled by
+default, including when the source TOML has `enabled=true`. PVM parent-limit
+enforcement still needs qualification on the matching host. To opt in for that
+qualification, set `AKERNEL_PVM_MEMORY_LIMIT_ENABLED=true` and choose a suitable
+positive `total_reserve` in the source TOML before startup. The switch accepts
+only `true` or `false`, defaults to `false`, and affects only PVM. The maintained
+PVM CI fixture keeps it disabled.
+
+For PVM, use Python 3.11 or newer, or install `tomli` in the Python 3.10
+environment used by the launcher. To override a custom memory policy, put its
+boolean `enabled` field in the standard `[plugin.resource.memory_limit]`
+section. See the [PVM deployment guide](../pvm-runtime.md#deployment-and-storage-profile).
+
+The bundled ADX profile retains its `auto` resource source, including PVM and
+trace/shared-storage variants. `auto` does not guarantee that public scheduling
+capacity follows the sandbox parent ceiling. Before enabling the policy,
+operators must configure and qualify a compatible ADX `resource_source`, whether
+using the bundled profile or a custom `AKERNEL_ADX_CONFIG`. Verify memory
+capacity against the parent budget, allocation and release after sandbox
+create/delete, and schedulable CPU from that source. The disabled default does
+not repair or qualify resource-source behavior.
+
 ### Runtime selection
 
 Runsc is the source default. Opt into runc with
@@ -277,11 +310,13 @@ these listeners remain within the standalone container network. SDK address
 and token settings are unchanged.
 
 `data/sdk.env` follows the hostname and published ports selected at startup.
-For default ports it exports only the server address; with custom ports it
-also exports the data-plane address. CI reads the same file.
+It exports the server address and an HTTPS gateway address on the same control
+listener, including custom ports. Private port forwarding sends credentials;
+the plaintext data listener rejects them. The standalone HTTP listener test uses
+`AKERNEL_TEST_HTTP_DATA_PORT` (default `80`) when custom data ports are selected.
+CI reads the same file. Source the
+complete SDK environment rather than exporting only the server address.
 `data/token` points to the deployment token. Keep the data directory private.
-For custom host port mappings, use the additional gateway override printed by
-`start.sh`; the default deployment does not require it.
 
 The bundled standalone Ingress accepts Host-subdomain port forwarding under
 `localhost`: `<sandbox-id>-<port>.localhost`. The SDK continues to return its
@@ -339,3 +374,112 @@ By default, direct startup stores data in `deploy/standalone/data`. Override it 
 ```bash
 export AKERNEL_STANDALONE_DATA_DIR="/path/to/your/data"
 ```
+
+### AFS shared checkpoints
+
+Use a separately managed AFS **DFS** mount for shared checkpoint artifacts.
+The default standalone profile keeps checkpoints and runtime files on local
+storage. To select AFS, mount DFS on the Linux Docker host first, then launch:
+
+```bash
+AKERNEL_AFS_MOUNT=/srv/afs-dfs \
+AKERNEL_AFS_CHECKPOINT_PREFIX=akernel/checkpoints \
+make standalone
+```
+
+The launcher requires a writable, existing FUSE mount with source `afs-dfs`;
+an ordinary directory, OwnerFs mount, or read-only mount is rejected before
+startup. Docker binds it at `/mnt/akernel-shared`. The ADX service checks the
+mount again and configures the same `distributed_fs` alias and prefix for the
+Adxlet checkpoint writer and Coordinator artifact reclaimer. Runtime rootfs,
+writable layers, journals and local caches remain under the node's local state.
+Keep the mount available throughout the node lifecycle. Bring up AFS Meta and
+Node services independently; stopping AKernel does not stop those services.
+Use durable local-file Meta storage and current AFS mTLS configuration. Existing
+legacy AFS metadata formats require the upstream documented migration policy.
+
+The ADX Sandbox Lifecycle dashboard (`adx-sandbox-lifecycle`) adds creation-call
+success ratios, successful actual-new-create P95 latency, unknown outcomes,
+queued/starting counts and wait ages, interruption/recovery results, worker
+incidents, and statistics coverage/freshness. Its data source is the summary
+Prometheus datasource; optional Environment detail collection uses the same
+store. P95 excludes replay and unknown outcomes. Missing data, zero denominators and stale
+snapshots are not evidence of health. The current-impact panel documents the
+private Coordinator query boundary; it does not expose that administrative API
+through the public SDK or Grafana.
+
+All ADX dashboards scope queries by `cluster` and `adx_env`. Environment and
+node identity joins, node table keys, and creation QPS recording rules retain
+both labels. Loki indexes `cluster`; log and TraceQL queries and dashboard
+navigation carry the same scope. TraceQL and Explore Requests match the selected cluster literally, including
+cluster names containing dots, and retain an explicit All option. The Statistics Started At panel converts the Unix seconds metric to
+milliseconds for Grafana date formatting. For Helm, set
+`core.monitoring.clusterName` and `monitor.prometheusServer.config.clusterName`
+to the same stable cluster identity (default `akernel`); Terraform supplies its
+`cluster_name` to both. For standalone, set `AKERNEL_CLUSTER_NAME` and
+`AKERNEL_ENV` before startup (defaults `standalone` and `default`). Use distinct
+cluster identities when multiple clusters send to the same Prometheus.
+
+The other ADX dashboards provide creation request/completion QPS and peak QPS,
+matching Running/Paused counts, aggregated node/runtime resources, and separate
+Environment detail and log pages. Helm monitoring can enable
+`environmentDetails.enabled=true` to add native inventory and resource scrape
+jobs to the existing Prometheus instance. Detail collection defaults to off,
+uses a 30-second interval and caps each target at 200,000 samples per scrape.
+Collected detail and summary series share `prometheusServer.config.retentionTime`
+(default 30 days); allow for Environment churn when sizing its storage. Summary
+scrapes retain their 15-second interval. Match `environmentDetails.namespaces` and
+`environmentDetails.environment` to the deployment's namespace and
+`core.monitoring.akernelEnv`. The log detail page defaults to a 15-minute,
+manual-refresh query with bounded results. Per-instance OTLP samples from sandboxd
+are excluded from the summary store; native ADX detail endpoints supply instance
+CPU and memory. The existing `sandbox-metrics` dashboard URL now uses those
+Environment detail panels on the same `prometheus` datasource. With detail
+collection disabled, the pages remain available. A fresh deployment has no
+detail samples; disabling collection later stops sampling while retained history
+follows the shared retention policy.
+
+Validate colliding Environment/node IDs across clusters and the coverage
+clock using the provisioned dashboard queries and recording rules:
+
+```bash
+python deploy/akernel/charts/core/tests/test_adx_multicluster.py -v
+python deploy/tests/observability/dashboard_query_contract.py --docker --output /tmp/adx-dashboard-queries
+python deploy/tests/observability/dashboard_signal_contract.py --browser --output /tmp/adx-dashboard-signals
+```
+
+The signal contract requires Docker, Helm, headless Chrome, PyYAML and websockets. It opens the
+provisioned dashboard in Grafana 11.5.2 and records the actual interpolated Tempo
+queries for default All and a dotted cluster name.
+
+For a standalone Collector, set `PROMETHEUS_ENDPOINT`, `LOKI_ENDPOINT`, and
+`TEMPO_ENDPOINT` to reachable `host:port` addresses before startup; the launcher
+passes supplied endpoint variables, `AKERNEL_ENV` and `AKERNEL_CLUSTER_NAME`
+into the node container. Endpoints use `host:port` without a URL scheme; Tempo
+uses its OTLP gRPC listener (4317).
+Standalone collection includes Coordinator, API Server, Adxlet and relay summary
+metrics on private listeners. API creation metrics use port 19093; Coordinator
+autoscaling keeps port 19092. Collector self-metrics use port 18889.
+
+Set `ENABLE_TRACE=true` to trace standalone control processes and Execd at a
+10% sampling ratio through the local Collector. The default keeps tracing off.
+Custom `AKERNEL_ADX_CONFIG` inputs may use explicit services or any supported
+ADX profile, including node-only profiles. Configuration options apply only to
+roles present in that deployment. Profile and service-role selectors support
+ADX's `${NAME}` and `${NAME:-default}` syntax using the ADX service process
+environment. Empty values use the default, and `$$` escapes a dollar sign.
+Variable values are inserted once. The generated file retains source
+expressions, including unrelated environment values, for the ADX loader.
+
+The signal regression feeds ordinary Rust JSON logs through the shipped
+Collector file receiver and normalization processors into Loki, then checks
+WARN/ERROR counts for both clusters and All. Diagnostic counter regressions
+include startup zeros, the first event and an initial burst through Prometheus.
+
+The default AMD64 platform and Execd archive URLs and SHA-256 values are pinned
+in [`builder/node.Dockerfile`](../../builder/node.Dockerfile) and
+[`builder/runtime.Dockerfile`](../../builder/runtime.Dockerfile). Their archive
+manifests identify the packaged binaries. Select both archives from the same ADX
+revision when overriding these inputs. ARM64 builds require architecture-matched
+URL/checksum pairs for both archives; see the
+[release artifact options](../../builder/README.md#release-artifacts).

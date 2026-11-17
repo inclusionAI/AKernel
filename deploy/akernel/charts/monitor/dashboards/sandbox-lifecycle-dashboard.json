@@ -1,830 +1,256 @@
 {
-  "annotations": {
-    "list": []
-  },
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
+  "uid": "sandbox-metrics",
+  "title": "AKernel Environment Detail",
   "id": null,
-  "links": [],
+  "version": 2,
+  "schemaVersion": 40,
+  "editable": true,
+  "refresh": "",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "description": "Select an Environment ID or narrow RE2 pattern for current inventory and fresh runtime usage. Detail queries are manual and start with no Environment selected.",
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis, cluster)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "adx_env",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis{cluster=~\"$cluster\"}, adx_env)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "state",
+        "type": "custom",
+        "query": "Running,Paused",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "multi": true,
+        "includeAll": true,
+        "allValue": "Running|Paused"
+      },
+      {
+        "name": "environment_id",
+        "label": "Environment ID regex (required)",
+        "description": "Enter an Environment ID or narrow RE2 pattern. Use \\x60 to match a backtick. Broad patterns explicitly request all matching instances.",
+        "type": "textbox",
+        "query": "__select_environment__",
+        "current": {
+          "text": "__select_environment__",
+          "value": "__select_environment__"
+        }
+      }
+    ]
+  },
   "panels": [
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${prometheus_ds}"
-      },
-      "description": "Current running sandboxes from the explicit sandbox lifecycle gauge.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 0,
-        "y": 0
-      },
       "id": 1,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.4.0",
-      "targets": [
-        {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "sum(sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"}) or vector(0)",
-          "instant": true,
-          "legendFormat": "Running",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Running Sandboxes",
-      "type": "stat"
-    },
-    {
+      "title": "Environment Inventory",
+      "type": "table",
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus_ds}"
-      },
-      "description": "Aggregate CPU utilization as a percentage of configured sandbox CPU limits.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
+        "uid": "prometheus"
       },
       "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 8,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.4.0",
-      "targets": [
-        {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "(100 * sum(sandbox_cpu_usage{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1)) / sum(sandbox_cpu_limit{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1))) or vector(0)",
-          "instant": true,
-          "legendFormat": "CPU",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "CPU Usage",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${prometheus_ds}"
-      },
-      "description": "Aggregate memory utilization as a percentage of configured sandbox memory limits.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 16,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.4.0",
-      "targets": [
-        {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "(100 * sum(sandbox_memory_usage_bytes{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1)) / sum(sandbox_memory_limit_bytes{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1))) or vector(0)",
-          "instant": true,
-          "legendFormat": "Memory",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "Memory Usage",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${prometheus_ds}"
-      },
-      "description": "Per-sandbox resource utilization percentages alongside configured CPU and memory limits.",
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Sandbox ID"
-            },
-            "properties": [
-              {
-                "id": "links",
-                "value": [
-                  {
-                    "targetBlank": false,
-                    "title": "${__value.raw}",
-                    "url": "/d/sandbox-metrics/akernel-sandbox-detail?${__url_time_range}&${akernel_env:queryparam}&${host_name:queryparam}&${tenantid:queryparam}&var-sandbox_id=${__value.raw}"
-                  }
-                ]
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "auto"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "^(CPU|Memory) Usage$"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "decimals",
-                "value": 1
-              },
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "max",
-                "value": 100
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "mode": "gradient",
-                  "type": "gauge"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": 0
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 70
-                    },
-                    {
-                      "color": "red",
-                      "value": 90
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "CPU Total"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "cores"
-              },
-              {
-                "id": "decimals",
-                "value": 2
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Memory Total"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "bytes"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
         "x": 0,
-        "y": 5
+        "y": 0,
+        "w": 24,
+        "h": 10
       },
-      "id": 4,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
         },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": false,
-            "displayName": "Sandbox ID"
-          }
-        ]
+        "overrides": []
       },
-      "pluginVersion": "12.4.0",
+      "options": {
+        "showHeader": true
+      },
       "targets": [
         {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "(100 * sandbox_cpu_usage{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} / sandbox_cpu_limit{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"}) and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1)",
-          "format": "table",
+          "refId": "A",
+          "expr": "max by (cluster, adx_env, environment_id, node_id, state) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
           "instant": true,
-          "legendFormat": "",
-          "refId": "cpu-usage"
-        },
-        {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "sandbox_cpu_limit{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1)",
           "format": "table",
-          "instant": true,
-          "legendFormat": "",
-          "refId": "cpu-total"
-        },
-        {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "(100 * sandbox_memory_usage_bytes{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} / sandbox_memory_limit_bytes{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"}) and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1)",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "",
-          "refId": "memory-usage"
-        },
-        {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "sandbox_memory_limit_bytes{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=~\"$sandbox_id\"} == 1)",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "",
-          "refId": "memory-total"
+          "range": false
         }
       ],
-      "title": "Sandbox Inventory",
       "transformations": [
-        {
-          "id": "merge",
-          "options": {}
-        },
-        {
-          "id": "groupBy",
-          "options": {
-            "fields": {
-              "Value #cpu-total": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
-              },
-              "Value #cpu-usage": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
-              },
-              "Value #memory-total": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
-              },
-              "Value #memory-usage": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
-              },
-              "akernel_env": {
-                "aggregations": [],
-                "operation": "groupby"
-              },
-              "host_name": {
-                "aggregations": [],
-                "operation": "groupby"
-              },
-              "runtime_class": {
-                "aggregations": [],
-                "operation": "groupby"
-              },
-              "sandbox_id": {
-                "aggregations": [],
-                "operation": "groupby"
-              },
-              "tenantid": {
-                "aggregations": [],
-                "operation": "groupby"
-              }
-            }
-          }
-        },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
               "Time": true,
-              "__name__": true,
-              "akernel_env": true,
-              "job": true,
-              "runtime_base": true,
-              "service_name": true
+              "Value": true
             },
             "indexByName": {
-              "host_name": 2,
-              "runtime_class": 3,
-              "sandbox_id": 0,
-              "tenantid": 1,
-              "Value #cpu-usage (lastNotNull)": 4,
-              "Value #cpu-total (lastNotNull)": 5,
-              "Value #memory-usage (lastNotNull)": 6,
-              "Value #memory-total (lastNotNull)": 7
+              "adx_env": 1,
+              "environment_id": 2,
+              "node_id": 3,
+              "state": 4,
+              "cluster": 0
             },
             "renameByName": {
-              "Value #cpu-total (lastNotNull)": "CPU Total",
-              "Value #cpu-usage (lastNotNull)": "CPU Usage",
-              "Value #memory-total (lastNotNull)": "Memory Total",
-              "Value #memory-usage (lastNotNull)": "Memory Usage",
-              "host_name": "Host",
-              "runtime_class": "Runtime",
-              "sandbox_id": "Sandbox ID",
-              "tenantid": "Tenant"
+              "adx_env": "Deployment",
+              "environment_id": "Environment",
+              "node_id": "Node",
+              "state": "State",
+              "cluster": "Cluster"
             }
           }
         }
       ],
-      "type": "table"
+      "description": "Select an Environment ID or narrow pattern first. Current Running/Paused logical inventory joined to fresh runtime samples. It is not a historical list of every created Environment. With all test Environments deleted, an empty inventory is expected; check scrape health to distinguish missing collection.",
+      "maxDataPoints": 1
     },
     {
+      "id": 2,
+      "title": "Environment CPU Usage",
+      "type": "timeseries",
       "datasource": {
         "type": "prometheus",
-        "uid": "${prometheus_ds}"
-      },
-      "description": "CPU utilization for the selected sandbox. Select a Sandbox ID or click one in the inventory table; All intentionally omits per-sandbox history.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 15,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
+        "uid": "prometheus"
       },
       "gridPos": {
-        "h": 9,
-        "w": 12,
         "x": 0,
-        "y": 15
+        "y": 10,
+        "w": 12,
+        "h": 8
       },
-      "id": 5,
-      "interval": "5s",
-      "maxDataPoints": 60,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.4.0",
-      "targets": [
-        {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "(100 * sandbox_cpu_usage{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=\"$sandbox_id\"} / sandbox_cpu_limit{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=\"$sandbox_id\"}) and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=\"$sandbox_id\"} == 1)",
-          "legendFormat": "{{sandbox_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "CPU Usage by Sandbox",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${prometheus_ds}"
-      },
-      "description": "Memory utilization for the selected sandbox. Select a Sandbox ID or click one in the inventory table; All intentionally omits per-sandbox history.",
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 15,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percent"
+          "unit": "cores"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 15
-      },
-      "id": 6,
-      "interval": "5s",
-      "maxDataPoints": 60,
       "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showHeader": true
       },
-      "pluginVersion": "12.4.0",
       "targets": [
         {
-          "datasource": {
-            "uid": "${prometheus_ds}"
-          },
-          "editorMode": "code",
-          "expr": "(100 * sandbox_memory_usage_bytes{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=\"$sandbox_id\"} / sandbox_memory_limit_bytes{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=\"$sandbox_id\"}) and (sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\",sandbox_id=\"$sandbox_id\"} == 1)",
-          "legendFormat": "{{sandbox_id}}",
-          "range": true,
-          "refId": "A"
+          "refId": "A",
+          "expr": "rate(adx_environment_cpu_usage_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`}[$__rate_interval]) and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
+          "instant": false,
+          "format": "time_series",
+          "legendFormat": "{{environment_id}} / {{runtime_id}}",
+          "range": true
         }
       ],
-      "title": "Memory Usage by Sandbox",
-      "type": "timeseries"
+      "description": "Select an Environment ID or narrow pattern first. Measured per-Environment CPU usage from fresh Running inventory and runtime observations. Requires at least two counter scrapes for a rate. No active Environment, no samples or stale observations produce no series.",
+      "maxDataPoints": 200,
+      "interval": "1m"
+    },
+    {
+      "id": 3,
+      "title": "Environment Memory Usage",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "adx_environment_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} and on (cluster, adx_env, instance, environment_id, runtime_id) (adx_environment_stats_age_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\",environment_id=~`${environment_id:raw}`} <= 45) and on (cluster, adx_env, environment_id) max by (cluster, adx_env, environment_id) (adx_environment_info{cluster=~\"$cluster\",adx_env=~\"$adx_env\",state=~\"$state\",environment_id=~`${environment_id:raw}`})",
+          "instant": false,
+          "format": "time_series",
+          "legendFormat": "{{environment_id}} / {{runtime_id}}",
+          "range": true
+        }
+      ],
+      "description": "Select an Environment ID or narrow pattern first. Measured memory for fresh Running Environments. Paused or deleted Environments do not display an old runtime sample as current memory. No active/fresh sample produces no series.",
+      "maxDataPoints": 200,
+      "interval": "1m"
     }
   ],
-  "refresh": "30s",
-  "schemaVersion": 42,
-  "tags": [
-    "akernel",
-    "sandbox",
-    "sandboxd"
-  ],
-  "templating": {
-    "list": [
-      {
-        "current": {
-          "text": "Prometheus",
-          "value": "Prometheus"
-        },
-        "includeAll": false,
-        "label": "Prometheus Datasource",
-        "name": "prometheus_ds",
-        "options": [],
-        "query": "prometheus",
-        "refresh": 1,
-        "regex": "",
-        "type": "datasource"
-      },
-      {
-        "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": ".*"
-        },
-        "datasource": {
-          "uid": "${prometheus_ds}"
-        },
-        "definition": "label_values(sandbox_running, akernel_env)",
-        "includeAll": true,
-        "label": "AKernel Env",
-        "multi": true,
-        "name": "akernel_env",
-        "options": [],
-        "query": {
-          "query": "label_values(sandbox_running, akernel_env)",
-          "refId": "S"
-        },
-        "refresh": 2,
-        "regex": "",
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": ".*"
-        },
-        "datasource": {
-          "uid": "${prometheus_ds}"
-        },
-        "definition": "label_values(sandbox_running{akernel_env=~\"$akernel_env\"}, host_name)",
-        "includeAll": true,
-        "label": "Host",
-        "multi": true,
-        "name": "host_name",
-        "options": [],
-        "query": {
-          "query": "label_values(sandbox_running{akernel_env=~\"$akernel_env\"}, host_name)",
-          "refId": "S"
-        },
-        "refresh": 2,
-        "regex": "",
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": ".*"
-        },
-        "datasource": {
-          "uid": "${prometheus_ds}"
-        },
-        "definition": "label_values(sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\"}, tenantid)",
-        "includeAll": true,
-        "label": "Tenant",
-        "multi": true,
-        "name": "tenantid",
-        "options": [],
-        "query": {
-          "query": "label_values(sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\"}, tenantid)",
-          "refId": "S"
-        },
-        "refresh": 2,
-        "regex": "",
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": ".*"
-        },
-        "datasource": {
-          "uid": "${prometheus_ds}"
-        },
-        "definition": "label_values(sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\"}, sandbox_id)",
-        "includeAll": true,
-        "label": "Sandbox ID",
-        "multi": false,
-        "name": "sandbox_id",
-        "options": [],
-        "query": {
-          "query": "label_values(sandbox_running{akernel_env=~\"$akernel_env\",host_name=~\"$host_name\",tenantid=~\"$tenantid\"}, sandbox_id)",
-          "refId": "S"
-        },
-        "refresh": 2,
-        "regex": "",
-        "sort": 1,
-        "type": "query"
-      }
-    ]
-  },
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "AKernel Sandbox Detail",
-  "uid": "sandbox-metrics",
-  "version": 0,
-  "weekStart": ""
+  "links": [
+    {
+      "title": "Schedule",
+      "type": "link",
+      "url": "/d/adx-schedule",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Data Plane",
+      "type": "link",
+      "url": "/d/adx-data-plane",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Process Resources",
+      "type": "link",
+      "url": "/d/adx-process-resources",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Environment Logs",
+      "type": "link",
+      "url": "/d/adx-environment-logs",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false,
+      "tooltip": "Open on-demand log search, initially the last 15 minutes."
+    },
+    {
+      "title": "Environments",
+      "type": "link",
+      "url": "/d/adx-environments",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    }
+  ]
 }

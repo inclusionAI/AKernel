@@ -17,9 +17,9 @@ SCRIPT = Path(__file__).with_name("start.sh")
 class StartScriptTest(unittest.TestCase):
     def test_sdk_environment_follows_selected_host_and_ports(self) -> None:
         cases = (
-            ("localhost", "443", "80", "localhost", ""),
+            ("localhost", "443", "80", "localhost", "https://localhost"),
             ("gateway.example.com", "18443", "18080",
-             "gateway.example.com:18443", "http://gateway.example.com:18080"),
+             "gateway.example.com:18443", "https://gateway.example.com:18443"),
         )
         for host, control, data, expected_server, expected_gateway in cases:
             with self.subTest(host=host), tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,24 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: akernel-state-services
+spec:
+  podSelector: {matchLabels: {akernel.io/state-service: "true"}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {}}]
+    {{- range .Values.networkPolicy.clientNamespaces }}
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ . | quote }}}}
+      ports: [{protocol: TCP, port: 6379}]
+    {{- end }}
+    {{- range .Values.networkPolicy.monitoringNamespaces }}
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ . | quote }}}}
+      ports:
+        - {protocol: TCP, port: 9121}
+        - {protocol: TCP, port: 9187}
+        - {protocol: TCP, port: 8404}
+    {{- end }}
+{{- end }}

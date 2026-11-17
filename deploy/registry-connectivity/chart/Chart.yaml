@@ -1,0 +1,5 @@
+apiVersion: v2
+name: registry-connectivity
+version: 0.1.0
+description: Restricted Dragonfly Registry ingress and authenticated Nydus rollout checks
+type: application

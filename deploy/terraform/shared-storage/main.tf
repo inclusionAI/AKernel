@@ -31,7 +31,17 @@ locals {
     hostPath      = local.selected_storage.host_path
     existingClaim = local.selected_storage.existing_claim
     prefix        = local.selected_storage.prefix
-    nodeSelector  = var.juicefs.enabled ? local.client_node_selector : {}
+    s3 = {
+      bucket            = local.selected_storage.s3.bucket
+      region            = local.selected_storage.s3.region
+      endpoint          = local.selected_storage.s3.endpoint
+      allowHttp         = local.selected_storage.s3.allow_http
+      credentialsSecret = local.selected_storage.s3.credentials_secret
+      cacheRoot         = local.selected_storage.s3.cache_root
+      cacheBudgetBytes  = local.selected_storage.s3.cache_budget_bytes
+      cacheMaxEntries   = local.selected_storage.s3.cache_max_entries
+    }
+    nodeSelector = var.juicefs.enabled ? local.client_node_selector : {}
   }
 }
 

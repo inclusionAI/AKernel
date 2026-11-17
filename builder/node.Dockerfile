@@ -38,8 +38,8 @@ ARG OTELCOL_CONTRIB_SHA256=
 ARG AKERNEL_VERSION=unknown
 ARG AKERNEL_REVISION=unknown
 ARG ADX_VERSION=v0.1.0rc2
-ARG ADX_RELEASE_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261022184915-6fb53d733181/linux/amd64/adx-release.tar.gz
-ARG ADX_RELEASE_SHA256=664c4a7344ca7cf9b9fedefc7f010ae775c35b89148b068ab2dfa532b150b566
+ARG ADX_RELEASE_URL=https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261113115925-18f9c673812d/linux/amd64/adx-release.tar.gz
+ARG ADX_RELEASE_SHA256=97adc6387798b27c3a38630cc48958fe599baa998f250ad8480dfc565e9824df
 
 FROM ${AKERNEL_NODE_BASE_IMAGE} AS adx-release
 ARG ADX_RELEASE_URL
@@ -93,7 +93,8 @@ RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-g
       "${GVISOR_SHA512}" /gvisor; \
     for binary in runsc containerd-shim-runsc-v1 \
       gvisor-bin/checkpointgofer gvisor-bin/gvisor-sentry-prewarmer \
-      gvisor-bin/gvisor_sentry gvisor-bin/runsc-metric-server; do \
+      gvisor-bin/gvisor_sentry gvisor-bin/runsc-fd-parking \
+      gvisor-bin/runsc-metric-server; do \
       sh /usr/local/libexec/verify-elf-arch.sh "/gvisor/${binary}" "${TARGETARCH}"; \
     done; \
     /gvisor/runsc --version
@@ -371,6 +372,7 @@ RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-g
         procps \
         python3 \
         python3-pip \
+        python3-yaml \
         systemd \
         systemd-sysv \
         tzdata \
@@ -419,11 +421,21 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
 COPY --from=runtime-image /akernel-runtime-rootfs.img /opt/akernel/runtime/akernel-runtime-rootfs.img
+RUN --mount=from=runtime-image,target=/mnt/akernel-runtime \
+    mkdir -p /opt/akernel/runtime/metadata && \
+    if test -d /mnt/akernel-runtime/runtime-metadata; then \
+      cp -a /mnt/akernel-runtime/runtime-metadata/. /opt/akernel/runtime/metadata/; \
+    fi
+COPY ./builder/scripts/verify-e2b-release.py /usr/local/libexec/verify-e2b-release.py
 
 # ADX provides the control and data plane processes. AKernel keeps building
-# sandboxd and its runtime rootfs from pinned sources and installs only EXECD
-# from the verified ADX release into that rootfs.
+# sandboxd from pinned sources. The default rootfs installs only EXECD; the
+# opt-in E2B rootfs reuses the envd-enabled ADX Execd component.
 COPY --from=adx-release /opt/adx/current/bin/ /opt/adx/current/bin/
+COPY --from=adx-release /opt/adx/current/third_party/ /opt/adx/current/third_party/
+COPY --from=adx-release /opt/adx/current/LICENSE /opt/adx/current/LICENSE
+COPY --from=adx-release /opt/adx/current/manifest.json /opt/adx/current/manifest.json
+COPY --from=adx-release /opt/adx/current/etc/ /opt/adx/current/etc/
 COPY --from=adx-release /opt/adx/current/sdk/ /opt/adx/current/sdk/
 COPY --from=adx-release /opt/adx/current/runtime/adx-execd /opt/adx/current/runtime/adx-execd
 RUN set -eux; \
@@ -433,6 +445,11 @@ RUN set -eux; \
     test -x /opt/adx/current/bin/adx-apiserver; \
     test -x /opt/adx/current/runtime/adx-execd; \
     test ! -e /opt/adx/current/runtime/adx-runtime-rootfs.img; \
+    if test -f /opt/akernel/runtime/metadata/adx-component-manifest.json; then \
+      python3 /usr/local/libexec/verify-e2b-release.py \
+        /opt/akernel/runtime/metadata/adx-component-manifest.json \
+        /opt/adx/current/manifest.json; \
+    fi; \
     for binary in adxctl adx-coordinator adxlet adx-apiserver; do \
       sh /usr/local/libexec/verify-elf-arch.sh "/opt/adx/current/bin/${binary}" "${TARGETARCH}"; \
     done; \
@@ -452,14 +469,16 @@ RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
     fi
 
 COPY ./builder/scripts/akernel-entrypoint.sh /usr/local/bin/akernel-entrypoint
+COPY ./builder/scripts/prepare-adx-config.py /usr/local/libexec/prepare-adx-config.py
 COPY ./builder/scripts/adx-service.sh /usr/local/bin/adx-service
 COPY ./builder/scripts/otel-collector-service.sh /usr/local/bin/otel-collector-service
 COPY ./builder/scripts/sandboxd_network_prepare.sh /usr/local/bin/sandboxd-network-prepare
+COPY ./builder/managed-docker/image_provider.py ./builder/managed-docker/provider_service.py /usr/local/lib/akernel/managed-docker/
 ARG FIRECRACKER_KERNEL_PROFILE
 COPY ./builder/config/adx-standalone.yaml /etc/akernel/adx-standalone.yaml
-COPY ./builder/config/adx-pvm.yaml /etc/akernel/adx-pvm.yaml
 RUN case "${FIRECRACKER_KERNEL_PROFILE}" in \
-      pvm) cp /etc/akernel/adx-pvm.yaml /etc/akernel/adx-standalone.yaml ;; \
+      pvm) python3 /usr/local/libexec/prepare-adx-config.py \
+        /etc/akernel/adx-standalone.yaml /etc/akernel/adx-standalone.yaml --pvm ;; \
       kvm) ;; \
       *) echo "invalid Firecracker kernel profile" >&2; exit 1 ;; \
     esac
@@ -480,7 +499,8 @@ RUN if [ "${AKERNEL_ENABLE_RUNC}" = "true" ]; then \
       test ! -e /usr/local/bin/runc-shim; \
     fi
 
-COPY ./builder/config/otel-collector-config.yaml /etc/akernel/otel_config.yaml
+COPY ./builder/config/otel-collector-standalone.yaml /etc/akernel/otel_standalone.yaml
+COPY ./deploy/akernel/charts/core/files/otel-collector/config.yaml /etc/akernel/otel_config.yaml
 RUN chmod 0755 /usr/local/bin/otel-collector-service
 COPY ./builder/config/logrotate.d/gvisor /etc/logrotate.d/gvisor
 COPY ./builder/scripts/*.sh /root/

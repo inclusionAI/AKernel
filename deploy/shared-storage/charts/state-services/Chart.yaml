@@ -1,0 +1,5 @@
+apiVersion: v2
+name: akernel-state-services
+version: 0.1.0
+description: Operator-managed PostgreSQL metadata and Redis Sentinel state services
+type: application

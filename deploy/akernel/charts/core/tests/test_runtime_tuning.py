@@ -15,8 +15,9 @@ CHART = Path(__file__).resolve().parents[1]
 DEFAULT = yaml.safe_load((CHART / "values.yaml").read_text())["node"]["config"]["sandboxd"]["config"]
 
 
-def render(tuning=None, config=None):
+def render(tuning=None, config=None, **settings):
     sandboxd = {"runtimeTuning": tuning if tuning is not None else {}}
+    sandboxd.update(settings)
     if config is not None:
         sandboxd["config"] = config
     with tempfile.TemporaryDirectory() as temporary:
@@ -58,6 +59,19 @@ class RuntimeTuningChartTest(unittest.TestCase):
         config = config_sections(result.stdout)
         self.assertEqual(config["plugin.resource"]["firecracker_restore_concurrency"], "0")
         self.assertEqual(config["plugin.runtime.runsc"]["extra_args"], "[]")
+
+    def test_tuning_composes_with_native_filestore_and_reflink(self):
+        args = ["--net-raw=true", "--restore-page-prefetch=false"]
+        result = render(
+            {"firecrackerRestoreConcurrency": 32, "runscExtraArgs": args},
+            nativeFilestore=True, runscCheckpointMode="reflink",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = config_sections(result.stdout)
+        self.assertEqual(config["plugin.runtime.runsc"]["checkpoint_mode"], '"reflink"')
+        self.assertEqual(json.loads(config["plugin.runtime.runsc"]["extra_args"]), args)
+        self.assertEqual(config["plugin.runtime"]["filestore_dir_size"].split("#")[0].strip(), '""')
+        self.assertEqual(config["plugin.resource"]["firecracker_restore_concurrency"], "32")
 
     def test_bad_limits_and_arg_types_reject(self):
         for key in ("firecrackerCheckpointConcurrency", "firecrackerRestoreConcurrency", "runscCliGomaxprocs"):

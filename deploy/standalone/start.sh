@@ -24,6 +24,7 @@ AKERNEL_DATA_PORT="${AKERNEL_DATA_PORT:-80}"
 AKERNEL_ENDPOINT_HOST="${AKERNEL_ENDPOINT_HOST:-127.0.0.1}"
 AKERNEL_CHUNK_DB_SIZE="${AKERNEL_CHUNK_DB_SIZE:-}"
 AKERNEL_FIRECRACKER_BACKEND="${AKERNEL_FIRECRACKER_BACKEND:-kvm}"
+AKERNEL_PVM_MEMORY_LIMIT_ENABLED="${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}"
 
 # Container runtime command (docker or pouch)
 DOCKER_CMD=""
@@ -31,6 +32,7 @@ DOCKER_PREFIX=()
 CONTAINER_PLATFORM_ARGS=()
 PROXY_RUN_ARGS=()
 GPU_RUN_ARGS=()
+AFS_RUN_ARGS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -190,6 +192,17 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    case "${AKERNEL_PVM_MEMORY_LIMIT_ENABLED}" in
+        true|false) ;;
+        *)
+            log_error "AKERNEL_PVM_MEMORY_LIMIT_ENABLED must be true or false"
+            exit 1
+            ;;
+    esac
+    if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]] &&
+        ! python3 "${SCRIPT_DIR}/prepare-pvm-memory.py" --help >/dev/null; then
+        exit 1
+    fi
     if [[ "${DATA_DIR}" != /* ]]; then
         log_error "AKERNEL_STANDALONE_DATA_DIR must be an absolute path"
         exit 1
@@ -316,6 +329,7 @@ configure_gpu() {
 
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
+    local pvm_config
     # Reject invalid tuning before resolver/config side effects. Unset controls
     # preserve the original template, including runsc's nil extra_args default.
     python3 "${SCRIPT_DIR}/configure-runtime.py" --check "${CONFIG_DIR}/sandboxd_config.toml"
@@ -325,6 +339,13 @@ configure_network() {
     )
 
     if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]]; then
+        case "${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}" in
+            true|false) ;;
+            *)
+                log_error "AKERNEL_PVM_MEMORY_LIMIT_ENABLED must be true or false"
+                exit 1
+                ;;
+        esac
         if ! grep -q '^\[plugin.runtime.firecracker\]$' \
             "${CONFIG_DIR}/sandboxd_config.toml" || \
            ! grep -q '^firecracker="/usr/local/bin/firecracker"$' \
@@ -332,6 +353,8 @@ configure_network() {
             log_error "PVM selection requires the standard Firecracker config section and binary entry"
             exit 1
         fi
+        pvm_config="$(python3 "${SCRIPT_DIR}/prepare-pvm-memory.py" \
+            "${CONFIG_DIR}/sandboxd_config.toml" "${AKERNEL_PVM_MEMORY_LIMIT_ENABLED-false}")" || exit 1
         sed_args+=(
             -e 's/^firecracker=/firecracker-pvm=/'
             -e 's/^\[plugin.runtime.firecracker\]$/[plugin.runtime.firecracker_pvm]/'
@@ -398,7 +421,11 @@ configure_network() {
             -e "s|^[[:space:]]*# AKERNEL_CHUNK_DB_SIZE[[:space:]]*$|chunk_db_size=\"${AKERNEL_CHUNK_DB_SIZE}\"|"
         )
     fi
-    sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
+    if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]]; then
+        sed "${sed_args[@]}" <<< "${pvm_config}" > "${config_tmp}"
+    else
+        sed "${sed_args[@]}" "${CONFIG_DIR}/sandboxd_config.toml" > "${config_tmp}"
+    fi
     python3 "${SCRIPT_DIR}/configure-runtime.py" "${config_tmp}"
     mv "${config_tmp}" "${SANDBOXD_CONFIG_FILE}"
 
@@ -567,9 +594,31 @@ prepare_host_network_modules() {
     log_info "Loaded host filter, bridge, conntrack, and ipset modules for the iptables ACL backend"
 }
 
+# AFS is managed independently; only its existing DFS mount is shared.
+configure_afs() {
+    AFS_RUN_ARGS=()
+    if [[ -n "${AKERNEL_AFS_MOUNT:-}" ]]; then
+        local mount_path
+        mount_path="$(python3 "${SCRIPT_DIR}/validate-afs.py" "${AKERNEL_AFS_MOUNT}" \
+          --prefix "${AKERNEL_AFS_CHECKPOINT_PREFIX:-akernel/checkpoints}")"
+        AFS_RUN_ARGS=(
+          --mount "type=bind,src=${mount_path},dst=/mnt/akernel-shared,bind-propagation=rslave"
+          -e AKERNEL_AFS_CHECKPOINTS=true
+          -e "AKERNEL_AFS_CHECKPOINT_PREFIX=${AKERNEL_AFS_CHECKPOINT_PREFIX:-akernel/checkpoints}"
+        )
+    fi
+}
+
 # Start the AKernel all-in-one container and publish Edge's distinct control
 # and data listeners directly on the host.
 start_node_container() {
+    local endpoint_name
+    local telemetry_args=()
+    for endpoint_name in AKERNEL_ENV AKERNEL_CLUSTER_NAME PROMETHEUS_ENDPOINT LOKI_ENDPOINT TEMPO_ENDPOINT; do
+        if [[ -n "${!endpoint_name:-}" ]]; then
+            telemetry_args+=(-e "${endpoint_name}")
+        fi
+    done
     log_info "Starting container: ${NODE_CONTAINER_NAME}"
     "${DOCKER_PREFIX[@]}" ${DOCKER_CMD} run -d \
         "${CONTAINER_PLATFORM_ARGS[@]}" \
@@ -582,6 +631,8 @@ start_node_container() {
         -e container=oci \
         -e "AKERNEL_FIRECRACKER_BACKEND=${AKERNEL_FIRECRACKER_BACKEND}" \
         -e AKS_LOCAL_MODE="true" \
+        -e AKERNEL_ROLE=standalone \
+        "${telemetry_args[@]}" \
         -e NODE_NAME="$(hostname)" \
         -e POD_NAME=akernel-node-local \
         -e POD_NAMESPACE=default \
@@ -590,6 +641,7 @@ start_node_container() {
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
         "${PROXY_RUN_ARGS[@]}" \
         "${GPU_RUN_ARGS[@]}" \
+        "${AFS_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
         -v "${DATA_DIR}:/home/akernel" \
         -v "${CONFIG_DIR}/oss_auths.json:/home/akernel/sandboxd/config/oss_auths.json:ro" \
@@ -701,12 +753,8 @@ write_sdk_env() {
         mkdir -p "${DATA_DIR}"
         {
             printf 'export AKERNEL_SERVER_ADDRESS=%q\n' "${sdk_address}"
-            if [[ "${AKERNEL_DATA_PORT}" != 80 || "${AKERNEL_CONTROL_PORT}" != 443 ]]; then
-                printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' \
-                    "http://${AKERNEL_ENDPOINT_HOST}:${AKERNEL_DATA_PORT}"
-            else
-                printf 'unset AKERNEL_GATEWAY_ADDRESS\n'
-            fi
+            # Private port forwarding carries credentials and must use TLS.
+            printf 'export AKERNEL_GATEWAY_ADDRESS=%q\n' "https://${sdk_address}"
         } > "${DATA_DIR}/sdk.env"
         chmod 600 "${DATA_DIR}/sdk.env"
     )
@@ -716,6 +764,7 @@ main() {
     check_prerequisites
     cleanup_existing
     validate_host_platform
+    configure_afs
     ensure_image "${IMAGE}"
     validate_image_capabilities
     prepare_data
@@ -737,9 +786,7 @@ main() {
         sdk_address+=":${AKERNEL_CONTROL_PORT}"
     fi
     log_info "Set AKERNEL_SERVER_ADDRESS=${sdk_address}"
-    if [[ "${AKERNEL_DATA_PORT}" != 80 || "${AKERNEL_CONTROL_PORT}" != 443 ]]; then
-        log_info "Set AKERNEL_GATEWAY_ADDRESS=${DATA_URL}"
-    fi
+    log_info "Set AKERNEL_GATEWAY_ADDRESS=${CONTROL_URL}"
     log_info "Set AKERNEL_TOKEN=\$(cat ${TOKEN_FILE})"
 }
 

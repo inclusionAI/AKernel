@@ -13,12 +13,15 @@ serviceAccount:
   name: default
 
 monitoring:
+  # Stable identity shared by Coordinator, API Server and node metrics.
+  clusterName: "akernel"
   akernelEnv: "default"
   prometheusEndpoint: ""
   lokiEndpoint: ""
   tempoEndpoint: ""
 
 image:
+  digest: ""
   repository: registry.example.com/akernel/all-in-one
   tag: "latest"
   pullPolicy: IfNotPresent
@@ -33,8 +36,8 @@ adx:
   runtimeControl:
     enabled: true
     port: 19003
-  # The operator mounts JuiceFS or AFS on every eligible node and Coordinator
-  # host, or provides an existing RWX CSI claim. Credentials stay in that layer.
+  # Select local storage, S3 with node-local inputs, or direct distributed_fs.
+  # Filesystem mode requires an operator-mounted JuiceFS/AFS volume or RWX claim.
   checkpointStorage:
     kind: local
     alias: akernel-checkpoints
@@ -42,13 +45,42 @@ adx:
     hostPath: ""
     existingClaim: ""
     prefix: akernel/checkpoints
+    s3:
+      bucket: ""
+      region: ""
+      endpoint: ""
+      allowHttp: false
+      # Keys: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY; optional AWS_SESSION_TOKEN.
+      credentialsSecret: ""
+      cacheRoot: /home/akernel/adx/checkpoint-s3-cache
+      cacheBudgetBytes: 53687091200
+      cacheMaxEntries: 500
     # Optional placement shared by execution nodes and Coordinator. Managed
     # JuiceFS sets this to its client selector so both roles have a host mount.
     nodeSelector: {}
+  # Optional first-migration pins: role -> {configSha256, legacyChecksum}.
+  # A role config edit fails until its pin is removed for a planned rollout.
+  configChecksumMigration: {}
+  # Both protocols share the same Coordinator, API, Ingress and node pool.
+  e2b:
+    enabled: false
+    # E2B-only plaintext ingress; requires an ADX release supporting this opt-in.
+    allowHttp: false
+    domain: ""
+    envdVersion: ""
+    envdSha256: ""
+    envdIngressSources: []
+    defaultUser: user
+    defaultWorkdir: /home/user
+
   tls:
     existingSecret: akernel-adx-tls
   redis:
+    # Optional production capacity baseline: values-production.yaml.
     mode: managed
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
     appendfsync: everysec
     external:
       existingSecret: ""
@@ -68,6 +100,9 @@ adx:
         memory: 1Gi
   coordinator:
     replicas: 1
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
     resources:
       requests:
         cpu: 250m
@@ -76,10 +111,21 @@ adx:
         cpu: "1"
         memory: 1Gi
   ingressApi:
+    # Optional control-only image; defaults to coordinator.image, then image.
+    image: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
     replicas: 1
     portHostDomain: ""
+    # Operators may hold the first Ready replica during a controlled canary.
+    minReadySeconds: 0
+    progressDeadlineSeconds: 600
     publicService:
       enabled: false
+      # Keep the existing load balancer while withholding public traffic.
+      maintenance: false
       type: LoadBalancer
       controlPort: 443
       dataPort: 80
@@ -97,23 +143,29 @@ adx:
     allowedTargetCidrs: 10.88.0.0/16
     allowedIngressCidrs: 0.0.0.0/0
     reportIntervalSeconds: 5
+    metricsIntervalSeconds: 15
     resourceValidForSeconds: 30
 
 # Preserve the existing placement setting; translate binpack to ADX pack.
 coordinator:
   image:
+    digest: ""
     repository: ""
     tag: ""
     pullPolicy: ""
   schedulePlacementPolicy: spread
 
 node:
+  nodeSelector: {}
   secret:
+    # Preserve credentials rotated outside Helm; set false only for an intentional rotation.
+    preserveExisting: true
     create: true
     oss_auths: {}
     registry_auths:
       auths: {}
   image:
+    digest: ""
     repository: ""
     tag: ""
     pullPolicy: ""
@@ -126,10 +178,34 @@ node:
   # Operator-managed preparation; see deploy/docs/node-local-directories.md
   # and deploy/akernel/examples/node-local-directories.yaml. Lists replace on merge.
   initContainers: []
+  # Keep guest runtime bytes fixed while updating control/worker executables.
+  # The source image must be qualified, digest-pinned and contain the standard
+  # runtime rootfs and static Execd paths. Changing this pin requires separate
+  # snapshot compatibility qualification; cached files are not auto-collected.
+  runtimeRootfsPin:
+    enabled: false
+    sourceImage: ""
+    sha256: ""
+    execdSha256: ""
+    # Defaults to execdSha256. A different carrier executable requires explicit
+    # old-guest/new-platform C/R qualification; the pinned guest stays unchanged.
+    currentExecdSha256: ""
   directoryHelper:
     # Package the script for the init-container example without invoking it.
     # Disabled by default to preserve the node rollout checksum.
     enabled: false
+  # Version-independent application logs; dataDiskRoot must be a real host XFS mount.
+  applicationLogs:
+    enabled: false
+    # Keep false only when restoring an older native mount layout.
+    mountInSandbox: true
+    dataDiskRoot: /home/akernel
+    relativePath: shared/app-logs
+    uid: 0
+    gid: 1000
+    mode: "2770"
+    # Temporary Node-Pod alias for callers migrating to /app/logs; remove after cutover.
+    legacyMountPath: ""
   hostDiskPath: "/home/akernel"
   homeDisk:
     useEphemeralPVC: false
@@ -353,6 +429,18 @@ node:
                   "source": "tmpfs"
               },
               {
+                  "destination": "/dev/shm",
+                  "type": "tmpfs",
+                  "source": "shm",
+                  "options": [
+                      "nosuid",
+                      "nodev",
+                      "noexec",
+                      "mode=1777",
+                      "size=65536k"
+                  ]
+              },
+              {
                   "destination": "/sys",
                   "type": "sysfs",
                   "source": "sysfs",
@@ -436,12 +524,18 @@ node:
       cpuQuota: "800%"
 
     sandboxd:
+      # Reflink requires the matching gVisor bundle, a native filestore and node-local checkpoint inputs.
+      runscCheckpointMode: full
+      nativeFilestore: false
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
       # Sandboxd probes runc and runc-shim before advertising the runtime.
       enableRunc: false
       # pvm selects firecracker-pvm and removes Kata from this node profile.
       # The image must contain the validated PVM guest bundle.
       firecrackerBackend: kvm
+      # PVM parent memory enforcement requires separate host qualification.
+      # Explicit opt-in overrides memory_limit.enabled; set an appropriate reserve in config.
+      pvmMemoryLimitEnabled: false
       # Empty uses the distill-fs default (100 GiB on Linux).
       chunkDbSize: ""
       # Opt-in controls require a sandboxd image containing restore controls.
@@ -477,13 +571,18 @@ node:
         max_instance_num=1000
         enable_cache_in_stock_mode=true
 
+        [plugin.resource.memory_limit]
+        enabled = true
+        # Requires effective memory above this reserve; tune for the deployment.
+        total_reserve = "16GiB"
+
         [plugin.runtime]
         image_lib_dir="/home/akernel/images"
         resolv_conf_path="/etc/resolv_akernel.conf"
         # A configured size creates a loop-backed bounded filestore. ext4 is
         # used by default; set filestore_xfs_enabled=true to select XFS.
         filestore_dir="/home/akernel/filestore"
-        filestore_dir_size="200G"
+        filestore_dir_size="200G" # AKERNEL_NATIVE_FILESTORE
         filestore_xfs_enabled=false
         loop_device_dir="/dev"
         overlay_tmpfs_size="10G"
@@ -493,6 +592,7 @@ node:
 
         [plugin.runtime.runsc]
         # AKERNEL_RUNTIME_RUNSC_TUNING
+        # AKERNEL_RUNSC_CHECKPOINT_MODE
         background_restore=true
 
         [plugin.runtime.basic_spec]

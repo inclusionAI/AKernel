@@ -32,8 +32,8 @@ from akernel_sdk import Mount, Sandbox
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--node-id", required=True)
-    parser.add_argument("--host-path", required=True)
-    parser.add_argument("--target", default="/apps/logs")
+    parser.add_argument("--host-path", default="/app/logs")
+    parser.add_argument("--target", default="/app/logs")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     mount = Mount(

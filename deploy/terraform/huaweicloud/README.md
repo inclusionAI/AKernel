@@ -6,6 +6,27 @@ contract as the Aliyun module: one all-in-one AKernel image, an Agent DX
 identity Secret, managed Redis, a direct ADX public Service, optional public
 Grafana, and local state under `.akernel/<env>/`.
 
+## Aggregate sandbox memory budget
+
+The cloud profile leaves the parent memory policy disabled by default and
+retains its existing OS selection. Before opting in, qualify cgroup v2 on the
+actual CCE node image and inside the AKernel container, then size the reserve
+for that profile. The OS name alone does not establish the cgroup mode, and
+the module does not convert existing nodes to cgroup v2.
+
+Set `sandbox_memory_limit_enabled=true` and
+`sandbox_memory_total_reserve="16GiB"` in `terraform.tfvars`, or pass
+`SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB` to
+`make config`. Effective memory, including finite ancestors, must exceed the
+reserve and leave room for sandbox requests. Smaller nodes require an explicit
+smaller positive reserve. These settings also apply when reusing a cluster;
+complete TOML overrides remain responsible for their own memory policy.
+
+Adding or lowering a parent cap requires drained sandboxes. The reserve is
+deployment policy rather than a host-OOM guarantee; distill-fs has an independent
+limit. See [the memory budget and upgrade contract](../../README.md#aggregate-sandbox-memory-budget)
+before enabling the policy on existing nodes.
+
 ## Pod PID budget
 
 [CCE documents `pod-pids-limit=-1` by default](https://support.huaweicloud.com/intl/en-us/usermanual-cce/cce_10_0652.html),

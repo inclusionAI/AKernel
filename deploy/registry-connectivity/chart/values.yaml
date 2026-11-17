@@ -1,0 +1,52 @@
+image: "" # Required immutable checker image (repository@sha256:...).
+imagePullSecrets: []
+nodeSelector: {}
+tolerations: []
+registry:
+  deployment: registry
+  podSelector:
+    app: managed-registry
+  url: ""
+  allowedAuthOrigins: []
+  ports: [5000, 5001]
+  # CA bundle paths INSIDE each seed, not paths on the checker/client.
+  caFile: ""
+  authCAFile: ""
+  # Optional private object-storage CA for cross-origin blob redirects.
+  redirectCAFile: ""
+  # A retained, single-platform Nydus manifest (not an image index).
+  probeRepository: ""
+  probeDigest: ""
+  # Existing Secret with credentials.json: {"username": ..., "password": ...}.
+  # Use a pull-only identity restricted to the probe repository.
+  pullSecret: ""
+dragonfly:
+  namespace: dragonfly-system
+  podSelector:
+    app: dragonfly
+    component: seed-client
+  container: seed-client
+  seedNames:
+    - dragonfly-seed-client-0
+    - dragonfly-seed-client-1
+    - dragonfly-seed-client-2
+    - dragonfly-seed-client-3
+    - dragonfly-seed-client-4
+  proxy: http://127.0.0.1:4001
+  proxyCheckEnabled: true
+  # Enable only after disabling/redacting request dumps and testing a dummy
+  # credential against all proxy log sinks (console, files and collectors).
+  proxyLoggingVerified: false
+  # HTTPS CONNECT is terminated by Dragonfly: curl needs this signing CA.
+  proxyCAFile: ""
+networkPolicy:
+  enabled: false
+  # Verify existing policies preserve BuildKit/direct-client ingress first.
+  existingClientsReviewed: false
+  name: registry-dragonfly-seed-ingress
+schedule: '* * * * *'
+suspend: false
+recheckSeconds: 600
+resources:
+  requests: {cpu: 50m, memory: 96Mi}
+  limits: {cpu: '1', memory: 256Mi}

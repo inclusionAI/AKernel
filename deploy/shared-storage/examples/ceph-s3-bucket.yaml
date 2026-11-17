@@ -1,0 +1,14 @@
+# Copyright (c) 2026 Ant Group Corporation.
+# SPDX-License-Identifier: Apache-2.0
+# Apply in the storage namespace after the RGW provisioner is Ready.
+# Retain the generated bucket/credentials as deployment state.
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: akernel-checkpoint-s3
+  namespace: akernel-storage
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  generateBucketName: akernel-checkpoint-s3
+  storageClassName: akernel-storage-checkpoints-bucket

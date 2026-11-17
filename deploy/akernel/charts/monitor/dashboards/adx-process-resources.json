@@ -11,7 +11,7 @@
   "version": 2,
   "editable": true,
   "timezone": "browser",
-  "refresh": "30s",
+  "refresh": "1m",
   "time": {
     "from": "now-30m",
     "to": "now"
@@ -49,10 +49,54 @@
       "includeVars": true,
       "keepTime": true,
       "targetBlank": false
+    },
+    {
+      "title": "Environment Logs",
+      "type": "link",
+      "url": "/d/adx-environment-logs",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false,
+      "tooltip": "Open on-demand log search, initially the last 15 minutes."
+    },
+    {
+      "title": "Environments",
+      "type": "link",
+      "url": "/d/adx-environments",
+      "includeVars": true,
+      "keepTime": false,
+      "targetBlank": false
+    },
+    {
+      "title": "Sandbox Lifecycle",
+      "type": "link",
+      "url": "/d/adx-sandbox-lifecycle",
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
     }
   ],
   "templating": {
     "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(adx_coordinator_node_capacity_cpu_millis, cluster)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "..*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
       {
         "name": "adx_env",
         "label": "adx_env",
@@ -61,9 +105,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(process_open_file_descriptors, adx_env)",
+        "definition": "label_values(process_open_file_descriptors{cluster=~\"$cluster\"}, adx_env)",
         "query": {
-          "query": "label_values(process_open_file_descriptors, adx_env)",
+          "query": "label_values(process_open_file_descriptors{cluster=~\"$cluster\"}, adx_env)",
           "refId": "var-environment"
         },
         "refresh": 2,
@@ -86,9 +130,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\"}, k8s_namespace_name)",
+        "definition": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}, k8s_namespace_name)",
         "query": {
-          "query": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\"}, k8s_namespace_name)",
+          "query": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\"}, k8s_namespace_name)",
           "refId": "var-namespace"
         },
         "refresh": 2,
@@ -111,9 +155,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\"}, k8s_node_name)",
+        "definition": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\"}, k8s_node_name)",
         "query": {
-          "query": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\"}, k8s_node_name)",
+          "query": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\"}, k8s_node_name)",
           "refId": "var-node"
         },
         "refresh": 2,
@@ -136,9 +180,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\"}, component_name)",
+        "definition": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\"}, component_name)",
         "query": {
-          "query": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\"}, component_name)",
+          "query": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\"}, component_name)",
           "refId": "var-component"
         },
         "refresh": 2,
@@ -161,9 +205,9 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",component_name=~\"$component\"}, k8s_pod_name)",
+        "definition": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",component_name=~\"$component\"}, k8s_pod_name)",
         "query": {
-          "query": "label_values(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",component_name=~\"$component\"}, k8s_pod_name)",
+          "query": "label_values(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",component_name=~\"$component\"}, k8s_pod_name)",
           "refId": "var-pod"
         },
         "refresh": 2,
@@ -251,13 +295,16 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum((sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (rate(process_cpu_time_seconds_total{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\",state=~\"user|system\"}[$__rate_interval])) and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum((sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (rate(process_cpu_time_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\",state=~\"user|system\"}[$__rate_interval])) and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "usage",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "CPU — cluster total (cores)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -315,13 +362,16 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum((process_memory_usage_bytes{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum((process_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "RSS",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "Memory — cluster total (bytes)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -379,13 +429,16 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum((process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum((process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "open FDs",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "Open file descriptors — cluster total",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -443,13 +496,16 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum((process_threads{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum((process_threads{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "threads",
-          "range": true
+          "range": true,
+          "instant": false
         }
       ],
       "title": "Threads — cluster total",
-      "type": "timeseries"
+      "type": "timeseries",
+      "maxDataPoints": 200,
+      "interval": "1m"
     },
     {
       "datasource": {
@@ -621,7 +677,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (rate(process_cpu_time_seconds_total{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\",state=~\"user|system\"}[$__rate_interval])) and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) ((sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (rate(process_cpu_time_seconds_total{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\",state=~\"user|system\"}[$__rate_interval])) and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "__auto",
           "instant": true,
           "range": false,
@@ -634,7 +690,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_memory_usage_bytes{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) ((process_memory_usage_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "__auto",
           "instant": true,
           "range": false,
@@ -647,7 +703,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) ((process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "__auto",
           "instant": true,
           "range": false,
@@ -660,7 +716,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_threads{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) ((process_threads{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "__auto",
           "instant": true,
           "range": false,
@@ -673,7 +729,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_uptime_seconds{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) ((process_uptime_seconds{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "__auto",
           "instant": true,
           "range": false,
@@ -686,7 +742,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) ((process_memory_virtual_bytes{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (adx_env,k8s_namespace_name,k8s_node_name,k8s_pod_name,component_name,process_pid) (time() - timestamp(process_open_file_descriptors{adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
+          "expr": "sum by (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) ((process_memory_virtual_bytes{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"} and on (cluster, adx_env, k8s_namespace_name, k8s_node_name, k8s_pod_name, component_name, process_pid) (time() - timestamp(process_open_file_descriptors{cluster=~\"$cluster\",adx_env=~\"$adx_env\",k8s_namespace_name=~\"$namespace\",k8s_node_name=~\"$node\",k8s_pod_name=~\"$pod\",component_name=~\"$component\"}) < 45)))",
           "legendFormat": "__auto",
           "instant": true,
           "range": false,
@@ -780,7 +836,8 @@
           }
         }
       ],
-      "type": "table"
+      "type": "table",
+      "maxDataPoints": 1
     }
   ]
 }

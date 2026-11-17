@@ -10,6 +10,27 @@ It installs:
 - Optional Dragonfly to `dragonfly_namespace` (controlled by `install_dragonfly`)
 - Optional prereq `openkruise` to `prereq_namespace` (controlled by `install_prereqs`)
 
+## Aggregate sandbox memory budget
+
+The cloud profile leaves the parent memory policy disabled by default and
+retains its existing OS selection. Standard `AliyunLinux3` uses cgroup v1;
+the policy requires cgroup v2. Before opting in, select and qualify a v2 node
+image, verify the actual node/container cgroup mode, and size the reserve for
+that profile. The module does not convert an existing node's cgroup mode.
+
+Set `sandbox_memory_limit_enabled=true` and
+`sandbox_memory_total_reserve="16GiB"` in `terraform.tfvars`, or pass
+`SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB` to
+`make config`. Effective memory, including finite ancestors, must exceed the
+reserve and leave room for sandbox requests. Smaller nodes require an explicit
+smaller positive reserve. These settings also apply when reusing a cluster;
+complete TOML overrides remain responsible for their own memory policy.
+
+Adding or lowering a parent cap requires drained sandboxes. The reserve is
+deployment policy rather than a host-OOM guarantee; distill-fs has an independent
+limit. See [the memory budget and upgrade contract](../../README.md#aggregate-sandbox-memory-budget)
+before enabling the policy on existing nodes.
+
 ## Pod PID budget
 
 `node_pool_pids_limit` defaults to `1620780` for the default pool and all
@@ -133,6 +154,8 @@ terraform apply \
 
 ## AKernel node storage
 
+Use `core_values_override_files = ["/path/to/reviewed-core-values.yaml"]` to retain deployment-specific Helm configuration, including the shared native/E2B profile and persistent application logs. Files are applied in order after the generated defaults, matching the HuaweiCloud entry point. See [dual SDK and application log configuration](../../docs/dual-sdk-and-application-logs.md). Keep credentials outside these tracked overlays and preserve live registry Secrets during upgrades. Existing develop installations upgrade their core Helm release directly with their reviewed values and controlled post-renderer; do not apply an unrelated Terraform state over them.
+
 New Terraform-managed ACK node pools attach two data disks by default. The
 first remains available to ACK for the container runtime. The second is a
 dedicated 300 GiB ESSD that ACK formats as XFS and mounts at
@@ -183,6 +206,44 @@ creates dedicated seed and server node pools by default, and injects
 AKernel node configuration. Set `oss_proxy_url` to override that address.
 Review `dragonfly_seed_node_pool`, `dragonfly_server_node_pool`, storage, and
 image registry settings before applying the plan.
+
+## ACK worker image pulls
+
+New ACR-based Aliyun profiles default to `NODE_IMAGE_PULL_MODE=auto`; other
+registries and raw Terraform default to `direct`. Regenerating an old ENV,
+including with `FORCE=1`, preserves its explicit mode or keeps legacy direct.
+Existing ENVs cannot switch modes; use a fresh ENV, not a mode change for migration.
+
+```bash
+make config VENDOR=aliyun ENV=ack-new NODE_IMAGE_PULL_MODE=auto
+```
+
+`INSTALL_DRAGONFLY` remains independent and default-false. The mirror uses
+`dragonfly-seed-client.<dragonfly_namespace>.svc.cluster.local:4001` with HTTPS
+ACR fallback when the Service is absent or unavailable. It affects all images
+from that registry host on participating workers. Private images need matching
+pull credentials or an ACK credential provider; bootstrap does not copy registry
+credentials into User Data.
+
+The default worker pool participates. Extra ECS/ACK bare-metal compute pools opt
+in with `node_image_pull_worker=true`; exclude seed/server/control pools and
+preserve runtime labels. Raw Bash hooks are `node_pool_pre_user_data` and
+`node_pool_user_data`; extra pools use `pre_user_data` and `user_data`. Pre scripts
+keep ACK's pre-join phase. All auto workers retain standard module/PID setup,
+then run post scripts as children before the helper, retaining failure status.
+Keep bare-metal host prerequisites in these hooks.
+ACK decoded User Data is limited to 16 KiB; complete hooks must fit, otherwise
+use `direct` or a separately reviewed initialization plan.
+
+The helper uses the node's kubelet identity, preserves kubelet's independent
+upstream resolver, and points the host at existing CoreDNS before writing
+`hosts.toml`. Worker readiness gates the first node-Pod pull; Terraform waits for
+bootstrap and optional Dragonfly before core. Shared DNS configuration is unchanged.
+
+Supported hosts use official Aliyun Linux 3 images (including Container Optimized),
+Python 3.6+, NetworkManager, native IPv4 upstream DNS and compatible containerd.
+Use `direct` for unqualified custom images, DNS stubs, NodeLocal DNS or other
+providers. Bootstrap errors retain pending readiness; missing Dragonfly does not.
 
 ## Public endpoint model
 

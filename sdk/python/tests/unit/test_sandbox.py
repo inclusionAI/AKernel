@@ -572,11 +572,13 @@ class SandboxTest(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "pty"),
         ):
             Sandbox(detached=True)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
     def test_partial_facade_cleanup_preserves_initialization_error(self):
-        self.session.terminate.side_effect = RuntimeError("remote delete failed")
+        self.session.rollback_creation.side_effect = RuntimeError(
+            "remote delete failed"
+        )
         self.session.close.side_effect = RuntimeError("client close failed")
         initialization_error = RuntimeError("PTY initialization failed")
         with (
@@ -594,7 +596,7 @@ class SandboxTest(unittest.TestCase):
             Sandbox(name="worker", detached=True)
 
         self.assertIs(raised.exception, initialization_error)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
     def test_dockerfile_signature_and_mutual_exclusion(self):
@@ -717,7 +719,7 @@ class SandboxTest(unittest.TestCase):
                 self.assertIsNone(sandbox.startup_command)
                 sandbox.kill()
 
-    def test_dockerfile_startup_dispatch_failure_terminates_and_closes_session(self):
+    def test_dockerfile_startup_dispatch_failure_rolls_back_and_closes_session(self):
         startup_error = DockerfileBuildError(
             "Failed to dispatch startup command",
             instruction="CMD",
@@ -735,10 +737,10 @@ class SandboxTest(unittest.TestCase):
                 )
 
         self.assertIs(raised.exception, startup_error)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
-    def test_dockerfile_build_failure_terminates_and_closes_detached_session(self):
+    def test_dockerfile_build_failure_rolls_back_and_closes_detached_session(self):
         build_error = DockerfileBuildError("RUN failed")
         with patch(
             "akernel_sdk._dockerfile_runner.apply_dockerfile",
@@ -753,7 +755,7 @@ class SandboxTest(unittest.TestCase):
                 )
 
         self.assertIs(raised.exception, build_error)
-        self.session.terminate.assert_called_once_with()
+        self.session.rollback_creation.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
     def test_get_port_url(self):

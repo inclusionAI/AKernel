@@ -24,7 +24,10 @@ ACR_NAMESPACE ?=
 MONITOR_STORAGE_CLASS ?=
 INSTALL_MONITOR ?=
 INSTALL_DRAGONFLY ?=
+NODE_IMAGE_PULL_MODE ?=
 CHUNK_DB_SIZE ?=
+SANDBOX_MEMORY_LIMIT_ENABLED ?=
+SANDBOX_MEMORY_TOTAL_RESERVE ?=
 JUICEFS_ENABLED ?= false
 JUICEFS_STORAGE_CLASS ?=
 JUICEFS_CACHE_MIB ?= 4096
@@ -49,7 +52,9 @@ help:
 	@echo "  make config FORCE=1                Overwrite an existing config without prompting"
 	@echo "  make config NON_INTERACTIVE=1 ...  Generate config from Make variables"
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
+	@echo "  make config NODE_IMAGE_PULL_MODE=direct Use direct registry pulls on new ACK workers"
 	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
+	@echo "  make config SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB Opt into a qualified cgroup v2 sandbox budget"
 	@echo "  make config JUICEFS_ENABLED=true JUICEFS_STORAGE_CLASS=... Deploy JuiceFS/PostgreSQL/Ceph"
 	@echo "  make config CHECKPOINT_STORAGE_HOST_PATH=/srv/shared Use an existing AFS/JuiceFS mount"
 	@echo "  make config SCHEDULE_PLACEMENT_POLICY=binpack Use compact scheduling"
@@ -69,6 +74,7 @@ help:
 	@echo "  make print-env                     Print SDK environment exports"
 	@echo "  make sdk-check                     Lint, type-check, and test the Python SDK"
 	@echo "  make deploy-script-check           Check deployment script syntax"
+	@echo "  make deploy-ack-image-pull-test     Test ACK image-pull bootstrap without cloud access"
 	@echo "  make deploy-standalone-test        Test standalone deployment helpers"
 	@echo "  make standalone-source-test       Build, SDK-test and stop a fresh local profile"
 	@echo "  make build-helper-test             Test image-build helpers without Docker"
@@ -100,7 +106,10 @@ config:
 	if [[ -n "$(IMAGE_TAG)" ]]; then args+=(--image-tag "$(IMAGE_TAG)"); fi; \
 	if [[ -n "$(INSTALL_MONITOR)" ]]; then args+=(--install-monitor "$(INSTALL_MONITOR)"); fi; \
 	if [[ -n "$(INSTALL_DRAGONFLY)" ]]; then args+=(--install-dragonfly "$(INSTALL_DRAGONFLY)"); fi; \
+	if [[ -n "$(NODE_IMAGE_PULL_MODE)" ]]; then args+=(--node-image-pull-mode "$(NODE_IMAGE_PULL_MODE)"); fi; \
 	if [[ -n "$(CHUNK_DB_SIZE)" ]]; then args+=(--chunk-db-size "$(CHUNK_DB_SIZE)"); fi; \
+	if [[ -n "$(SANDBOX_MEMORY_LIMIT_ENABLED)" ]]; then args+=(--sandbox-memory-limit-enabled "$(SANDBOX_MEMORY_LIMIT_ENABLED)"); fi; \
+	if [[ -n "$(SANDBOX_MEMORY_TOTAL_RESERVE)" ]]; then args+=(--sandbox-memory-total-reserve "$(SANDBOX_MEMORY_TOTAL_RESERVE)"); fi; \
 	args+=(--juicefs-enabled "$(JUICEFS_ENABLED)"); \
 	args+=(--juicefs-cache-mib "$(JUICEFS_CACHE_MIB)" --juicefs-cache-large-write "$(JUICEFS_CACHE_LARGE_WRITE)"); \
 	if [[ -n "$(JUICEFS_CACHE_HOST_PATH)" ]]; then args+=(--juicefs-cache-host-path "$(JUICEFS_CACHE_HOST_PATH)"); fi; \
@@ -197,13 +206,22 @@ deploy-script-check:
 		xargs -0 -r python3 -c \
 		'import pathlib, sys; [compile(pathlib.Path(path).read_bytes(), path, "exec") for path in sys.argv[1:]]'
 
+.PHONY: deploy-ack-image-pull-test
+deploy-ack-image-pull-test:
+	@command -v terraform >/dev/null || { echo "Terraform is required for ACK image-pull contract tests" >&2; exit 1; }
+	@python3 deploy/scripts/test_configure.py
+	@python3 deploy/terraform/aliyun/tests/test_node_image_pull.py
+	@python3 deploy/terraform/test_node_image_pull_terraform.py
+
 .PHONY: deploy-standalone-test
 deploy-standalone-test:
 	@python3 -m unittest discover -s deploy/standalone -p 'test_*.py'
 
 .PHONY: build-helper-test
 build-helper-test:
+	@python3 builder/scripts/test_control_release.py
 	@python3 builder/scripts/test-build-image.py
+	@python3 builder/scripts/test_e2b_runtime.py
 	@python3 builder/scripts/test-apt-mirror.py
 	@python3 builder/scripts/test-apt-get-update.py
 	@python3 builder/scripts/test-elf-arch.py

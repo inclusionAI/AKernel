@@ -23,6 +23,9 @@ spec:
   {{- end }}
   selector:
     app: akernel-adx-ingress-api
+    {{- if .Values.adx.ingressApi.publicService.maintenance }}
+    akernel.io/maintenance: "true"
+    {{- end }}
   ports:
     - name: control
       port: {{ .Values.adx.ingressApi.publicService.controlPort }}

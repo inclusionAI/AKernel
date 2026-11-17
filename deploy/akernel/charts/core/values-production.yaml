@@ -1,0 +1,52 @@
+# Opt-in core-chart capacity starting point, NOT a measured capacity guarantee.
+# Read deploy/docs/control-plane-capacity.md before installing or upgrading.
+# Supply a qualified SSD StorageClass and placement overrides for your cluster.
+adx:
+  coordinator:
+    replicas: 1
+    resources:
+      requests:
+        cpu: "4"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 32Gi
+  ingressApi:
+    replicas: 4
+    resources:
+      requests:
+        cpu: "4"
+        memory: 8Gi
+      limits:
+        cpu: "8"
+        memory: 16Gi
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: akernel-adx-ingress-api
+            topologyKey: kubernetes.io/hostname
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: akernel-adx-ingress-api
+  redis:
+    mode: managed
+    appendfsync: everysec
+    persistence:
+      enabled: true
+      # Must override with a qualified SSD-backed StorageClass; no portable name.
+      storageClassName: ""
+      size: 200Gi
+      accessModes: [ReadWriteOnce]
+    resources:
+      requests:
+        cpu: "4"
+        memory: 32Gi
+      limits:
+        cpu: "8"
+        memory: 64Gi

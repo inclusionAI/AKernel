@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: akernel-adx-coordinator
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: akernel-adx-coordinator}}
+{{- if gt (int .Values.adx.ingressApi.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: akernel-adx-ingress-api
+spec:
+  minAvailable: {{ sub (int .Values.adx.ingressApi.replicas) 1 }}
+  selector: {matchLabels: {app: akernel-adx-ingress-api}}
+{{- end }}

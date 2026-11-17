@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -77,9 +78,9 @@ class RuntimeContractTest(unittest.TestCase):
         normalized = {item.split("=", 1)[0].lower() for item in requirements}
         self.assertNotIn("openyuanrong-sdk", normalized)
 
-    def test_sdk_uses_the_environment_rc3_dependency(self) -> None:
+    def test_sdk_uses_the_environment_rc4_dependency(self) -> None:
         metadata = tomllib.loads((ROOT / "sdk/python/pyproject.toml").read_text())
-        self.assertIn("adx-environment==0.1.0rc3", metadata["project"]["dependencies"])
+        self.assertIn("adx-environment==0.1.0rc4", metadata["project"]["dependencies"])
 
     def test_actor_backend_sources_are_absent(self) -> None:
         backend = ROOT / "sdk/python/akernel_sdk/_backends"
@@ -136,7 +137,7 @@ class RuntimeContractTest(unittest.TestCase):
         build = (ROOT / "deploy/scripts/build-image.sh").read_text(encoding="utf-8")
         self.assertNotIn("openyuanrong_sdk", runtime)
         self.assertNotIn("runtime-python", runtime)
-        self.assertIn("--target runtime-execd", build)
+        self.assertIn("false) runtime_target=runtime-execd", build)
         self.assertNotIn("--runtime-profile", build)
 
     def test_dockerfiles_install_the_pinned_release_build(self) -> None:
@@ -151,6 +152,16 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertFalse((ROOT / "builder/scripts/fetch_adx_release.py").exists())
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertNotIn("ADX_RELEASE_ARCHIVE", makefile)
+
+    def test_daily_artifact_pin_matches_the_source_gitlink(self) -> None:
+        node = (ROOT / "builder/node.Dockerfile").read_text()
+        match = re.search(r"^ARG ADX_RELEASE_URL=.+/daily/[0-9]{14}-([0-9a-f]{12})/", node, re.MULTILINE)
+        self.assertIsNotNone(match, "daily artifact URL must identify its source revision")
+        entry = subprocess.check_output(
+            ["git", "ls-files", "--stage", "--", "src/agent-dx"], cwd=ROOT, text=True
+        ).split()
+        self.assertEqual(entry[0], "160000", "ADX source reference must remain a gitlink")
+        self.assertTrue(entry[1].startswith(match.group(1)), "ADX archive and source revisions differ")
 
     def test_artifact_contract_rejects_unpinned_or_mismatched_builds(self) -> None:
         node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
