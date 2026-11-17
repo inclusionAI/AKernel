@@ -266,14 +266,14 @@ class StartConfigTest(unittest.TestCase):
             AKERNEL_FIRECRACKER_CHECKPOINT_CONCURRENCY="8",
             AKERNEL_FIRECRACKER_RESTORE_CONCURRENCY="32",
             AKERNEL_RUNSC_CLI_GOMAXPROCS="2",
-            AKERNEL_RUNSC_EXTRA_ARGS='["--net-raw=true","--restore-page-prefetch=false"]',
+            AKERNEL_RUNSC_EXTRA_ARGS='["--net-raw=true","--restore-page-prefetch=none"]',
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         config = self.read_sections()
         self.assertEqual(config["plugin.resource"]["firecracker_checkpoint_concurrency"], "8")
         self.assertEqual(config["plugin.resource"]["firecracker_restore_concurrency"], "32")
         self.assertEqual(config["plugin.runtime.runsc"]["cli_gomaxprocs"], "2")
-        self.assertIn("--restore-page-prefetch=false", config["plugin.runtime.runsc"]["extra_args"])
+        self.assertIn("--restore-page-prefetch=none", config["plugin.runtime.runsc"]["extra_args"])
 
     def test_bad_runtime_control_rejects_before_resolver_or_config_changes(self):
         self.config_output.write_text("existing config\n")

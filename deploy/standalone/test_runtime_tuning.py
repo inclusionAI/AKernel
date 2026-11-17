@@ -32,7 +32,7 @@ class RuntimeTuningTest(unittest.TestCase):
         self.assertNotIn("extra_args", sections(TEMPLATE)["plugin.runtime.runsc"])
 
     def test_controls_are_scoped_and_preserve_other_runtime_configuration(self):
-        args = ["--net-raw=true", "--restore-page-prefetch=false", "--restore-map-unit=65536"]
+        args = ["--net-raw=true", "--restore-page-prefetch=none", "--restore-map-unit=65536"]
         rendered = sections(MODULE.render(TEMPLATE, {
             "AKERNEL_FIRECRACKER_CHECKPOINT_CONCURRENCY": "8",
             "AKERNEL_FIRECRACKER_RESTORE_CONCURRENCY": "32",

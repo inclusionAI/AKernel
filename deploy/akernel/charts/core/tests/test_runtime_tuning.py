@@ -43,7 +43,7 @@ class RuntimeTuningChartTest(unittest.TestCase):
         self.assertNotIn("firecracker_checkpoint_concurrency", config["plugin.resource"])
 
     def test_controls_are_in_their_own_sections(self):
-        args = ["--net-raw=true", "--restore-page-prefetch=false", "--restore-map-unit=65536"]
+        args = ["--net-raw=true", "--restore-page-prefetch=none", "--restore-map-unit=65536"]
         result = render({"firecrackerCheckpointConcurrency": 8, "firecrackerRestoreConcurrency": 32, "runscCliGomaxprocs": 2, "runscExtraArgs": args})
         self.assertEqual(result.returncode, 0, result.stderr)
         config = config_sections(result.stdout)
@@ -61,7 +61,7 @@ class RuntimeTuningChartTest(unittest.TestCase):
         self.assertEqual(config["plugin.runtime.runsc"]["extra_args"], "[]")
 
     def test_tuning_composes_with_native_filestore_and_reflink(self):
-        args = ["--net-raw=true", "--restore-page-prefetch=false"]
+        args = ["--net-raw=true", "--restore-page-prefetch=none"]
         result = render(
             {"firecrackerRestoreConcurrency": 32, "runscExtraArgs": args},
             nativeFilestore=True, runscCheckpointMode="reflink",
