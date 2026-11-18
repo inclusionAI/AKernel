@@ -184,6 +184,7 @@ jobs:
         run: |
           python builder/scripts/test_adx_service.py -v
           python builder/scripts/test_afs_config.py -v
+          python builder/scripts/test_pressure_config.py -v
           python deploy/akernel/charts/core/tests/test_adx_observability.py -v
           python deploy/akernel/charts/core/tests/test_adx_multicluster.py -v
           python builder/scripts/test_runtime_contract.py -v
@@ -193,6 +194,7 @@ jobs:
           python deploy/tests/kubernetes/test_node_lifecycle.py -v
           python deploy/tests/kubernetes/test_runc_filesystems.py -v
           python deploy/akernel/charts/core/tests/test_adx_chart.py -v
+          python deploy/akernel/charts/core/tests/test_adx_pressure.py -v
           python -m unittest discover -s deploy/registry-connectivity/tests -v
           python deploy/akernel/charts/core/tests/test_node_directories.py -v
           python deploy/akernel/charts/core/tests/test_shared_checkpoint_storage.py -v

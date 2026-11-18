@@ -111,6 +111,7 @@ def operate(root, action):
     }
     if action not in signals:
         raise ValueError("unsupported process action")
+    stop_deadline = time.monotonic() + 5
     for _ in range(3 if action == "stop" else 1):
         parents = {row["pid"]: row["ppid"] for row in rows}
 
@@ -130,7 +131,21 @@ def operate(root, action):
                 try:
                     os.kill(row["pid"], signals[action])
                 except ProcessLookupError:
-                    pass
+                    continue
+                if action == "stop":
+                    # SIGSTOP delivery is asynchronous. Confirm the waiter is
+                    # stopped before a child can generate a stop notification.
+                    while True:
+                        current = stat(row["pid"])
+                        if (
+                            current is None
+                            or current["start_time"] != row["start_time"]
+                            or current["state"] in ("T", "t", "Z")
+                        ):
+                            break
+                        if time.monotonic() >= stop_deadline:
+                            raise RuntimeError("process did not acknowledge stop")
+                        time.sleep(0.001)
         if action == "stop":
             time.sleep(0.03)
             rows = inspect(root)

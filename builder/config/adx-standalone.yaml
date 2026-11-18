@@ -26,6 +26,9 @@ service_overrides:
         ADX_EXECD_CONTROL_SOCKET_PATH: /run/akernel
       resource_source:
         disk_path: /home/akernel
+      pressure:
+        memory_enabled: true
+        disk_enabled: false
   apiserver:
     config:
       metrics_listen: 127.0.0.1:19093

@@ -145,6 +145,10 @@ adx:
     reportIntervalSeconds: 5
     metricsIntervalSeconds: 15
     resourceValidForSeconds: 30
+    # Native adxlet pressure configuration; defaults to memory-only admission.
+    pressure:
+      memory_enabled: true
+      disk_enabled: false
 
 # Preserve the existing placement setting; translate binpack to ADX pack.
 coordinator:

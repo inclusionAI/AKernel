@@ -22,6 +22,34 @@ For private Registries serving Nydus through Dragonfly, install the
 namespace-and-Pod ingress selectors and verifies all configured seeds after Registry
 moves or rollouts without changing Registry placement or storage.
 
+## Memory-pressure admission
+
+Bundled standalone and Helm execution nodes enable memory-only ADX pressure
+sampling. Memory use at or above 90% closes admission for new Environments;
+it reopens at or below 80%. Existing Environments continue running. The sample
+uses the higher of host memory use derived from `MemAvailable` and visible
+finite cgroup memory-limit usage. Sampling errors release the pressure gate;
+capacity and maintenance admission still apply.
+
+Helm passes `adx.node.pressure` directly to adxlet using ADX field names. The
+umbrella chart uses the `core.` prefix. Its defaults are:
+
+```yaml
+adx:
+  node:
+    pressure:
+      memory_enabled: true
+      disk_enabled: false
+```
+
+Set `memory_enabled: false` to disable memory sampling. To tune hysteresis, add
+`thresholds.memory_high_percent` and `thresholds.memory_low_percent` to the map;
+the low threshold must be smaller than the high threshold. Standalone uses the
+same defaults in `builder/config/adx-standalone.yaml`. Custom configurations
+selected by `AKERNEL_ADX_CONFIG` can set
+`service_overrides.adxlet.config.pressure`; PVM, tracing and shared-checkpoint
+preparation preserve that policy.
+
 ## Aggregate sandbox memory budget
 
 The direct Helm chart enables the cgroup v2 aggregate sandbox memory policy by

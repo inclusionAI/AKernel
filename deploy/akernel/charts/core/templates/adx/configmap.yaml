@@ -304,6 +304,10 @@ data:
             kind: sandboxd
             socket: /var/run/resource.sock
             valid_for_seconds: {{ .Values.adx.node.resourceValidForSeconds }}
+          {{- with .Values.adx.node.pressure }}
+          pressure:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           tls:
             mode: network
         env:

@@ -247,6 +247,11 @@ distill-fs release's packaged manifest.
 
 Use [`deploy/README.md`](./deploy/README.md) as the deployment entry point. AKernel supports standalone, existing Kubernetes clusters via Helm, and Terraform-based cloud provisioning.
 
+Bundled standalone and Helm nodes enable memory-only ADX pressure admission.
+Keep their defaults aligned and preserve operator overrides during configuration
+preparation. Helm passes `adx.node.pressure` through with ADX field names; see
+[memory-pressure admission](deploy/README.md#memory-pressure-admission).
+
 The direct Helm chart enables the cgroup v2 parent memory policy with
 `total_reserve="16GiB"` for the ordinary KVM profile. Standalone and both cloud
 Terraform profiles keep it disabled by default. Cloud opt-in uses
