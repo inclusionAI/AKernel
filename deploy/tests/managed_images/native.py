@@ -423,6 +423,13 @@ configure_network
         deployment["namespace"] = self.name
         overrides = deployment["service_overrides"]
         overrides["coordinator"]["config"]["managed_image_reclamation"] = True
+        overrides["coordinator"]["config"]["managed_images"] = {
+            "registry": {
+                "authority": self.registry_authority,
+                "repository_prefix": "managed",
+            },
+            "publisher_profiles": ["qualification"],
+        }
         overrides["adxlet"]["config"]["labels"] = {
             "AKERNEL_RUNTIME_PROFILE_qualification": "8192"
         }
@@ -838,6 +845,8 @@ configure_network
                 image.id,
                 "--registry",
                 self.registry_url,
+                "--repository-prefix",
+                "managed",
                 "--registry-basic-auth-file",
                 str(credentials),
                 "--allow-http",

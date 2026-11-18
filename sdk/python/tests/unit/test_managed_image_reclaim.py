@@ -61,11 +61,15 @@ class ManagedImageReclaim(unittest.TestCase):
         image.state = "ready"
         image.outputs = {"single": reference}
         image.info = {
+            "image": {
+                "plan": {"single": "registry.test/publications/owned/service:build"}
+            },
             "eligible_for_reclamation": True,
             "reclamation_enabled": False,
             "reclaimable": False,
         }
         registry = MagicMock()
+        registry.resolve_tag.return_value = reference
         registry.graph.return_value = [reference]
         result = reclaimer.reclaim(image, registry)
         self.assertTrue(result["dry_run"])
@@ -73,4 +77,23 @@ class ManagedImageReclaim(unittest.TestCase):
         image._mutate.assert_called_once_with("observe")
         with self.assertRaisesRegex(ValueError, "disabled"):
             reclaimer.reclaim(image, registry, apply=True)
+        registry.delete.assert_not_called()
+
+    def test_registry_tag_must_match_receipt_before_deletion_claim(self):
+        tagged = "registry.test/owned/image:build"
+        image = MagicMock()
+        image.state = "ready"
+        image.info = {
+            "image": {"plan": {"single": tagged}},
+            "eligible_for_reclamation": True,
+            "reclamation_enabled": True,
+        }
+        image.outputs = {"single": tagged.rsplit(":", 1)[0] + "@sha256:" + "a" * 64}
+        registry = MagicMock()
+        registry.resolve_tag.return_value = (
+            tagged.rsplit(":", 1)[0] + "@sha256:" + "b" * 64
+        )
+        with self.assertRaisesRegex(ValueError, "publication receipt"):
+            reclaimer.reclaim(image, registry, apply=True)
+        image._mutate.assert_called_once_with("observe")
         registry.delete.assert_not_called()

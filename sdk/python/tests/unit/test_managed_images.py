@@ -89,6 +89,30 @@ class ManagedImagesTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ImageRetention.ephemeral(invalid)
 
+    def test_summary_loads_outputs_only_on_access(self):
+        images = MagicMock()
+        full = view("ready")
+        full["image"]["outputs"] = {"single": REFERENCE}
+        images._request.return_value = full
+        image = ManagedImage(
+            images, {"summary": True, "image": {"id": IMAGE_ID, "state": "ready"}}
+        )
+        self.assertEqual(image.state, "ready")
+        images._request.assert_not_called()
+        self.assertEqual(image.reference, REFERENCE)
+        self.assertEqual(image.outputs, {"single": REFERENCE})
+        images._request.assert_called_once_with("GET", IMAGE_ID)
+
+    def test_publish_receipt_rejects_unplanned_repository(self):
+        images = MagicMock()
+        image = ManagedImage(images, view("publishing"))
+        plan = {"single": REFERENCE.split("@", 1)[0] + ":build"}
+        with self.assertRaisesRegex(ValueError, "outside the publication plan"):
+            image._publish_receipt(
+                plan, {"single": REFERENCE.replace("service-0", "legacy")}
+            )
+        images._request.assert_not_called()
+
     def test_bound_connection_and_http_envelope(self):
         endpoint = Endpoint("example.test", 443, "https", False)
         config = BackendConfig(endpoint, endpoint, "private-test-key", True)

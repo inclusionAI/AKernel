@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -31,6 +32,7 @@ class Registry:
         *,
         allow_http: bool = False,
         basic_auth: tuple[str, str] | None = None,
+        repository_prefix: str | None = None,
     ):
         parsed = urlsplit(origin)
         if (
@@ -47,6 +49,12 @@ class Registry:
         if bearer and basic_auth is not None:
             raise ValueError("Select exactly one Registry authentication method")
         self.authority = parsed.netloc
+        if repository_prefix is not None and not all(
+            re.fullmatch(r"[a-z0-9][a-z0-9._-]*", part)
+            for part in repository_prefix.split("/")
+        ):
+            raise ValueError("Invalid managed Registry repository prefix")
+        self.repository_prefix = repository_prefix
         self.client = httpx.Client(
             headers={"Authorization": "Bearer " + bearer} if bearer else {},
             auth=basic_auth,
@@ -58,23 +66,26 @@ class Registry:
         self.client.close()
 
     def path(self, reference: str) -> str:
-        registry, path = reference.split("/", 1)
-        repository, digest = path.split("@", 1)
-        if registry != self.authority or not digest.startswith("sha256:"):
-            raise ValueError("Publication is outside the selected Registry")
-        # This is defense in depth over the control plane's repository validation.
+        repository, digest = reference.split("@", 1)
+        if re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+            raise ValueError("Invalid manifest digest")
+        return self.manifest_path(repository, digest)
+
+    def manifest_path(self, reference: str, target: str) -> str:
+        registry, repository = reference.split("/", 1)
+        if registry != self.authority or (
+            self.repository_prefix is not None
+            and not repository.startswith(self.repository_prefix + "/")
+        ):
+            raise ValueError("Publication is outside the selected Registry scope")
         if any(part in {"", ".", ".."} for part in repository.split("/")):
             raise ValueError("Invalid manifest repository")
         if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789/._-" for c in repository):
             raise ValueError("Invalid manifest repository")
-        if len(digest) != 71 or any(c not in "0123456789abcdef" for c in digest[7:]):
-            raise ValueError("Invalid manifest digest")
-        return f"{self.origin}/v2/{repository}/manifests/{digest}"
+        return f"{self.origin}/v2/{repository}/manifests/{target}"
 
-    def read(self, reference: str):
-        with self.client.stream(
-            "GET", self.path(reference), headers={"Accept": ACCEPT}
-        ) as response:
+    def read_manifest(self, path: str):
+        with self.client.stream("GET", path, headers={"Accept": ACCEPT}) as response:
             if response.status_code == 404:
                 return None
             response.raise_for_status()
@@ -83,12 +94,29 @@ class Registry:
                 data.extend(chunk)
                 if len(data) > 16 * 1024**2:
                     raise ValueError("Manifest exceeds metadata limit")
-        if "sha256:" + hashlib.sha256(data).hexdigest() != reference.rsplit("@", 1)[1]:
-            raise ValueError("Manifest digest mismatch")
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        if response.headers.get("Docker-Content-Digest", digest) != digest:
+            raise ValueError("Registry manifest digest header mismatch")
         manifest = json.loads(data)
-        if manifest.get("schemaVersion") != 2:
+        if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 2:
             raise ValueError("Unsupported manifest schema")
+        return digest, manifest
+
+    def read(self, reference: str):
+        result = self.read_manifest(self.path(reference))
+        if result is None:
+            return None
+        digest, manifest = result
+        if digest != reference.rsplit("@", 1)[1]:
+            raise ValueError("Manifest digest mismatch")
         return manifest
+
+    def resolve_tag(self, tagged: str) -> str | None:
+        repository, tag = tagged.rsplit(":", 1)
+        if re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}", tag) is None:
+            raise ValueError("Invalid publication tag")
+        result = self.read_manifest(self.manifest_path(repository, tag))
+        return f"{repository}@{result[0]}" if result is not None else None
 
     def graph(self, roots: list[str]) -> list[str]:
         seen = set()
@@ -120,6 +148,35 @@ class Registry:
         return response.status_code == 202
 
 
+def observed_outputs(image: ManagedImage, registry: Registry) -> dict[str, str]:
+    result = {}
+    for name, tagged in image.info["image"]["plan"].items():
+        reference = registry.resolve_tag(tagged)
+        if reference is not None:
+            result[name] = reference
+    return result
+
+
+def reconcile_abandoned(
+    image: ManagedImage, registry: Registry, writer_fence: str
+) -> dict:
+    image.refresh()
+    receipt = image.info["image"]
+    if image.state == "publishing":
+        outputs = observed_outputs(image, registry)
+        image._mutate(
+            "reconcile_abandoned",
+            digests={
+                name: reference.rsplit("@", 1)[1] for name, reference in outputs.items()
+            },
+            writer_fence=writer_fence,
+            expected_revision=receipt["revision"],
+        )
+    elif image.state != "abandoned" or receipt.get("writer_fence") != writer_fence:
+        raise ValueError("Publication is outside the confirmed reconciliation attempt")
+    return {"image_id": image.id, "state": image.state, "outputs": image.outputs}
+
+
 def reclaim(image: ManagedImage, registry: Registry, *, apply: bool = False) -> dict:
     image.refresh()
     if image.state == "deleted":
@@ -142,10 +199,15 @@ def reclaim(image: ManagedImage, registry: Registry, *, apply: bool = False) -> 
                 "protected": True,
                 "view": image.info,
             }
-        manifests = registry.graph(list(image.outputs.values()))
+        outputs = observed_outputs(image, registry)
+        if outputs != image.outputs:
+            raise ValueError("Registry tags do not match the publication receipt")
+        manifests = registry.graph(list(outputs.values()))
     # Validate the entire persisted worklist before touching any manifest.
     for reference in manifests:
         registry.path(reference)
+    if sum(len(reference) + 3 for reference in manifests) > 512 * 1024 - 1024:
+        raise ValueError("Manifest worklist exceeds the publication byte budget")
     if not apply:
         return {
             "image_id": image.id,
@@ -169,6 +231,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image-id", required=True)
     parser.add_argument("--registry", required=True)
+    parser.add_argument(
+        "--repository-prefix", help="Exclusive managed Registry namespace"
+    )
     credentials = parser.add_mutually_exclusive_group()
     credentials.add_argument("--registry-bearer-file", type=Path)
     credentials.add_argument(
@@ -180,12 +245,26 @@ def main():
         "--tenant", help="Explicit target tenant; requires an AKernel administrator"
     )
     parser.add_argument("--allow-http", action="store_true")
-    parser.add_argument(
+    operation = parser.add_mutually_exclusive_group()
+    operation.add_argument(
         "--apply",
         action="store_true",
         help="Claim and delete the registered manifest worklist; default is dry-run",
     )
+    operation.add_argument(
+        "--reconcile-abandoned",
+        action="store_true",
+        help="Record present outputs after independently fencing the original writer",
+    )
+    parser.add_argument(
+        "--writer-fence",
+        help="Non-secret record of confirmed writer shutdown or revocation",
+    )
     args = parser.parse_args()
+    if (args.apply or args.reconcile_abandoned) and not args.repository_prefix:
+        parser.error("--apply and --reconcile-abandoned require --repository-prefix")
+    if args.reconcile_abandoned != bool(args.writer_fence):
+        parser.error("--writer-fence is required only with --reconcile-abandoned")
     basic_auth = None
     if args.registry_basic_auth_file:
         path = args.registry_basic_auth_file
@@ -204,18 +283,16 @@ def main():
         else "",
         allow_http=args.allow_http,
         basic_auth=basic_auth,
+        repository_prefix=args.repository_prefix,
     )
     try:
-        print(
-            json.dumps(
-                reclaim(
-                    ManagedImages(tenant=args.tenant).get(args.image_id),
-                    registry,
-                    apply=args.apply,
-                ),
-                sort_keys=True,
-            )
+        image = ManagedImages(tenant=args.tenant).get(args.image_id)
+        result = (
+            reconcile_abandoned(image, registry, args.writer_fence)
+            if args.reconcile_abandoned
+            else reclaim(image, registry, apply=args.apply)
         )
+        print(json.dumps(result, sort_keys=True))
     finally:
         registry.close()
 

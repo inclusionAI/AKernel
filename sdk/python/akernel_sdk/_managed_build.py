@@ -178,7 +178,8 @@ def build_image(
                     "cat /work/publication-plan.json", timeout=20, check=True
                 ).stdout
             )
-            publication._mutate("plan", outputs=plan["publication_plan"])
+            planned_outputs = plan["publication_plan"]
+            publication._mutate("plan", outputs=planned_outputs, builder_id=builder.id)
         result = builder.commands.run(
             shlex.join(
                 [
@@ -215,9 +216,7 @@ def build_image(
             raise ValueError("Runtime returned an invalid artifact reference")
         process = handle.get("image_process", {})
         if publication is not None:
-            publication._mutate(
-                "publish", digests={"single": reference.rsplit("@", 1)[1]}
-            )
+            publication._publish_receipt(planned_outputs, {"single": reference})
         return BuiltImage(
             reference=reference,
             envs=dict(

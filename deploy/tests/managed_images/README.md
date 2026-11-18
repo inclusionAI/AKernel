@@ -1,6 +1,6 @@
 # Managed image qualification
 
-`qualify.py` runs candidate Coordinator and API Server binaries with a dedicated Redis Unix socket and a new loopback-only Distribution container. It publishes owned OCI manifest/index fixtures with shared and unique blobs, calls the public SDK ownership API, exercises dry-run and manifest deletion, stops writers, runs Registry GC dry-run and GC, measures allocated bytes, then verifies surviving manifests and blobs. It never targets an existing Registry or AKernel deployment. Its fixture is a Registry storage/metadata test, not a bootable Nydus rootfs or a native checkpoint/restore test.
+`qualify.py` runs candidate Coordinator and API Server binaries with a dedicated Redis Unix socket and a new loopback-only Distribution container. It publishes owned OCI manifest/index fixtures with shared and unique blobs, calls the public SDK ownership API, settles a fenced partial publication and exercises dry-run and resumable manifest deletion. It stops writers, runs Registry GC dry-run and GC, measures allocated bytes and verifies surviving manifests and blobs.
 
 Prepare the candidate ADX binaries, Redis and short-lived mTLS certificates using the ADX repository's documented build/CI tools. Install this checkout's SDK and its dependencies. Select the Registry image explicitly; keep the resulting image ID and binary source versions with the qualification receipt.
 

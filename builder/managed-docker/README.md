@@ -118,24 +118,29 @@ Restore is same-node only. Per-tenant Registry credential issuance, cross-node c
 
 ## Managed image reclamation
 
-Candidate views expose `eligible_for_reclamation` independently of the deletion enable switch. Dry-run can inspect those candidates while reclamation remains disabled; `--apply` requires the explicit operator switch as well as administrator authorization.
+An administrator can run a dry-run to observe current references and inspect candidates while deletion is disabled. `--apply` requires the explicit operator switch and administrator authorization.
 
 Registry authentication accepts either `--registry-bearer-file` for a preissued scoped token or `--registry-basic-auth-file` for a mode-0600 JSON file containing `username` and `password`. These options are mutually exclusive. Credentials are confined to the selected Registry origin, with redirects disabled; HTTPS is required unless the operator explicitly selects isolated HTTP testing. Keep Registry credentials separate from the AKernel API key.
 
-Enrolled builds register a durable publication before creating the builder. `--plan-only --publication-id <id>` computes the complete native output mapping without starting a publisher; the SDK persists it before actual Bake execution. Repositories include `/publications/<id>/` under the session's authorized prefix. All Compose services, including image-only conversions, share one publication. Builds without enrollment keep existing names and lifetime behavior. Incomplete or unknown publication never becomes an expiry candidate.
+Enrolled builds register a durable publication before creating the builder. `--plan-only --publication-id <id>` computes the complete native output mapping. The SDK records it with the actual builder Environment before Bake starts. The Coordinator binds the plan to that execution generation. All Compose services, including image-only conversions, share one publication.
 
-Deploy the matching backend API and planning-capable managed tools before enrolling clients. Coordinator `managed_image_reclamation` defaults to false; activation requires separate deployment authorization and runtime/storage qualification. No runtime pin or deployment is changed by installing this SDK. Preserve authoritative Redis data; after restoring an older backup, disable reclaimers and reconcile surviving runtime/Snapshot/publication inventories before re-enabling deletion.
+Deploy the matching backend API and planning-capable managed tools before enrolling clients. Reserve a fresh Registry prefix for managed publications. Set the Coordinator's `managed_images.registry.authority` and `repository_prefix` to that Registry scope, and set `managed_images.publisher_profiles` to the approved runtime profile names. Align the builder's Registry prefix and scope its credentials to the reserved namespace. The layout is `<authority>/<prefix>/<collection-id>/publications/<publication-id>/<output>`. The Coordinator defaults to 128 pending publications and 100,000 durable request identities per tenant. A completed, cancelled or reconciled receipt frees its pending slot and retains its request identity.
 
-`reclaim.py` runs outside sandboxes with an AKernel management identity and a narrowly scoped Registry pull/delete Bearer token. It validates the selected Registry origin, walks exact OCI manifest/index dependencies, claims a durable repository-scoped worklist, deletes manifests by digest, verifies absence and acknowledges completion. It never deletes blobs or Registry files. Partial failure leaves Deleting state and blocks new consumers; retry resumes the same worklist. Supply a valid scoped token for each invocation; this tool does not refresh tokens. Explicit `--tenant` selection requires an AKernel administrator.
+`managed_image_reclamation` defaults to false. Enable it after qualifying the runtime and storage. Keep the delete credential with the reclaimer. After restoring an older Redis backup, keep reclamation disabled until surviving runtimes, Snapshots and publication receipts have been reconciled.
+
+`reclaim.py` runs outside sandboxes with an AKernel administrator identity and scoped Registry credentials. It verifies that planned tags still point to the recorded digests, walks OCI manifest/index dependencies, and claims a durable repository-scoped worklist. It deletes manifests by digest, verifies absence and acknowledges completion. Partial failure leaves the publication in Deleting and blocks new consumers. Retry resumes the persisted worklist. Supply a valid scoped token for each invocation.
 
 ```sh
 python3 builder/managed-docker/reclaim.py \
   --image-id <managed-publication-id> \
   --registry https://registry.example.internal \
+  --repository-prefix managed \
   --registry-bearer-file /protected/reclaimer-token
 ```
 
-Default dry-run updates lifecycle observations and reports candidates without Registry writes. Add `--apply` only for an explicitly authorized publication. Private HTTP requires `--allow-http` and a trusted isolated network. SDK credentials use the ordinary AKernel connection environment; keep credentials out of arguments, logs and Git.
+Default dry-run updates lifecycle observations and reports candidates without Registry writes. Add `--apply` for an authorized publication. Private HTTP requires `--allow-http` and a trusted isolated network. SDK credentials use the ordinary AKernel connection environment. Keep credentials out of arguments, logs and Git.
+
+Cancel preparations with `image.cancel_preparation()` before a plan exists. For a failed publication with a plan, confirm that the original runtime and any asynchronous Registry writer have stopped or lost write access. Run the same command with `--reconcile-abandoned --writer-fence <audit-record-id>` to inspect every planned tag and settle the publisher hold. A tag may be absent only after the writer is fenced. Existing outputs follow ordinary holds, reference checks and grace. The audit record should identify how writing was prevented.
 
 Manifest deletion does not guarantee immediate disk recovery. Distribution GC scans its whole physical storage domain, including historical unreferenced content; repository prefixes do not isolate that sweep. A shared production store needs separate GC authorization, verified recovery materials, stopped writers/read-only maintenance, dry-run and retained-digest checks. A separate physical storage domain can constrain future ephemeral GC without moving historical images. BuildKit and Dragonfly cache cleanup remain separate. Never use `--delete-untagged` as a substitute for the ledger or remove Registry storage files manually.
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import json
 import re
-import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -95,6 +94,8 @@ class ManagedImage:
 
     @property
     def outputs(self) -> dict[str, str]:
+        if self._view.get("summary"):
+            self.refresh()
         return dict(self._view["image"]["outputs"])
 
     @property
@@ -106,12 +107,33 @@ class ManagedImage:
         return self
 
     def _mutate(self, operation: str, **fields: Any) -> ManagedImage:
-        if operation == "plan":
-            fields.setdefault("execution_id", uuid.uuid4().hex)
         self._view = self._images._request(
             "POST", self.id, {"operation": operation, **fields}
         )
         return self
+
+    def _publish_receipt(
+        self, plan: Mapping[str, str], outputs: Mapping[str, str]
+    ) -> None:
+        if plan.keys() != outputs.keys():
+            raise ValueError("Runtime returned an incomplete publication receipt")
+        digests = {}
+        for name, reference in outputs.items():
+            repository, marker, digest = reference.partition("@")
+            if (
+                not marker
+                or repository != plan[name].rsplit(":", 1)[0]
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+            ):
+                raise ValueError(
+                    "Runtime returned a reference outside the publication plan"
+                )
+            digests[name] = digest
+        self._mutate("publish", digests=digests)
+
+    def cancel_preparation(self) -> ManagedImage:
+        """Cancel before plan registration; a planned writer needs reconciliation."""
+        return self._mutate("cancel_preparation")
 
     def retain(self, lease_id: str) -> ManagedImageLease:
         """Acquire an independent durable hold; released IDs cannot be reused."""
@@ -261,7 +283,7 @@ class ManagedImages:
         return ManagedImage(self, self._request("GET", _id(image_id)))
 
     def list(self, *, page_size: int = 100) -> Iterator[ManagedImage]:
-        """Lazily iterate the tenant's inventory with bounded page payloads."""
+        """Iterate bounded summaries; refresh a handle for its full receipt."""
         if (
             isinstance(page_size, bool)
             or not isinstance(page_size, int)

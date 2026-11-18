@@ -62,7 +62,7 @@ def main():
     name = "akernel-images167-" + uuid.uuid4().hex[:12]
     services = []
     logs = []
-    container_created = False
+    registry_container = None
 
     def start(binary, config=None, extra=()):
         log = (root / (Path(binary).name + ".log")).open("ab")
@@ -85,7 +85,7 @@ def main():
         image_id = run(
             "docker", "image", "inspect", "--format", "{{.Id}}", args.registry_image
         )
-        run(
+        registry_container = run(
             "docker",
             "run",
             "-d",
@@ -105,8 +105,7 @@ def main():
             f"{cfg}:/etc/distribution/config.yml:ro",
             image_id,
         )
-        container_created = True
-        mapping = run("docker", "port", name, "5000/tcp").splitlines()[0]
+        mapping = run("docker", "port", registry_container, "5000/tcp").splitlines()[0]
         registry_url = "http://" + mapping
         registry_authority = mapping
         with httpx.Client() as transport:
@@ -165,6 +164,12 @@ def main():
                 "placement": "pack",
                 "rpc_timeout_seconds": 5,
                 "managed_image_reclamation": True,
+                "managed_images": {
+                    "registry": {
+                        "authority": registry_authority,
+                        "repository_prefix": "qualification",
+                    },
+                },
                 "tls": {
                     "mode": "mtls",
                     "ca": str(tls / "ca.pem"),
@@ -234,20 +239,26 @@ def main():
 
         shared = os.urandom(1024 * 1024)
 
-        def publish(request, unique, managed=True):
+        def publish(request, unique, managed=True, partial=False):
             image = (
                 client.images.begin(request, ImageRetention.ephemeral(0))
                 if managed
                 else None
             )
-            repo = (
-                f"qualification/publications/{image.id}/service-0"
+            publication = (
+                f"qualification/{secrets.token_hex(16)}/publications/{image.id}"
                 if image
-                else "legacy/keep"
+                else None
             )
+            repo = f"{publication}/service-0" if publication else "legacy/keep"
             tagged = f"{registry_authority}/{repo}:build"
             if image:
-                image._mutate("plan", outputs={"single": tagged})
+                plan = {"single": tagged}
+                if partial:
+                    plan["absent"] = (
+                        f"{registry_authority}/{publication}/service-1:build"
+                    )
+                image._mutate("plan", outputs=plan)
             config = b'{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":[]}}'
             layers = [shared, unique]
             with httpx.Client() as http:
@@ -312,12 +323,15 @@ def main():
                     headers={"Content-Type": "application/vnd.oci.image.index.v1+json"},
                 )
                 response.raise_for_status()
-            if image:
+            if image and not partial:
                 image._mutate("publish", digests={"single": sha(manifest)})
             return image, repo, f"{registry_authority}/{repo}@{sha(manifest)}"
 
         doomed, _, _ = publish("owned-delete", os.urandom(2 * 1024 * 1024))
         survivor, survivor_repo, _ = publish("owned-survivor", os.urandom(1024 * 1024))
+        abandoned, _, abandoned_ref = publish(
+            "owned-interrupted", os.urandom(1024 * 1024), partial=True
+        )
         _, legacy_repo, legacy_reference = publish(
             "unmanaged", os.urandom(1024 * 1024), managed=False
         )
@@ -338,7 +352,9 @@ def main():
             raise AssertionError("ordinary SDK caller acquired delete authority")
         doomed.retain("independent-reader")
         doomed.release()
-        registry = reclaimer.Registry(registry_url, allow_http=True)
+        registry = reclaimer.Registry(
+            registry_url, allow_http=True, repository_prefix="qualification"
+        )
         try:
             if not reclaimer.reclaim(survivor, registry).get("protected"):
                 raise AssertionError(
@@ -363,10 +379,24 @@ def main():
                 raise AssertionError("partial deletion was not reconciled idempotently")
             if registry.read(survivor.reference) is None:
                 raise AssertionError("shared survivor manifest disappeared")
+            if not reclaimer.reclaim(abandoned, registry).get("protected"):
+                raise AssertionError("unfinished publication lost protection")
+            # The synchronous fixture writer has returned and cannot write again.
+            abandoned_receipt = reclaimer.reconcile_abandoned(
+                abandoned, registry, "qualification:fixture-writer-exited"
+            )
+            if abandoned_receipt["state"] != "abandoned" or abandoned_receipt[
+                "outputs"
+            ] != {"single": abandoned_ref}:
+                raise AssertionError(
+                    "partial reconciliation committed the wrong outputs"
+                )
+            if reclaimer.reclaim(abandoned, registry, apply=True)["state"] != "deleted":
+                raise AssertionError("verified partial publication was not reclaimed")
         finally:
             registry.close()
         after_manifest = bytes_used(data)
-        run("docker", "stop", name)
+        run("docker", "stop", registry_container)
         gc_args = [
             "docker",
             "run",
@@ -397,7 +427,7 @@ def main():
         after_gc = bytes_used(data)
         if after_gc >= after_manifest:
             raise AssertionError("GC did not physically reclaim data")
-        run("docker", "start", name)
+        run("docker", "start", registry_container)
         with httpx.Client() as http:
             retained = None
             for _ in range(100):
@@ -430,6 +460,7 @@ def main():
             "shared_blob_preserved": True,
             "unmanaged_manifest_preserved": True,
             "ordinary_delete_denied": True,
+            "partial_publication_reconciled": True,
             "manifest_delete": deleted,
             "native_runtime_checkpoint_test": False,
         }
@@ -446,16 +477,16 @@ def main():
                     process.wait()
         for log in logs:
             log.close()
-        if container_created:
+        if registry_container is not None:
             output = subprocess.run(
-                ["docker", "logs", name],
+                ["docker", "logs", registry_container],
                 check=False,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
             (root / "registry.log").write_text(output.stdout)
-            run("docker", "rm", "-f", name)
+            run("docker", "rm", "-f", registry_container)
 
 
 if __name__ == "__main__":
