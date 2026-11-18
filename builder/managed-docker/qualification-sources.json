@@ -13,12 +13,12 @@
     },
     "agent_dx": {
       "branch": "master",
-      "commit": "18f9c673812dbc988185136011023ea28bdd38f7"
+      "commit": "4104c42e7783f109db98bc48bf4c87312325189a"
     }
   },
   "candidate_gitlinks": {
     "sandboxd": "63d4b2e09a270793051f7acc8b222fbd89885c30",
-    "agent_dx": "18f9c673812dbc988185136011023ea28bdd38f7"
+    "agent_dx": "4104c42e7783f109db98bc48bf4c87312325189a"
   },
   "pinned_runtime_artifacts": {
     "gvisor": {
@@ -37,16 +37,16 @@
     "package_source_commit": "e611b9e4a83dcd6da5346bd17c2f6af28e244952",
     "note": "The package index dependency is pinned in sdk/python/pyproject.toml."
   },
-  "afs_enabled": false,
+  "afs_enabled": true,
   "envd_enabled": false,
   "publication_requirement": "The AMD64 platform and Execd archives must come from the same Agent DX build. Verify their SHA-256 checksums, manifests, and ELF architecture before packaging.",
   "agent_dx_platform_artifacts": {
-    "source_commit": "18f9c673812dbc988185136011023ea28bdd38f7",
-    "publication": "https://buildkite.com/agent-dx/agent-dx/builds/280",
-    "platform_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261113115925-18f9c673812d/linux/amd64/adx-release.tar.gz",
-    "platform_sha256": "97adc6387798b27c3a38630cc48958fe599baa998f250ad8480dfc565e9824df",
-    "execd_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261113115925-18f9c673812d/linux/amd64/adx-execd.tar.gz",
-    "execd_sha256": "d258652483dd7c0f97d4d17524a47514529509d58a2adf87291ed0601980c7e4",
+    "source_commit": "4104c42e7783f109db98bc48bf4c87312325189a",
+    "publication": "https://buildkite.com/agent-dx/agent-dx/builds/288",
+    "platform_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261117235108-4104c42e7783/linux/amd64/adx-release.tar.gz",
+    "platform_sha256": "7ca3a7e7e36387553d8b0f22eadc37e3b950a1c712412ffd39b12c91cef5a9a7",
+    "execd_url": "https://agent-dx.obs.cn-southwest-2.myhuaweicloud.com/adx/daily/20261117235108-4104c42e7783/linux/amd64/adx-execd.tar.gz",
+    "execd_sha256": "bc073cceac7c09317ede57110ccbb93522177cba02f24a2ef79ba593c0920fa5",
     "status": "Verified manifest contents, ELF architecture, and matching static Execd binaries."
   }
 }

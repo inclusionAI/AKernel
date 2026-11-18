@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Memory-only admission defaults survive standalone configuration preparation."""
+
+import importlib.util
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location(
+    "prepare_adx_config_pressure", ROOT / "builder/scripts/prepare-adx-config.py"
+)
+CONFIG = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CONFIG)
+DEFAULT_PRESSURE = {"memory_enabled": True, "disk_enabled": False}
+
+
+class PressureConfigTest(unittest.TestCase):
+    def test_standalone_enables_only_memory_pressure(self):
+        deployment = yaml.safe_load((ROOT / "builder/config/adx-standalone.yaml").read_text())
+        node = deployment["service_overrides"]["adxlet"]["config"]
+        self.assertEqual(node.get("pressure"), DEFAULT_PRESSURE)
+
+    def test_preparation_preserves_memory_only_defaults(self):
+        for pvm in (False, True):
+            for trace in (False, True):
+                with self.subTest(pvm=pvm, trace=trace), tempfile.TemporaryDirectory() as directory:
+                    destination = Path(directory) / "prepared.yaml"
+                    with patch.dict(os.environ, {"ENABLE_TRACE": str(trace).lower()}):
+                        CONFIG.configure(
+                            ROOT / "builder/config/adx-standalone.yaml",
+                            destination, None, "unused", pvm=pvm,
+                        )
+                    prepared = yaml.safe_load(destination.read_text())
+                    node = prepared["service_overrides"]["adxlet"]["config"]
+                    self.assertEqual(node.get("pressure"), DEFAULT_PRESSURE)
+
+    def test_preparation_preserves_operator_pressure_policy(self):
+        policy = {
+            "memory_enabled": False,
+            "disk_enabled": False,
+            "thresholds": {"memory_high_percent": 95, "memory_low_percent": 85},
+        }
+        deployment = yaml.safe_load((ROOT / "builder/config/adx-standalone.yaml").read_text())
+        deployment["service_overrides"]["adxlet"]["config"]["pressure"] = policy
+        with tempfile.TemporaryDirectory() as directory:
+            source, destination = Path(directory) / "source.yaml", Path(directory) / "prepared.yaml"
+            source.write_text(yaml.safe_dump(deployment))
+            with patch.dict(os.environ, {"ENABLE_TRACE": "true"}):
+                CONFIG.configure(source, destination, None, "unused", pvm=True)
+            prepared = yaml.safe_load(destination.read_text())
+        self.assertEqual(prepared["service_overrides"]["adxlet"]["config"]["pressure"], policy)
+
+
+if __name__ == "__main__":
+    unittest.main()
