@@ -42,6 +42,8 @@ juicefs_cache_large_write="true"
 checkpoint_storage_host_path=""
 checkpoint_storage_existing_claim=""
 enable_runc_override=""
+enable_ascend_override=""
+mount_ascend_queue_schedule_override=""
 schedule_placement_policy_override=""
 grafana_public_access_override=""
 grafana_admin_password_override=""
@@ -174,6 +176,16 @@ while [[ $# -gt 0 ]]; do
       ;;
     --enable-runc)
       enable_runc_override="$2"
+      shift 2
+      ;;
+    --enable-ascend)
+      [[ $# -ge 2 && "$2" != --* ]] || die "$1 requires a value"
+      enable_ascend_override="$2"
+      shift 2
+      ;;
+    --mount-ascend-queue-schedule)
+      [[ $# -ge 2 && "$2" != --* ]] || die "$1 requires a value"
+      mount_ascend_queue_schedule_override="$2"
       shift 2
       ;;
     --schedule-placement-policy)
@@ -354,6 +366,9 @@ if [[ ! "${sandbox_memory_total_reserve}" =~ ^0*[1-9][0-9]*(B|KiB|MiB|GiB|TiB)?$
   die "SANDBOX_MEMORY_TOTAL_RESERVE must be positive whole bytes or an integer with B/KiB/MiB/GiB/TiB"
 fi
 set_or_prompt enable_runc "Enable the optional runc runtime (true/false)" "false" "${enable_runc_override}"
+set_or_prompt enable_ascend "Enable Ascend on labeled runc workers (true/false)" "false" "${enable_ascend_override}"
+set_or_prompt mount_ascend_queue_schedule "Mount FlowGW queue directories on Ascend workers (true/false)" \
+  "false" "${mount_ascend_queue_schedule_override}"
 set_or_prompt schedule_placement_policy \
   "YuanRong schedule placement policy (binpack/spread)" "spread" \
   "${schedule_placement_policy_override}"
@@ -368,6 +383,14 @@ install_monitor="$(normalize_bool "${install_monitor}")"
 install_dragonfly="$(normalize_bool "${install_dragonfly}")"
 sandbox_memory_limit_enabled="$(normalize_bool "${sandbox_memory_limit_enabled}")"
 enable_runc="$(normalize_bool "${enable_runc}")"
+enable_ascend="$(normalize_bool "${enable_ascend}")"
+mount_ascend_queue_schedule="$(normalize_bool "${mount_ascend_queue_schedule}")"
+if [[ "${enable_ascend}" == true && "${enable_runc}" != true ]]; then
+  die "ENABLE_ASCEND=true requires ENABLE_RUNC=true"
+fi
+if [[ "${mount_ascend_queue_schedule}" == true && "${enable_ascend}" != true ]]; then
+  die "MOUNT_ASCEND_QUEUE_SCHEDULE=true requires ENABLE_ASCEND=true"
+fi
 schedule_placement_policy="$(normalize_schedule_placement_policy "${schedule_placement_policy}")"
 grafana_public_access="$(normalize_bool "${grafana_public_access}")"
 
@@ -467,6 +490,8 @@ chunk_db_size     = "${chunk_db_size}"
 sandbox_memory_limit_enabled = ${sandbox_memory_limit_enabled}
 sandbox_memory_total_reserve = "${sandbox_memory_total_reserve}"
 enable_runc       = ${enable_runc}
+enable_ascend     = ${enable_ascend}
+mount_ascend_queue_schedule = ${mount_ascend_queue_schedule}
 schedule_placement_policy = "${schedule_placement_policy}"
 EOF
     ;;
@@ -515,6 +540,8 @@ chunk_db_size     = "${chunk_db_size}"
 sandbox_memory_limit_enabled = ${sandbox_memory_limit_enabled}
 sandbox_memory_total_reserve = "${sandbox_memory_total_reserve}"
 enable_runc       = ${enable_runc}
+enable_ascend     = ${enable_ascend}
+mount_ascend_queue_schedule = ${mount_ascend_queue_schedule}
 schedule_placement_policy = "${schedule_placement_policy}"
 EOF
     ;;
@@ -541,6 +568,7 @@ CHUNK_DB_SIZE=${chunk_db_size}
 SANDBOX_MEMORY_LIMIT_ENABLED=${sandbox_memory_limit_enabled}
 SANDBOX_MEMORY_TOTAL_RESERVE=${sandbox_memory_total_reserve}
 AKERNEL_ENABLE_RUNC=${enable_runc}
+AKERNEL_ENABLE_ASCEND=${enable_ascend}
 SCHEDULE_PLACEMENT_POLICY=${schedule_placement_policy}
 EOF
 

@@ -28,8 +28,10 @@ TLS regression coverage; the SDK README owns the detailed contract.
 Creation-time network policies and atomic runtime replacement support
 unrestricted networking, blocking new flows except the control-plane and
 published sandbox-port routes, or denying exact and leading-wildcard DNS names.
-Experimental whole-device NVIDIA GPU requests require runsc. Configurable
-writable-storage requests are supported by runsc and Firecracker.
+Experimental whole-device NVIDIA GPU requests support runsc or runc on
+Linux/amd64. Physical Ascend 310P and 910 A2/A3 requests require the opt-in
+Ascend and runc payloads on Linux/amd64. Configurable writable-storage
+requests are supported by runsc and Firecracker.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -179,7 +181,7 @@ Firecracker image payload also excludes virtiofsd.
 
 The sandboxd submodule's runtime manifest is the source of truth for the gVisor, runc, and Firecracker releases used by both sandboxd E2E and AKernel packaging. Test an unreleased runtime by checking out the sandboxd commit that pins it rather than overriding manifest fields from the AKernel build. Keep sandboxd's pooled-TAP contract and the matching gVisor compatibility patches validated together when upgrading.
 
-Native Linux/arm64 builds support the `execd` runtime profile with runsc and optional runc. Set `AKERNEL_TARGETARCH=arm64`, `AKERNEL_ENABLE_KATA=false`, and `AKERNEL_ENABLE_FIRECRACKER=false`; use `AKERNEL_ENABLE_RUNC=true` to include runc. ARM64 requires explicit ADX platform and Execd archive URL/checksum pairs matching its architecture, and rejects VM payloads and NVIDIA GPU requests. Builds require Docker BuildKit. The target precedence is explicit `AKERNEL_TARGETARCH`, then a supported single-platform `DOCKER_DEFAULT_PLATFORM`, then the stable `amd64` default; never infer the builder's architecture from the Docker client's host. Explicit runtime flags override the selected deployment profile, which overrides defaults. Validate the merged flags, release pins, and URL/checksum override pairs before either Docker build.
+Native Linux/arm64 builds support the `execd` runtime profile with runsc and optional runc. Set `AKERNEL_TARGETARCH=arm64`, `AKERNEL_ENABLE_KATA=false`, and `AKERNEL_ENABLE_FIRECRACKER=false`; use `AKERNEL_ENABLE_RUNC=true` to include runc. ARM64 requires explicit ADX platform and Execd archive URL/checksum pairs matching its architecture, with VM and accelerator payloads disabled. Builds require Docker BuildKit. The target precedence is explicit `AKERNEL_TARGETARCH`, then a supported single-platform `DOCKER_DEFAULT_PLATFORM`, then the stable `amd64` default; never infer the builder's architecture from the Docker client's host. Explicit runtime flags override the selected deployment profile, which overrides defaults. Validate the merged flags, release pins, and URL/checksum override pairs before either Docker build.
 
 The build selects architecture-matched gVisor and runc pins from the sandboxd manifest and distill-fs pins from `builder/distill-fs-versions.env`, explicitly sets both Docker build platforms, and passes the target architecture to sandboxd compilation. Check downloaded executable ELF headers against the target architecture with `builder/scripts/verify-elf-arch.sh`; checksum verification, manifest claims, or successful execution under emulation do not establish architecture. Keep the ADX platform and Execd archives from the same release, and the collector archive checksums synchronized with `OTELCOL_CONTRIB_VERSION`. Collector URL overrides require a matching checksum. `make build-helper-test` covers build arguments and ELF validation without Docker builds.
 
@@ -259,7 +261,7 @@ Terraform profiles keep it disabled by default. Cloud opt-in uses
 `SANDBOX_MEMORY_LIMIT_ENABLED` and `SANDBOX_MEMORY_TOTAL_RESERVE`. Qualify cgroup
 v2 and effective memory (host MemTotal clipped by visible ancestor limits)
 above the reserve with room for sandbox requests before enabling the policy.
-The bundled standalone ADX profile retains its `auto` resource source, which
+The bundled standalone ADX profile defaults to the `auto` resource source, which
 does not guarantee scheduling capacity follows the sandbox parent ceiling.
 Operators enabling the policy must select and qualify a compatible
 `resource_source`, including memory capacity, allocation/release accounting and
@@ -396,9 +398,16 @@ direct configuration, build an image with `AKERNEL_ENABLE_RUNC=true`, then use
 `AKERNEL_ENABLE_RUNC=true` for standalone,
 `node.config.sandboxd.enableRunc=true` for Helm, or `enable_runc=true` for
 Terraform. Runc uses the host kernel and therefore has a different isolation
-boundary from runsc. It does not support experimental GPU or explicit
-`storage_mb` requests. Its optional `enableKVM` extra configuration requires a
-usable `/dev/kvm` device.
+boundary from runsc. Explicit `storage_mb` requests use runsc or Firecracker.
+Runc's optional `enableKVM` extra configuration requires a usable `/dev/kvm`
+device.
+
+Ascend packaging requires `AKERNEL_ENABLE_RUNC=true` and
+`AKERNEL_ENABLE_ASCEND=true`. Keep the adapter archive checksum, amd64 ELF
+check, and sandboxd-owned mount profile intact. Kubernetes workers require
+the Linux/amd64 Ascend placement label and read-only driver mounts. Standalone
+uses the sandboxd resource socket only on Ascend opt-in so ADX can discover NPU
+inventory. See [accelerator deployment](deploy/README.md#accelerator-workers).
 
 Helm prepares OverlayFS and EROFS before starting an enabled runc node. Preserve
 the already-registered path without requiring module files; loading otherwise

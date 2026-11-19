@@ -65,6 +65,30 @@ class ConfigureTest(unittest.TestCase):
     def reset_profile(self):
         shutil.rmtree(self.profile, ignore_errors=True)
 
+    def test_ascend_options_are_saved_for_the_build_and_both_terraform_profiles(self):
+        for vendor in ("aliyun", "huaweicloud"):
+            with self.subTest(vendor=vendor):
+                self.reset_profile()
+                self.generate(
+                    "--enable-runc", "true", "--enable-ascend", "true",
+                    "--mount-ascend-queue-schedule", "true", vendor=vendor,
+                )
+                config = (self.profile / "config.env").read_text()
+                variables = (self.profile / "terraform.tfvars").read_text()
+                self.assertIn("AKERNEL_ENABLE_ASCEND=true\n", config)
+                for name in ("enable_runc", "enable_ascend", "mount_ascend_queue_schedule"):
+                    self.assertRegex(variables, rf"(?m)^{name}\s*=\s*true$")
+
+    def test_ascend_options_require_complete_profile_before_writing(self):
+        for settings, message in (
+            (("--enable-ascend", "true"), "ENABLE_ASCEND=true requires ENABLE_RUNC=true"),
+            (("--mount-ascend-queue-schedule", "true"), "requires ENABLE_ASCEND=true"),
+        ):
+            with self.subTest(settings=settings):
+                result = self.generate(*settings, success=False)
+                self.assertIn(message, result.stderr)
+                self.assertFalse(self.profile.exists())
+
     def test_new_profile_modes_and_dragonfly_install_are_independent(self):
         enterprise = "example.cn-hangzhou.cr.aliyuncs.com/team/all-in-one"
         cases = [

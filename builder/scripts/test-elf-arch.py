@@ -3,9 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Test ELF architecture validation without Docker, Linux, or readelf."""
 
+import hashlib
+import io
 from pathlib import Path
 import struct
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -115,6 +118,58 @@ class ELFArchitectureTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("usage:", result.stderr)
+
+
+class AscendAdapterInstallTest(unittest.TestCase):
+    def test_checksum_and_elf_gate_installation(self):
+        installer = Path(__file__).with_name("install-ascend-adapter.sh")
+        bundle = "ascend-oci-adapter_v0.1.0-rc.2_linux_amd64"
+        binary_path = Path("usr/local/libexec/akernel/ascend-oci-adapter")
+        license_paths = (
+            "licenses/ascend-oci-adapter/LICENSE",
+            "licenses/mind-cluster/LICENSE",
+            "licenses/mind-cluster/Third_Party_Open_Source_Software_Notice.md",
+        )
+        for machine, valid_checksum, error in (
+            (62, True, None),
+            (183, True, "ELF machine mismatch"),
+            (62, False, "checksum"),
+        ):
+            with self.subTest(machine=machine, valid_checksum=valid_checksum):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    archive, destination = root / "release.tar.gz", root / "rootfs"
+                    profile = root / "mounts.json"
+                    profile.write_text("{}")
+                    binary = elf_header(machine=machine)
+                    with tarfile.open(archive, "w:gz") as output:
+                        files = {"bin/ascend-oci-adapter": binary}
+                        files.update({path: b"license" for path in license_paths})
+                        for path, content in files.items():
+                            member = tarfile.TarInfo(f"{bundle}/{path}")
+                            member.size = len(content)
+                            output.addfile(member, io.BytesIO(content))
+                    checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    result = subprocess.run(
+                        ["sh", str(installer), archive.as_uri(),
+                         checksum if valid_checksum else "0" * 64,
+                         str(profile), str(destination)],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if error:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(error, result.stderr)
+                        self.assertFalse(destination.exists())
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual((destination / binary_path).read_bytes(), binary)
+                        self.assertEqual((destination / binary_path).stat().st_mode & 0o777, 0o755)
+                        self.assertEqual(
+                            (destination / "etc/akernel/ascend/mounts.json").read_text(),
+                            profile.read_text(),
+                        )
+                        for license_path in license_paths:
+                            self.assertTrue((destination / "opt/akernel" / license_path).is_file())
 
 
 if __name__ == "__main__":

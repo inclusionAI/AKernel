@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Apply PVM, telemetry and mounted checkpoint options to ADX deployments."""
+"""Apply standalone deployment options to ADX configurations."""
 from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 import yaml
 
@@ -50,12 +51,32 @@ def expand_selector(value: str) -> str:
     return "".join(result)
 
 
+def escape_expanded_values(value):
+    """Preserve resolved literal dollars when ADX loads the deployment again."""
+    if isinstance(value, str):
+        return value.replace("$", "$$")
+    if isinstance(value, list):
+        return [escape_expanded_values(item) for item in value]
+    if isinstance(value, dict):
+        return {key: escape_expanded_values(item) for key, item in value.items()}
+    return value
+
+
 def configure(
-    source: Path, destination: Path, mount: Path | None, prefix: str, *, pvm: bool = False,
+    source: Path, destination: Path, mount: Path | None, prefix: str, *,
+    pvm: bool = False, ascend: bool = False,
 ) -> None:
     cfg = yaml.safe_load(source.read_text())
     if not isinstance(cfg, dict):
         raise ValueError("deployment must be a mapping")
+    if ascend:
+        # Compact profile overrides are merged recursively by ADX. Resolve the
+        # profile first so the Auto variant's disk_path can be removed entirely.
+        resolved = subprocess.run(
+            ["/opt/adx/current/bin/adxctl", "--config", str(source), "config", "dump"],
+            check=True, text=True, stdout=subprocess.PIPE,
+        ).stdout
+        cfg = escape_expanded_values(yaml.safe_load(resolved))
     profile_roles = {
         "standalone": ("coordinator", "apiserver", "adxlet", "ingress"),
         "standalone-external-redis": ("coordinator", "apiserver", "adxlet", "ingress"),
@@ -84,6 +105,20 @@ def configure(
         if service.get("config") is None:
             service["config"] = {}
         return service["config"]
+
+    if ascend:
+        # ADX already expanded the role selectors before serializing.
+        nodes = services("adxlet")
+        if len(nodes) != 1:
+            raise ValueError("standalone Ascend requires exactly one adxlet service")
+        node = config(nodes[0])
+        source_config = node.get("resource_source") or {}
+        node.pop("capacity_file", None)
+        node["resource_source"] = {
+            "kind": "sandboxd",
+            "socket": "/var/run/resource.sock",
+            "valid_for_seconds": source_config.get("valid_for_seconds", 30),
+        }
 
     if pvm:
         # Nested PVM cleanup needs a longer RPC budget; guest boot stays unchanged.
@@ -123,8 +158,16 @@ def configure(
                 "OTEL_EXPORTER_OTLP_ENDPOINT": "http://10.88.0.1:4318",
             })
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(yaml.safe_dump(cfg, sort_keys=False))
-    destination.chmod(0o600)
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=destination.parent, delete=False,
+    ) as stream:
+        temporary = Path(stream.name)
+        try:
+            yaml.safe_dump(cfg, stream, sort_keys=False)
+            stream.close()
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -134,8 +177,12 @@ def main() -> None:
     parser.add_argument("--mount", type=Path, default=None)
     parser.add_argument("--prefix", default="akernel/checkpoints")
     parser.add_argument("--pvm", action="store_true", help="use the PVM cleanup RPC budget")
+    parser.add_argument("--ascend", action="store_true", help="read device capacity from sandboxd")
     args = parser.parse_args()
-    configure(args.source, args.destination, args.mount, args.prefix, pvm=args.pvm)
+    configure(
+        args.source, args.destination, args.mount, args.prefix,
+        pvm=args.pvm, ascend=args.ascend,
+    )
 
 
 if __name__ == "__main__":

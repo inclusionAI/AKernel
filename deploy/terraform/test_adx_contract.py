@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 MEMORY_INPUTS = ("sandbox_memory_limit_enabled", "sandbox_memory_total_reserve")
+ASCEND_INPUTS = ("enable_runc", "enable_ascend", "mount_ascend_queue_schedule")
 
 
 def sandboxd_config(values):
@@ -29,38 +30,46 @@ def sandboxd_config(values):
 
 
 @unittest.skipUnless(shutil.which("terraform"), "Terraform is required for template evaluation")
-class SandboxMemoryPolicyValidationTest(unittest.TestCase):
+class CloudWorkerTemplateTest(unittest.TestCase):
     def render(self, provider, inputs):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)
             variables = (ROOT / provider / "variables.tf").read_text()
+            tested_inputs = MEMORY_INPUTS + ASCEND_INPUTS
             blocks = [
                 re.search(rf'(?ms)^variable "{name}" {{.*?^}}', variables).group()
-                for name in MEMORY_INPUTS
+                for name in tested_inputs
             ]
             main = (ROOT / provider / "main.tf").read_text()
             mapping = re.search(
                 r'(?ms)^  core_values = templatefile\("\$\{path.module\}/values-akernel.yaml.tmpl", \{.*?^  \}\)',
                 main,
             ).group()
-            # Keep the production templatefile call and memory-input wiring.
+            # Keep the production templatefile call and worker-input wiring.
             # Other deployment inputs use inert fixtures: no cloud providers,
             # credentials, node pools or Helm releases participate in the plan.
             booleans = {
                 "acr_secret_enabled", "enable_kruise", "install_monitor",
-                "adx_public_service_enabled", "enable_runc", "native_filestore",
+                "adx_public_service_enabled", "native_filestore",
                 "node_home_use_csi_ephemeral", "node_secret_create", "node_image_pull_auto",
             }
 
             def fixture_input(match):
                 key = match.group(1)
-                if key in MEMORY_INPUTS:
+                if key in tested_inputs:
                     return match.group()
                 value = False if key in booleans else ""
                 return f"    {key} = {json.dumps(value)}"
 
             mapping = re.sub(r"(?m)^    (\w+)\s+= .*?$", fixture_input, mapping)
             blocks.append("locals {\n" + mapping + "\n}")
+            checks = [
+                check for check in re.findall(r"(?ms)^    precondition {.*?^    }", main)
+                if "var.enable_ascend" in check and "var.create_cluster" not in check
+            ]
+            self.assertEqual(len(checks), 2)
+            blocks.append('resource "terraform_data" "worker_check" {\n  lifecycle {\n'
+                          + "\n".join(checks) + "\n  }\n}")
             blocks.append('output "rendered" { value = local.core_values }')
             (fixture / "main.tf").write_text("\n".join(blocks))
             shutil.copy2(ROOT / provider / "values-akernel.yaml.tmpl", fixture)
@@ -81,7 +90,7 @@ class SandboxMemoryPolicyValidationTest(unittest.TestCase):
                 cwd=fixture, capture_output=True, text=True, check=True,
             )
             rendered = json.loads(plan.stdout)["planned_values"]["outputs"]["rendered"]["value"]
-            return result, sandboxd_config(rendered)
+            return result, rendered
 
     def test_cloud_defaults_and_explicit_memory_policy_overrides(self):
         for provider in ("aliyun", "huaweicloud"):
@@ -92,8 +101,9 @@ class SandboxMemoryPolicyValidationTest(unittest.TestCase):
                 ({"sandbox_memory_limit_enabled": False, "sandbox_memory_total_reserve": "2GiB"}, False, "2GiB"),
             ):
                 with self.subTest(provider=provider, inputs=inputs):
-                    result, config = self.render(provider, inputs)
+                    result, values = self.render(provider, inputs)
                     self.assertEqual(result.returncode, 0, result.stderr)
+                    config = sandboxd_config(values)
                     resource = config["plugin"]["resource"]
                     self.assertEqual(resource["memory_limit"], {"enabled": enabled, "total_reserve": reserve})
                     self.assertIs(resource["memory_limit"]["enabled"], enabled)
@@ -109,6 +119,29 @@ class SandboxMemoryPolicyValidationTest(unittest.TestCase):
                     result, _ = self.render(provider, {"sandbox_memory_total_reserve": reserve})
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("sandbox_memory_total_reserve", result.stderr)
+
+    def test_ascend_settings_reach_both_charts_and_reject_incomplete_input(self):
+        cases = (
+            ({}, False, False, ""),
+            ({"enable_runc": True, "enable_ascend": True}, True, False, ""),
+            ({"enable_runc": True, "enable_ascend": True, "mount_ascend_queue_schedule": True},
+             True, True, ""),
+            ({"enable_ascend": True}, False, False, "enable_ascend requires enable_runc=true"),
+            ({"mount_ascend_queue_schedule": True}, False, False,
+             "mount_ascend_queue_schedule requires enable_ascend=true"),
+        )
+        for provider in ("aliyun", "huaweicloud"):
+            for inputs, enabled, queue, error in cases:
+                with self.subTest(provider=provider, inputs=inputs):
+                    result, values = self.render(provider, inputs)
+                    if error:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(error, result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn(f"enableAscend: {str(enabled).lower()}\n", values)
+                        self.assertIn(f"mountAscendQueueSchedule: {str(queue).lower()}\n", values)
+                        self.assertIn("# AKERNEL_XPU_ASCEND", values)
 
 
 class GuidedMemoryPolicyTest(unittest.TestCase):

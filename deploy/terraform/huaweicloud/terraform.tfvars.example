@@ -87,6 +87,9 @@ node_image_tag            = "<release-tag>"
 # Optional host-kernel runc runtime. The node image must be built with the
 # matching AKERNEL_ENABLE_RUNC=true profile setting.
 enable_runc = false
+# Opt in only after preparing Linux amd64 Ascend workers and labeling them akernel.io/ascend=true.
+enable_ascend = false
+mount_ascend_queue_schedule = false
 
 # Explicit opt-in after qualifying the actual node image's cgroup v2 mode
 # and effective memory budget; the OS name alone does not establish support.

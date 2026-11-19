@@ -17,6 +17,7 @@ TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
+AKERNEL_ENABLE_ASCEND="${AKERNEL_ENABLE_ASCEND-false}"
 AKERNEL_CONTROL_BIND="${AKERNEL_CONTROL_BIND:-0.0.0.0}"
 AKERNEL_CONTROL_PORT="${AKERNEL_CONTROL_PORT:-443}"
 AKERNEL_DATA_BIND="${AKERNEL_DATA_BIND:-0.0.0.0}"
@@ -32,6 +33,7 @@ DOCKER_PREFIX=()
 CONTAINER_PLATFORM_ARGS=()
 PROXY_RUN_ARGS=()
 GPU_RUN_ARGS=()
+ASCEND_RUN_ARGS=()
 AFS_RUN_ARGS=()
 
 # Colors for output
@@ -185,6 +187,17 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    case "${AKERNEL_ENABLE_ASCEND-false}" in
+        true|false) ;;
+        *)
+            log_error "AKERNEL_ENABLE_ASCEND must be true or false"
+            exit 1
+            ;;
+    esac
+    if [[ "${AKERNEL_ENABLE_ASCEND:-false}" == true && "${AKERNEL_ENABLE_RUNC}" != true ]]; then
+        log_error "AKERNEL_ENABLE_ASCEND=true requires AKERNEL_ENABLE_RUNC=true"
+        exit 1
+    fi
     case "${AKERNEL_FIRECRACKER_BACKEND}" in
         kvm|pvm) ;;
         *)
@@ -327,6 +340,31 @@ configure_gpu() {
     log_info "Enabling NVIDIA GPU access for the AKernel node container"
 }
 
+configure_ascend() {
+    if [[ "${AKERNEL_ENABLE_ASCEND:-false}" != true ]]; then
+        return 0
+    fi
+    bash "${SCRIPT_DIR}/check-ascend-host.sh"
+    if [[ "${DOCKER_CMD}" != docker ]] ||
+        ! [[ "$("${DOCKER_PREFIX[@]}" docker info --format '{{.OSType}}/{{.Architecture}}')" =~ ^linux/(amd64|x86_64)$ ]]; then
+        log_error "Ascend standalone requires a native linux/amd64 Docker engine"
+        exit 1
+    fi
+    if [[ "$(awk '/^[[:space:]]*# AKERNEL_XPU_ASCEND[[:space:]]*$/ { count++ } END { print count+0 }' \
+            "${CONFIG_DIR}/sandboxd_config.toml")" != 1 ]]; then
+        log_error "AKERNEL_ENABLE_ASCEND requires exactly one # AKERNEL_XPU_ASCEND marker in sandboxd_config.toml"
+        exit 1
+    fi
+    ASCEND_RUN_ARGS=(-e AKERNEL_ENABLE_ASCEND=true)
+    local path
+    for path in /usr/local/Ascend/driver /usr/local/dcmi /usr/local/bin/npu-smi; do
+        ASCEND_RUN_ARGS+=(--mount "type=bind,src=${path},dst=${path},readonly")
+    done
+    if [[ -d /var/queue_schedule ]]; then
+        ASCEND_RUN_ARGS+=(--mount "type=bind,src=/var/queue_schedule,dst=/var/queue_schedule,readonly")
+    fi
+}
+
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
     local pvm_config
@@ -416,6 +454,15 @@ configure_network() {
         fi
         sed_args+=(
             -e "s|^[[:space:]]*# AKERNEL_CHUNK_DB_SIZE[[:space:]]*$|chunk_db_size=\"${AKERNEL_CHUNK_DB_SIZE}\"|"
+        )
+    fi
+    if [[ "${AKERNEL_ENABLE_ASCEND:-false}" == true ]]; then
+        sed_args+=(
+            -e '/^[[:space:]]*# AKERNEL_XPU_ASCEND[[:space:]]*$/c\
+[plugin.xpu.ascend]\
+enabled=true\
+adapter="/usr/local/libexec/akernel/ascend-oci-adapter"\
+mount_profile="/etc/akernel/ascend/mounts.json"'
         )
     fi
     if [[ "${AKERNEL_FIRECRACKER_BACKEND}" == pvm ]]; then
@@ -511,6 +558,18 @@ validate_image_capabilities() {
             --format '{{index .Config.Labels "org.akernel.runc.enabled"}}' "${IMAGE}")" != true ]]; then
         log_error "AKERNEL_ENABLE_RUNC requires an image built with the runc payload enabled"
         exit 1
+    fi
+    if [[ "${AKERNEL_ENABLE_ASCEND:-false}" == true ]]; then
+        if [[ "$("${DOCKER_PREFIX[@]}" docker image inspect \
+            --format '{{.Os}}/{{.Architecture}}' "${IMAGE}")" != linux/amd64 ]]; then
+            log_error "Ascend standalone requires a linux/amd64 image"
+            exit 1
+        fi
+        if [[ "$("${DOCKER_PREFIX[@]}" docker image inspect \
+            --format '{{index .Config.Labels "org.akernel.ascend.enabled"}}' "${IMAGE}")" != true ]]; then
+            log_error "AKERNEL_ENABLE_ASCEND requires an image built with the Ascend payload enabled"
+            exit 1
+        fi
     fi
 }
 
@@ -637,6 +696,7 @@ start_node_container() {
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
         "${PROXY_RUN_ARGS[@]}" \
         "${GPU_RUN_ARGS[@]}" \
+        "${ASCEND_RUN_ARGS[@]}" \
         "${AFS_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
         -v "${DATA_DIR}:/home/akernel" \
@@ -760,6 +820,7 @@ main() {
     check_prerequisites
     cleanup_existing
     validate_host_platform
+    configure_ascend
     configure_afs
     ensure_image "${IMAGE}"
     validate_image_capabilities
