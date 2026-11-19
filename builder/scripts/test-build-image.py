@@ -42,23 +42,36 @@ AMBIENT_BUILD_PREFIXES = (
 
 
 class BuildImageTests(unittest.TestCase):
-    def test_e2b_selects_existing_adx_runtime_only_when_requested(self):
-        for enabled, target in (("false", "runtime-execd"), ("true", "runtime-e2b")):
+    def test_runtime_selection_is_forwarded_to_the_node_build(self):
+        for enabled, expected, target in ((None, "execd-envd", "runtime-e2b"),
+                                          ("false", "execd", "runtime-execd"),
+                                          ("true", "execd-envd", "runtime-e2b")):
             with self.subTest(enabled=enabled):
                 result = self.run_helper(AKERNEL_ENABLE_E2B=enabled)
                 self.assertEqual(result.returncode, 0, result.stdout)
-                runtime = self.docker_calls()[-2]
+                runtime, node = self.docker_calls()[-2:]
                 self.assertEqual(runtime[runtime.index("--target") + 1], target)
                 self.assertEqual(self.build_arguments(runtime)["ADX_EXECD_SHA256"], "4" * 64)
+                self.assertEqual(self.build_arguments(node)["AKERNEL_RUNTIME_PROFILE"], expected)
 
-    def test_e2b_requires_explicit_release_pairs_and_valid_switch(self):
+    def test_default_e2b_accepts_builtin_amd64_pins(self):
+        result = self.run_helper(AKERNEL_TARGETARCH="amd64",
+                                 ADX_EXECD_URL=None, ADX_EXECD_SHA256=None,
+                                 ADX_RELEASE_URL=None, ADX_RELEASE_SHA256=None)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        runtime, node = self.docker_calls()
+        self.assertIn("runtime-e2b", runtime)
+        self.assertNotIn("ADX_EXECD_URL", self.build_arguments(runtime))
+        self.assertNotIn("ADX_RELEASE_URL", self.build_arguments(node))
+
+    def test_e2b_rejects_one_sided_overrides_and_invalid_switch(self):
         for changes in ({"AKERNEL_ENABLE_E2B": "yes"},
                         {"AKERNEL_ENABLE_E2B": "true", "ADX_EXECD_URL": None,
                          "ADX_EXECD_SHA256": None},
                         {"AKERNEL_ENABLE_E2B": "true", "ADX_RELEASE_URL": None,
                          "ADX_RELEASE_SHA256": None}):
             with self.subTest(changes=changes):
-                self.assertNotEqual(self.run_helper(**changes).returncode, 0)
+                self.assertNotEqual(self.run_helper(**changes, AKERNEL_TARGETARCH="amd64").returncode, 0)
                 self.assertFalse(self.docker_calls())
 
     def test_gvisor_download_keeps_http11_and_archive_verification(self):
@@ -239,7 +252,7 @@ class BuildImageTests(unittest.TestCase):
         runtime, node = self.docker_calls()
         for call in (runtime, node):
             self.assertEqual(call[:3], ["build", "--platform", "linux/arm64"])
-        self.assertIn("runtime-execd", runtime)
+        self.assertIn("runtime-e2b", runtime)
         self.assertIn("RUNC_VERSION=9.8.7", node)
         self.assertIn("RUNC_RELEASE_BASE_URL=https://example.test/runc", node)
         self.assertIn(f"RUNC_SHA256={'d' * 64}", node)

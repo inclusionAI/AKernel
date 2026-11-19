@@ -2,13 +2,13 @@
 
 The shared `deploy/scripts/build-image.sh` helper builds the runtime rootfs and all-in-one node image for `make build` and `make standalone`. Downloads use official repositories and pinned upstream releases by default.
 
-## Optional E2B runtime
+## Default Execd and envd runtime
 
-The default build still creates AKernel's Execd-only runtime. To package envd,
-select the optional target and provide both archives from the same ADX build:
+On AMD64, `make build` uses the pinned ADX platform and Execd archives.
+The default `execd-envd` profile copies the ADX EROFS into the node image.
+To override the pins, provide both archives from the same ADX build:
 
 ```bash
-AKERNEL_ENABLE_E2B=true \
 ADX_RELEASE_URL="$RELEASE_URL" ADX_RELEASE_SHA256="$RELEASE_SHA256" \
 ADX_EXECD_URL="$EXECD_URL" ADX_EXECD_SHA256="$EXECD_SHA256" \
 make build
@@ -17,22 +17,22 @@ make build
 The selected ADX release must implement E2B compatibility. Its Execd component
 must contain `adx-runtime-rootfs.img`, `envd-manifest.json` and `envd-LICENSE`,
 covered by the component manifest. ADX's split-component CI builds the pinned
-envd by default; standalone ADX source builds require `ADX_ENVD_SOURCE`.
-AKernel still requires explicit archive URL/checksum pairs when enabling E2B,
-including when selecting its default pinned build. Keep the default platform
-and Execd pins aligned with `src/agent-dx`; validate the published manifests
-and archive checksums before updating them. Standard ADX split-component
+envd by default. Standalone ADX source builds require `ADX_ENVD_SOURCE`.
+Keep the default platform and Execd pins aligned with `src/agent-dx`. Validate
+the published manifests and archive checksums before updating them. Standard ADX split-component
 archives use a GNU release target even though Execd itself is a static musl
 executable.
 
-AKernel verifies the archive and component hashes and architecture, then uses
-the ADX EROFS image unchanged as `akernel-runtime-rootfs.img`. It contains Execd,
-envd, bash and the dependencies assembled by ADX. AKernel does not compile envd
-or maintain another copy of its upstream pins. The Node build also checks that
-the platform release and runtime component identify the same commit, target
-and Execd bytes; mismatches fail the build. Provenance and the envd license are
-installed under `/opt/akernel/runtime/metadata/`, with the envd manifest at
-`envd/manifest.json`.
+AKernel verifies the archive and component hashes, extracts the EROFS to check
+both guest binaries' digests and ELF architectures, and copies the original EROFS
+unchanged as `akernel-runtime-rootfs.img`. The Node build verifies the copied
+rootfs and metadata again and requires the platform release and runtime
+component to match on ADX commit, target and Execd digest. The manifests and
+envd license are installed under `/opt/akernel/runtime/metadata/`.
+
+Use `AKERNEL_ENABLE_E2B=false make build` for an Execd-only image. When
+building the Dockerfiles directly for that profile, select `--target runtime-execd`
+for the runtime and pass `--build-arg AKERNEL_RUNTIME_PROFILE=execd` to the node build.
 
 Packaging alone does not enable E2B routes. Supply a reviewed deployment YAML
 through the existing `AKERNEL_ADX_CONFIG` entry point. Keep its current runtime
@@ -77,7 +77,7 @@ Use ADX's E2B deployment instructions for the complete route allowlist, OCI
 capabilities, authentication, TLS/DNS and network isolation configuration.
 In gateway-authenticated mode envd has no guest token: restrict external and
 other-sandbox access to its port to the exact trusted Relay sources. This
-packaging option does not establish those network rules by itself. Use a
+build-time profile does not establish those network rules by itself. Use a
 dedicated matching worker profile and retain old runtime artifacts for existing
 instances and snapshots; building a new image does not migrate them.
 

@@ -37,8 +37,7 @@ COPY ./builder/scripts/prepare-e2b-runtime.py /usr/local/libexec/prepare-e2b-run
 RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
     sh /tmp/apt-get-update.sh && \
     apt-get install -y --no-install-recommends python3 erofs-utils && \
-    python3 /usr/local/libexec/prepare-e2b-runtime.py /opt/adx-execd /output "${TARGETARCH}" && \
-    fsck.erofs /output/akernel-runtime-rootfs.img
+    python3 /usr/local/libexec/prepare-e2b-runtime.py /opt/adx-execd /output "${TARGETARCH}" --verify-guest
 
 FROM ${AKERNEL_RUNTIME_BASE_IMAGE} AS execd-runtime-rootfs
 
@@ -88,10 +87,10 @@ COPY --from=execd-runtime-rootfs / /rootfs
 RUN mkfs.erofs -E noinline_data /akernel-runtime-rootfs.img /rootfs && \
     fsck.erofs /akernel-runtime-rootfs.img
 
-FROM scratch AS runtime-e2b
-COPY --from=e2b-runtime /output/ /
-LABEL org.akernel.runtime.profile="execd-envd"
-
 FROM scratch AS runtime-execd
 COPY --from=execd-erofs-builder /akernel-runtime-rootfs.img /akernel-runtime-rootfs.img
 LABEL org.akernel.runtime.profile="execd"
+
+FROM scratch AS runtime-e2b
+COPY --from=e2b-runtime /output/ /
+LABEL org.akernel.runtime.profile="execd-envd"

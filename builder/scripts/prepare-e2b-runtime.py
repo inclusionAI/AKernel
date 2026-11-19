@@ -8,6 +8,9 @@ import json
 from pathlib import Path
 import re
 import shutil
+import stat
+import subprocess
+import tempfile
 
 
 def sha256(path):
@@ -18,7 +21,21 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def prepare(source, output, architecture):
+def verify_guest(image, architecture, execd_digest, envd_digest):
+    elf_check = Path(__file__).with_name("verify-elf-arch.sh")
+    with tempfile.TemporaryDirectory(prefix="akernel-e2b-rootfs-") as temporary:
+        root = Path(temporary).resolve()
+        subprocess.run(["fsck.erofs", f"--extract={root}", str(image)], check=True, timeout=300)
+        for name, digest in (("adx-execd", execd_digest), ("envd", envd_digest)):
+            path = root / "usr/local/bin" / name
+            if path.resolve() != path or not path.is_file() or not path.stat().st_mode & stat.S_IXUSR:
+                raise ValueError(f"E2B guest binary is missing or invalid: {name}")
+            subprocess.run(["sh", str(elf_check), str(path), architecture], check=True)
+            if sha256(path) != digest:
+                raise ValueError(f"E2B guest binary checksum mismatch: {name}")
+
+
+def prepare(source, output, architecture, *, verify_guest_binaries=False):
     machines = {"amd64": "x86_64", "arm64": "aarch64"}
     if architecture not in machines:
         raise ValueError("unsupported runtime architecture")
@@ -42,6 +59,9 @@ def prepare(source, output, architecture):
             or not re.fullmatch(r"[0-9a-f]{40}", envd.get("revision", ""))
             or not isinstance(envd.get("version"), str) or not envd["version"].strip()):
         raise ValueError("envd provenance or architecture is invalid")
+    if verify_guest_binaries:
+        verify_guest(source / "adx-runtime-rootfs.img", architecture,
+                     manifest["files"]["adx-execd"], envd["sha256"])
     output.mkdir(parents=True, exist_ok=False)
     metadata = output / "runtime-metadata"
     (metadata / "envd").mkdir(parents=True)
@@ -56,5 +76,6 @@ if __name__ == "__main__":
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("architecture", choices=("amd64", "arm64"))
+    parser.add_argument("--verify-guest", action="store_true")
     args = parser.parse_args()
-    prepare(args.source, args.output, args.architecture)
+    prepare(args.source, args.output, args.architecture, verify_guest_binaries=args.verify_guest)
