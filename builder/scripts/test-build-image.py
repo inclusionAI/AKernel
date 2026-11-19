@@ -43,7 +43,7 @@ AMBIENT_BUILD_PREFIXES = (
 
 class BuildImageTests(unittest.TestCase):
     def test_runtime_selection_is_forwarded_to_the_node_build(self):
-        for enabled, expected, target in ((None, "execd-envd", "runtime-e2b"),
+        for enabled, expected, target in ((None, "execd", "runtime-execd"),
                                           ("false", "execd", "runtime-execd"),
                                           ("true", "execd-envd", "runtime-e2b")):
             with self.subTest(enabled=enabled):
@@ -54,15 +54,22 @@ class BuildImageTests(unittest.TestCase):
                 self.assertEqual(self.build_arguments(runtime)["ADX_EXECD_SHA256"], "4" * 64)
                 self.assertEqual(self.build_arguments(node)["AKERNEL_RUNTIME_PROFILE"], expected)
 
-    def test_default_e2b_accepts_builtin_amd64_pins(self):
-        result = self.run_helper(AKERNEL_TARGETARCH="amd64",
-                                 ADX_EXECD_URL=None, ADX_EXECD_SHA256=None,
-                                 ADX_RELEASE_URL=None, ADX_RELEASE_SHA256=None)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        runtime, node = self.docker_calls()
-        self.assertIn("runtime-e2b", runtime)
-        self.assertNotIn("ADX_EXECD_URL", self.build_arguments(runtime))
-        self.assertNotIn("ADX_RELEASE_URL", self.build_arguments(node))
+    def test_amd64_default_uses_e2b_only_with_builtin_pins(self):
+        for overrides, target, profile in (
+                ((), "runtime-e2b", "execd-envd"),
+                (("ADX_RELEASE",), "runtime-execd", "execd"),
+                (("ADX_EXECD",), "runtime-execd", "execd"),
+                (("ADX_RELEASE", "ADX_EXECD"), "runtime-execd", "execd")):
+            with self.subTest(overrides=overrides):
+                defaults = {f"{name}_{field}": None for name in ("ADX_RELEASE", "ADX_EXECD")
+                            if name not in overrides for field in ("URL", "SHA256")}
+                result = self.run_helper(AKERNEL_TARGETARCH="amd64", **defaults)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                runtime, node = self.docker_calls()[-2:]
+                self.assertIn(target, runtime)
+                self.assertEqual(self.build_arguments(node)["AKERNEL_RUNTIME_PROFILE"], profile)
+                self.assertEqual("ADX_EXECD_URL" in self.build_arguments(runtime), "ADX_EXECD" in overrides)
+                self.assertEqual("ADX_RELEASE_URL" in self.build_arguments(node), "ADX_RELEASE" in overrides)
 
     def test_e2b_rejects_one_sided_overrides_and_invalid_switch(self):
         for changes in ({"AKERNEL_ENABLE_E2B": "yes"},
@@ -252,7 +259,7 @@ class BuildImageTests(unittest.TestCase):
         runtime, node = self.docker_calls()
         for call in (runtime, node):
             self.assertEqual(call[:3], ["build", "--platform", "linux/arm64"])
-        self.assertIn("runtime-e2b", runtime)
+        self.assertIn("runtime-execd", runtime)
         self.assertIn("RUNC_VERSION=9.8.7", node)
         self.assertIn("RUNC_RELEASE_BASE_URL=https://example.test/runc", node)
         self.assertIn(f"RUNC_SHA256={'d' * 64}", node)

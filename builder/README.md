@@ -4,11 +4,14 @@ The shared `deploy/scripts/build-image.sh` helper builds the runtime rootfs and 
 
 ## Default Execd and envd runtime
 
-On AMD64, `make build` uses the pinned ADX platform and Execd archives.
-The default `execd-envd` profile copies the ADX EROFS into the node image.
-To override the pins, provide both archives from the same ADX build:
+On AMD64, `make build` with the built-in ADX pins defaults to `execd-envd`
+and copies the ADX EROFS into the node image. With custom archive inputs or on
+ARM64, the build helper defaults to Execd-only. To build `execd-envd` with
+custom inputs, explicitly select E2B and provide both archives from the same
+ADX build:
 
 ```bash
+AKERNEL_ENABLE_E2B=true \
 ADX_RELEASE_URL="$RELEASE_URL" ADX_RELEASE_SHA256="$RELEASE_SHA256" \
 ADX_EXECD_URL="$EXECD_URL" ADX_EXECD_SHA256="$EXECD_SHA256" \
 make build
@@ -19,20 +22,25 @@ must contain `adx-runtime-rootfs.img`, `envd-manifest.json` and `envd-LICENSE`,
 covered by the component manifest. ADX's split-component CI builds the pinned
 envd by default. Standalone ADX source builds require `ADX_ENVD_SOURCE`.
 Keep the default platform and Execd pins aligned with `src/agent-dx`. Validate
-the published manifests and archive checksums before updating them. Standard ADX split-component
-archives use a GNU release target even though Execd itself is a static musl
-executable.
+the published manifests and archive checksums before updating them. Standard
+ADX split-component archives use a GNU release target even though Execd itself
+is a static musl executable.
 
 AKernel verifies the archive and component hashes, extracts the EROFS to check
 both guest binaries' digests and ELF architectures, and copies the original EROFS
 unchanged as `akernel-runtime-rootfs.img`. The Node build verifies the copied
 rootfs and metadata again and requires the platform release and runtime
-component to match on ADX commit, target and Execd digest. The manifests and
-envd license are installed under `/opt/akernel/runtime/metadata/`.
+component to match on ADX commit, target and Execd digest. When the platform
+manifest also declares EROFS and envd artifact hashes, the Node build checks
+those too. The manifests and envd license are installed under
+`/opt/akernel/runtime/metadata/`.
 
 Use `AKERNEL_ENABLE_E2B=false make build` for an Execd-only image. When
 building the Dockerfiles directly for that profile, select `--target runtime-execd`
 for the runtime and pass `--build-arg AKERNEL_RUNTIME_PROFILE=execd` to the node build.
+
+For existing runsc checkpoints, follow the [runtime pinning and upgrade guide](../deploy/docs/runtime-rootfs-pinning.md#moving-from-the-execd-only-default)
+before replacing workers that still need to restore from the old EROFS.
 
 Packaging alone does not enable E2B routes. Supply a reviewed deployment YAML
 through the existing `AKERNEL_ADX_CONFIG` entry point. Keep its current runtime

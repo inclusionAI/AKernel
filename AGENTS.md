@@ -150,11 +150,12 @@ override on `make build` does not update the profile consumed by `make push`.
 The build creates only the selected image reference; it does not add a second
 `akernel-all-in-one` alias. `make push` pushes that selected reference directly.
 
-The build helper performs two Docker builds. `builder/runtime.Dockerfile`
-defaults to `execd-envd` and reuses the pinned ADX Execd archive's EROFS,
-manifest and license. Overrides for this profile require matching platform
-and Execd URL/checksum pairs. `AKERNEL_ENABLE_E2B=false` selects the Execd-only
-build. Keep the default pins aligned with the `src/agent-dx` gitlink and
+The build helper performs two Docker builds. The built-in AMD64 ADX pins use
+`execd-envd` by default and reuse the ADX archive's EROFS, manifest and license.
+ARM64 and custom ADX archives default to Execd-only. Set
+`AKERNEL_ENABLE_E2B=true` with matching platform and Execd URL/checksum pairs to
+select `execd-envd` for custom inputs. `AKERNEL_ENABLE_E2B=false` selects the
+Execd-only build. Keep the default pins aligned with the `src/agent-dx` gitlink and
 verify the published manifests. Keep the guest binary checks and the Node
 artifact, commit, architecture and Execd digest checks. E2B activation still
 uses explicit deployment configuration. See `builder/README.md`.

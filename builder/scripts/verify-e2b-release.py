@@ -17,16 +17,17 @@ def verify(component_path, release_path, *, runtime=None, architecture=None):
     if any(not component.get(key) or component[key] != release.get(key)
            for key in ("commit", "target")):
         raise ValueError("E2B runtime and ADX platform must come from the same build and architecture")
-    if component["files"]["adx-execd"] != release.get("files", {}).get("runtime/adx-execd"):
+    release_files = release.get("files", {})
+    if component["files"]["adx-execd"] != release_files.get("runtime/adx-execd"):
         raise ValueError("E2B runtime and platform Execd checksums differ")
     if runtime is not None:
         machine = {"amd64": "x86_64", "arm64": "aarch64"}[architecture]
         if component["target"] != f"{machine}-unknown-linux-gnu":
             raise ValueError("E2B runtime does not match the node architecture")
-        for name, path in (
-            ("adx-runtime-rootfs.img", runtime / "akernel-runtime-rootfs.img"),
-            ("envd-manifest.json", component_path.parent / "envd/manifest.json"),
-            ("envd-LICENSE", component_path.parent / "envd/LICENSE"),
+        for name, path, release_name in (
+            ("adx-runtime-rootfs.img", runtime / "akernel-runtime-rootfs.img", "runtime/adx-runtime-rootfs.img"),
+            ("envd-manifest.json", component_path.parent / "envd/manifest.json", "runtime/envd/manifest.json"),
+            ("envd-LICENSE", component_path.parent / "envd/LICENSE", "runtime/envd/LICENSE"),
         ):
             if path.is_symlink() or not path.is_file():
                 raise ValueError(f"E2B runtime artifact is missing or invalid: {name}")
@@ -34,8 +35,11 @@ def verify(component_path, release_path, *, runtime=None, architecture=None):
             with path.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
                     digest.update(block)
-            if digest.hexdigest() != component["files"].get(name):
+            checksum = digest.hexdigest()
+            if checksum != component["files"].get(name):
                 raise ValueError(f"E2B runtime artifact checksum mismatch: {name}")
+            if release_name in release_files and checksum != release_files[release_name]:
+                raise ValueError(f"E2B platform release checksum mismatch: {release_name}")
 
 
 if __name__ == "__main__":

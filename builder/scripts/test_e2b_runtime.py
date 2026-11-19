@@ -79,6 +79,26 @@ class E2bRuntimeTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "runtime artifact checksum mismatch"):
                     verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
                 artifact.write_bytes(original)
+
+        for path, component_name, release_name in (
+                ("akernel-runtime-rootfs.img", "adx-runtime-rootfs.img", "runtime/adx-runtime-rootfs.img"),
+                ("runtime-metadata/envd/manifest.json", "envd-manifest.json", "runtime/envd/manifest.json"),
+                ("runtime-metadata/envd/LICENSE", "envd-LICENSE", "runtime/envd/LICENSE")):
+            with self.subTest(release_name=release_name):
+                artifact = self.output / path
+                original = artifact.read_bytes()
+                release["files"][release_name] = component["files"][component_name]
+                release_path.write_text(json.dumps(release))
+                verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
+                artifact.write_bytes(b"unexpected carrier artifact")
+                component["files"][component_name] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+                manifest_path.write_text(json.dumps(component))
+                with self.assertRaisesRegex(ValueError, "platform release checksum mismatch"):
+                    verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
+                artifact.write_bytes(original)
+                component["files"][component_name] = release["files"][release_name]
+                manifest_path.write_text(json.dumps(component))
+
         manifest_path.unlink()
         with self.assertRaises(FileNotFoundError):
             verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")

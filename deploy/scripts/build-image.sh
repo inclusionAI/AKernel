@@ -21,7 +21,6 @@ adx_release_url="${ADX_RELEASE_URL:-}"
 adx_release_sha256="${ADX_RELEASE_SHA256:-}"
 adx_execd_url="${ADX_EXECD_URL:-}"
 adx_execd_sha256="${ADX_EXECD_SHA256:-}"
-enable_e2b="${AKERNEL_ENABLE_E2B-true}"
 otelcol_contrib_url="${OTELCOL_CONTRIB_URL:-}"
 otelcol_contrib_sha256="${OTELCOL_CONTRIB_SHA256:-}"
 # Download routing is caller-local, independent of cloud profiles.
@@ -315,6 +314,12 @@ validate_override ADX_RELEASE "${adx_release_url}" "${adx_release_sha256}"
 validate_override ADX_EXECD "${adx_execd_url}" "${adx_execd_sha256}"
 if [[ "${target_arch}" == arm64 && ( -z "${adx_release_url}" || -z "${adx_execd_url}" ) ]]; then
   die "linux/arm64 requires architecture-matched ADX_RELEASE and ADX_EXECD URL/checksum pairs"
+fi
+# Keep the existing Execd build for callers supplying their own ADX archives.
+enable_e2b="${AKERNEL_ENABLE_E2B-false}"
+if [[ -z "${AKERNEL_ENABLE_E2B+x}" && "${target_arch}" == amd64 &&
+      -z "${adx_release_url}" && -z "${adx_execd_url}" ]]; then
+  enable_e2b=true
 fi
 case "${enable_e2b}" in
   false) runtime_target=runtime-execd; runtime_profile=execd ;;
