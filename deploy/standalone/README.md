@@ -20,7 +20,7 @@ source .akernel/standalone/data/sdk-env.sh
 
 `make standalone` checks the host and Docker daemon, initializes `src/sandboxd` if missing, verifies its revision against the parent gitlink, builds the current source, and starts that exact image through `start.sh`. It waits for the node and gateway health checks before printing the SDK address and environment-file path. It does not need a cloud profile or registry push.
 
-The source entry point selects the Docker daemon's native architecture and uses the `rrt` profile with runsc. Kata, Firecracker, runc, and GPU access are disabled unless explicitly enabled on a supported platform. It builds a unique local image tag and records source revision, image, and container identities in `source-state.json` under the data directory. Local AKernel edits are built and marked `.dirty` in the recorded revision. An initialized sandboxd checkout must be clean and match the gitlink; the helper does not fetch, switch, or overwrite it.
+The source entry point selects the Docker daemon's native architecture and uses the `rrt` profile with runsc. Kata, Firecracker, runc, and accelerator access are disabled unless explicitly enabled on a supported platform. It builds a unique local image tag and records source revision, image, and container identities in `source-state.json` under the data directory. Local AKernel edits are built and marked `.dirty` in the recorded revision. An initialized sandboxd checkout must be clean and match the gitlink; the helper does not fetch, switch, or overwrite it.
 
 The default source data directory is `.akernel/standalone/data`, including the signing seed, 24-hour SDK token, generated service configuration, `source-state.json`, and `sdk-env.sh`. The environment file reads the token from its protected file when sourced; commands print credential paths rather than token values. The default local state directory is ignored by Git; keep custom data directories out of version control too.
 
@@ -106,13 +106,32 @@ Then use `Sandbox(runtime="runc")`. Runc uses the Docker host kernel, including 
 
 For the existing-image launcher, both build inclusion and runtime enablement are required: select an image built with `AKERNEL_ENABLE_RUNC=true` and pass the same flag to `start.sh`.
 
-### Kata, Firecracker, and GPU
+### Kata, Firecracker, and accelerators
 
 On Linux/amd64, opt into the VM payloads with `make standalone AKERNEL_ENABLE_KATA=true` or `make standalone AKERNEL_ENABLE_FIRECRACKER=true`. Both require usable `/dev/kvm` and hardware or nested virtualization on the Docker host. Firecracker also requires compatible host storage capabilities; see the [deployment guide](../README.md#guided-deployment) for its I/O policy and checkpoint compatibility.
 
-Experimental NVIDIA GPU sandboxes require runsc, a compatible host NVIDIA driver, and NVIDIA Container Toolkit. Enable node GPU access with `AKERNEL_ENABLE_GPU=true` on a supported Linux/amd64 host. `AKERNEL_GPU_DEVICES` selects Docker's `--gpus` device subset. The image provides `nvidia-container-cli`, not a host driver.
+Experimental NVIDIA GPU sandboxes support runsc or runc on Linux/amd64 with a
+compatible host NVIDIA driver and NVIDIA Container Toolkit. Enable node access
+with `AKERNEL_ENABLE_GPU=true`. `AKERNEL_GPU_DEVICES` selects Docker's `--gpus`
+device subset. Runsc also requires gVisor nvproxy compatibility. The node
+image includes the NVIDIA runtime hook used by runc.
 
-Linux/arm64 supports runsc and optional runc, with Kata, Firecracker, and GPU access unavailable. The source launcher selects the native daemon architecture rather than a client-side `DOCKER_DEFAULT_PLATFORM`; cross-architecture emulation is not supported. Use `make build` for image-only cross builds or the optional AMD64 Python runtime profile; launch existing images on a matching supported daemon.
+On a native Linux/amd64 Docker host with mounted Ascend driver components,
+build and launch a runc profile for physical Ascend 310P or 910 A2/A3 devices:
+
+```bash
+make standalone AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true \
+  AKERNEL_RUNC_RESOLV_CONF=/absolute/path/to/approved-resolv.conf
+```
+
+For `start.sh` with an existing image, enable these same flags at build and
+launch. The launcher checks the image platform and capability labels before
+creating the profile or writing credentials. Ascend mode passes through
+`/usr/local/Ascend/driver`, `/usr/local/dcmi`, and `/usr/local/bin/npu-smi`
+read-only. It also mounts FlowGW's `/var/queue_schedule` read-only when present.
+Custom sandboxd templates need exactly one `# AKERNEL_XPU_ASCEND` marker.
+
+Linux/arm64 supports runsc and optional runc, with Kata, Firecracker, and accelerator access unavailable. The source launcher selects the native daemon architecture rather than a client-side `DOCKER_DEFAULT_PLATFORM`; cross-architecture emulation is not supported. Use `make build` for image-only cross builds or the optional AMD64 Python runtime profile; launch existing images on a matching supported daemon.
 
 See the maintained [runtime selection example](../../sdk/python/examples/sandbox_runtime.py) for client usage.
 

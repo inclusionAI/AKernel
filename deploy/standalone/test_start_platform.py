@@ -52,11 +52,12 @@ class StartPlatformTest(unittest.TestCase):
             TRAEFIK_CONTAINER_NAME="akernel-traefik",
             ETCD_PORT="2379", ETCD_PEER_PORT="2378",
             YR_IMAGE_PROCESS_CONFIG="/run/akernel/yr-image-process.json",
-            AKERNEL_ENABLE_RUNC="true", AKERNEL_NAT_BACKEND="iptables",
-            MOCK_HOST="Darwin", MOCK_OS="OrbStack",
+            AKERNEL_ENABLE_RUNC="true", AKERNEL_ENABLE_ASCEND="false",
+            AKERNEL_NAT_BACKEND="iptables",
+            MOCK_HOST="Darwin", MOCK_HOST_ARCH="arm64", MOCK_OS="OrbStack",
             MOCK_ENGINE="linux/aarch64", MOCK_IMAGE="linux/arm64",
             MOCK_TRAEFIK_IMAGE="linux/arm64",
-            MOCK_KATA="false", MOCK_FIRECRACKER="false", MOCK_RUNC="true",
+            MOCK_KATA="false", MOCK_FIRECRACKER="false", MOCK_RUNC="true", MOCK_ASCEND="false",
             MOCK_LOCAL_IMAGE="true", MOCK_PROBE_STATUS="0",
             MOCK_CALLS=str(self.calls),
         )
@@ -72,7 +73,9 @@ record() { printf '%s' "$1" >> "$MOCK_CALLS"; shift; printf '|%s' "$@" >> "$MOCK
 log_info() { printf '%s\n' "$1"; }
 log_warn() { printf '%s\n' "$1" >&2; }
 log_error() { printf '%s\n' "$1" >&2; }
-uname() { printf '%s\n' "$MOCK_HOST"; }
+uname() {
+    if [[ "$1" == -m ]]; then printf '%s\n' "$MOCK_HOST_ARCH"; else printf '%s\n' "$MOCK_HOST"; fi
+}
 hostname() { printf 'fixture-host\n'; }
 id() { printf '0\n'; }
 modprobe() { record modprobe "$@"; printf 'linux-modprobe\n' >&2; return 42; }
@@ -102,6 +105,7 @@ docker() {
                 *org.akernel.kata.enabled*) printf '%s\n' "$MOCK_KATA" ;;
                 *org.akernel.firecracker.enabled*) printf '%s\n' "$MOCK_FIRECRACKER" ;;
                 *org.akernel.runc.enabled*) printf '%s\n' "$MOCK_RUNC" ;;
+                *org.akernel.ascend.enabled*) printf '%s\n' "$MOCK_ASCEND" ;;
                 *) return 2 ;;
             esac
             ;;
@@ -125,6 +129,7 @@ DOCKER_PREFIX=()
 CONTAINER_PLATFORM_ARGS=()
 PROXY_RUN_ARGS=()
 GPU_RUN_ARGS=()
+ASCEND_RUN_ARGS=()
 '''
         names = (
             "check_prerequisites", "prepare_data", "configure_auth",
@@ -137,6 +142,11 @@ GPU_RUN_ARGS=()
         functions = "\n".join(
             function_from(STANDALONE_DIR / "start.sh", name) for name in names
         )
+        ascend = function_from(STANDALONE_DIR / "start.sh", "configure_ascend")
+        for path in ("/usr/local/Ascend/driver", "/usr/local/dcmi",
+                     "/usr/local/bin/npu-smi", "/var/queue_schedule"):
+            ascend = ascend.replace(path, str(self.directory / path.lstrip("/")))
+        functions += "\n" + ascend + "\n"
         return subprocess.run(
             ["/bin/bash", "-e", "-c", stubs + functions + "\n" + commands],
             cwd=self.directory, env=self.environment | overrides,
@@ -164,6 +174,52 @@ show_status() { record stage show_status; }
         self.assertFalse((self.directory / "data").exists())
         self.assertFalse(any(call[0] == "stage" for call in self.recorded_calls()))
         self.assertFalse(any(call[:2] == ["docker", "run"] for call in self.recorded_calls()))
+
+    def test_ascend_incompatible_launches_fail_before_profile_mutation(self):
+        linux = {
+            "MOCK_HOST": "Linux", "MOCK_HOST_ARCH": "x86_64",
+            "MOCK_ENGINE": "linux/x86_64", "MOCK_IMAGE": "linux/amd64",
+        }
+        for environment, message in (
+            ({}, "native Linux/amd64"),
+            ({**linux, "MOCK_ENGINE": "linux/aarch64"}, "native linux/amd64 Docker engine"),
+            ({**linux, "MOCK_IMAGE": "linux/arm64"}, "not native linux/amd64"),
+            (linux, "image built with the Ascend adapter enabled"),
+            ({**linux, "MOCK_ASCEND": "true"}, "Required Ascend host directory is missing"),
+            ({**linux, "AKERNEL_ENABLE_RUNC": "false"}, "requires AKERNEL_ENABLE_RUNC=true"),
+        ):
+            with self.subTest(environment=environment):
+                result = self.run_main(AKERNEL_ENABLE_ASCEND="true", **environment)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout + result.stderr)
+                self.assert_no_profile_mutation()
+
+    def test_ascend_passes_read_only_mounts_and_native_platform_to_node(self):
+        paths = ["usr/local/Ascend/driver", "usr/local/dcmi", "usr/local/bin/npu-smi"]
+        for path in paths[:2]:
+            (self.directory / path).mkdir(parents=True)
+        smi = self.directory / paths[2]
+        smi.parent.mkdir(parents=True)
+        smi.touch()
+        smi.chmod(0o755)
+        queue = "var/queue_schedule"
+        for with_queue in (False, True):
+            with self.subTest(with_queue=with_queue):
+                if with_queue:
+                    (self.directory / queue).mkdir(parents=True)
+                result = self.run_script(
+                    "validate_host_platform\nconfigure_ascend\nstart_node_container",
+                    AKERNEL_ENABLE_ASCEND="true", MOCK_HOST="Linux", MOCK_HOST_ARCH="x86_64",
+                    MOCK_ENGINE="linux/x86_64", DOCKER_DEFAULT_PLATFORM="linux/arm64",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                call = self.recorded_calls()[-1]
+                self.assertEqual(call[:5], ["docker", "run", "-d", "--platform", "linux/amd64"])
+                actual = [call[i + 1] for i, arg in enumerate(call) if arg == "--mount"]
+                expected_paths = [self.directory / path for path in (paths + ([queue] if with_queue else []))]
+                self.assertEqual(actual, [
+                    f"type=bind,source={path},target={path},readonly" for path in expected_paths
+                ])
 
     def test_native_runc_uses_only_disposable_capability_probe(self):
         result = self.run_script(

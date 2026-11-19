@@ -16,7 +16,7 @@ It supports two backends:
   - [Navigation](#navigation)
   - [Install and configure](#install-and-configure)
   - [Create a sandbox](#create-a-sandbox)
-    - [Experimental GPU and writable storage](#experimental-gpu-and-writable-storage)
+    - [Experimental GPU, NPU, and writable storage](#experimental-gpu-npu-and-writable-storage)
     - [Network ACLs](#network-acls)
   - [Sandbox runtimes](#sandbox-runtimes)
   - [Commands](#commands)
@@ -114,7 +114,7 @@ Sandbox(
 )
 ```
 
-### Experimental GPU and writable storage
+### Experimental GPU, NPU, and writable storage
 
 Request a whole NVIDIA GPU by type, exact product model, and count:
 
@@ -125,9 +125,21 @@ with Sandbox(xpu="gpu:l20:1") as sandbox:
 
 The `type:model:count` value is case-insensitive and canonicalized to lower
 case. The model is required and matched exactly; wildcard models are not
-supported. The bundled backend currently requires the gVisor `runsc` runtime
-and a node configured for gVisor nvproxy. Runtime compatibility is validated
-by the backend rather than the SDK.
+supported. NVIDIA GPU requests support runsc on a node with a driver
+compatible with gVisor nvproxy, or native runc with the NVIDIA runtime hook.
+
+Request one physical Ascend 310P or 910 A2/A3 NPU with runc:
+
+```python
+with Sandbox(runtime="runc", xpu="npu:ascend310p3:1") as sandbox:
+    print(sandbox.commands.run("npu-smi info").stdout)
+```
+
+Use the exact normalized model reported in the node resources. For example,
+`NPU/ascend910b4` uses `npu:ascend910b4:1` for one device. The backend validates
+runtime, model availability, and the provider's environment. The provider adds
+Ascend driver library directories ahead of image or request library paths,
+preserving existing CANN and application directories.
 
 Set the storage scheduling quota and actual writable root filesystem hard limit
 in MiB:
@@ -332,8 +344,8 @@ with Sandbox(
 `enableKVM` is owned by the runc backend and requires a usable `/dev/kvm` on
 the selected node. Runc supports OCI/EROFS root filesystems, read-only mounts,
 networking, command execution, and the default writable overlay. Experimental
-GPU requests remain runsc-only; explicit `storage_mb` quotas are supported by
-runsc and Firecracker. See the
+NVIDIA GPU requests support runsc and runc. Ascend NPU requests require runc.
+Explicit writable storage quotas are supported by runsc and Firecracker. See the
 [sandbox runtime comparison](../../src/sandboxd/doc/runtime.md) for the
 runtime capability boundaries.
 
@@ -666,7 +678,7 @@ for node in resources():
     print(node.id, node.status, node.capacity, node.allocatable, node.labels)
 ```
 
-Accelerators appear under keys such as `GPU/l20`. Capacity is the total card
+Accelerators appear under keys such as `GPU/l20` and `NPU/ascend310p3`. Capacity is the total card
 count and allocatable is the currently free count. `ak resources` renders the
 same information as, for example, `gpu/l20 1/4`. Its status column renders only
 normal nodes as `OK`; unavailable states remain explicit as `EVICTING`,

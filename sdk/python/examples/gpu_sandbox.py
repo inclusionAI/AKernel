@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run a CUDA sample in an experimental gVisor GPU sandbox."""
+"""Run a CUDA sample in an experimental runsc or runc GPU sandbox."""
 
 import os
 
@@ -26,11 +26,14 @@ CUDA_SAMPLE_IMAGE = (
 
 def main() -> None:
     model = os.environ.get("AKERNEL_GPU_MODEL", "a10").strip().lower()
+    runtime = os.environ.get("AKERNEL_GPU_RUNTIME", "runsc").strip().lower()
+    if runtime not in {"runsc", "runc"}:
+        raise ValueError("AKERNEL_GPU_RUNTIME must be runsc or runc")
     with Sandbox(
         image=CUDA_SAMPLE_IMAGE,
-        runtime="runsc",
+        runtime=runtime,
         xpu=f"gpu:{model}:1",
-        storage_mb=512,
+        storage_mb=512 if runtime == "runsc" else None,
         cpu=1000,
         memory=2048,
         schedule_timeout=120,

@@ -45,6 +45,7 @@ class LocalBackend:
         self.stop_failure = False
         self.image_architecture = None
         self.image_revision = None
+        self.image_ascend = None
         self.sandbox_listing = EMPTY_SANDBOX_LIST
         self.sandbox_listing_failure = False
 
@@ -70,8 +71,11 @@ class LocalBackend:
             return json.dumps([{
                 "Id": IMAGE_ID, "Os": "linux",
                 "Architecture": self.image_architecture or self.manager.env["AKERNEL_TARGETARCH"],
-                "Config": {"Labels": {"org.opencontainers.image.revision":
-                                      self.image_revision or self.manager.state["revision"]}},
+                "Config": {"Labels": {
+                    "org.opencontainers.image.revision": self.image_revision or self.manager.state["revision"],
+                    "org.akernel.runc.enabled": self.manager.env["AKERNEL_ENABLE_RUNC"],
+                    "org.akernel.ascend.enabled": self.image_ascend or self.manager.env["AKERNEL_ENABLE_ASCEND"],
+                }},
             }])
         if args[:2] == ("docker", "inspect"):
             return json.dumps([self.objects[args[2]]])
@@ -308,6 +312,40 @@ class ManageTest(unittest.TestCase):
         self.assertEqual(build["env"]["AKERNEL_ENABLE_RUNC"], "true")
         for name in ("KATA", "FIRECRACKER", "GPU"):
             self.assertEqual(build["env"][f"AKERNEL_ENABLE_{name}"], "false")
+
+    def enable_ascend(self):
+        resolver = self.root / "approved-resolver.conf"
+        resolver.write_text("nameserver 192.0.2.53\n")
+        self.manager.directory = Path(__file__).resolve().parent
+        self.manager.env.update(AKERNEL_ENABLE_ASCEND="true", AKERNEL_ENABLE_RUNC="true",
+                                AKERNEL_RUNC_RESOLV_CONF=str(resolver))
+
+    def test_ascend_is_forwarded_to_build_and_launch_and_requires_image_payload(self):
+        self.enable_ascend()
+        with patch.object(manage.platform, "machine", return_value="x86_64"):
+            self.manager.up()
+        for script in ("build-image.sh", "start.sh"):
+            event = next(entry for entry in self.backend.events if entry["kind"] == "run"
+                         and Path(entry["args"][1]).name == script)
+            self.assertEqual(event["env"]["AKERNEL_ENABLE_ASCEND"], "true")
+            self.assertEqual(event["env"]["AKERNEL_ENABLE_RUNC"], "true")
+            self.assertEqual(event["env"]["DOCKER_DEFAULT_PLATFORM"], "linux/amd64")
+
+    def test_ascend_rejects_native_arm64_before_building(self):
+        self.enable_ascend()
+        self.backend.info["Architecture"] = "aarch64"
+        with self.assertRaisesRegex(manage.Failure, "native Linux/amd64"):
+            self.manager.up()
+        self.assertFalse(any(event["kind"] == "run" for event in self.backend.events))
+
+    def test_ascend_rejects_built_image_without_adapter_before_launch(self):
+        self.enable_ascend()
+        self.backend.image_ascend = "false"
+        with patch.object(manage.platform, "machine", return_value="x86_64"):
+            with self.assertRaisesRegex(manage.Failure, "must include the requested runc and Ascend"):
+                self.manager.up()
+        self.assertFalse(any(event["kind"] == "run" and Path(event["args"][1]).name == "start.sh"
+                             for event in self.backend.events))
 
     def test_dirty_or_misaligned_component_is_preserved_without_checkout(self):
         sentinel = self.component / "developer-work"

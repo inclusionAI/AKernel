@@ -32,6 +32,23 @@ data:
 {{- end }}
 {{- $sandboxdConfig = replace $chunkDbMarker (printf "chunk_db_size=%s" ($chunkDbSize | quote)) $sandboxdConfig }}
 {{- end }}
+{{- if and .Values.node.config.sandboxd.mountAscendQueueSchedule (not .Values.node.config.sandboxd.enableAscend) }}
+{{- fail "node.config.sandboxd.mountAscendQueueSchedule requires node.config.sandboxd.enableAscend=true" }}
+{{- end }}
+{{- if .Values.node.config.sandboxd.enableAscend }}
+{{- if not .Values.node.config.sandboxd.enableRunc }}
+{{- fail "node.config.sandboxd.enableAscend requires node.config.sandboxd.enableRunc=true" }}
+{{- end }}
+{{- $ascendMarkerPattern := "(?m)^[ \\t]*# AKERNEL_XPU_ASCEND[ \\t]*$" }}
+{{- if ne (len (regexFindAll $ascendMarkerPattern $sandboxdConfig -1)) 1 }}
+{{- fail "node.config.sandboxd.enableAscend requires exactly one # AKERNEL_XPU_ASCEND marker in node.config.sandboxd.config" }}
+{{- end }}
+{{- $ascendConfig := `[plugin.xpu.ascend]
+enabled=true
+adapter="/usr/local/libexec/akernel/ascend-oci-adapter"
+mount_profile="/etc/akernel/ascend/mounts.json"` }}
+{{- $sandboxdConfig = regexReplaceAllLiteral $ascendMarkerPattern $sandboxdConfig $ascendConfig }}
+{{- end }}
 {{ $sandboxdConfig | indent 4 }}
 
   registry.json: |

@@ -293,12 +293,20 @@ class SandboxTest(unittest.TestCase):
         self.assertEqual(spec.xpu, "gpu:l20:2")
         sandbox.kill()
 
+    def test_ascend_request_is_delegated_to_backend(self):
+        sandbox = Sandbox(runtime="runc", xpu=" NPU:Ascend310P3:01 ")
+        self.assertEqual(sandbox.get_info().xpu, "npu:ascend310p3:1")
+        spec = self.backend.create.call_args.args[0]
+        self.assertEqual(spec.runtime, "runc")
+        self.assertEqual(spec.xpu, "npu:ascend310p3:1")
+        sandbox.kill()
+
     def test_xpu_request_validation(self):
         invalid = (
             (1, TypeError),
             ("gpu", ValueError),
             ("gpu::1", ValueError),
-            ("npu:l20:1", ValueError),
+            ("tpu:l20:1", ValueError),
             ("gpu:l20:0", ValueError),
             ("gpu:l20:1.5", ValueError),
             ("gpu:l20/evil:1", ValueError),

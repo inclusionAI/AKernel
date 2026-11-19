@@ -40,6 +40,12 @@ Package mirrors do not serve the large core wheel or other GitHub release files.
 
 Each pair is validated before either image build; downloads retain checksum and native ELF architecture checks. A mirror of the same release must use its existing pinned checksum. Core wheel URLs must retain a valid wheel filename. Runtime versions and gVisor, runc, Firecracker and distill-fs pins continue to come from their existing manifests.
 
+Set `AKERNEL_ENABLE_ASCEND=true` with `AKERNEL_ENABLE_RUNC=true` to include the
+Ascend adapter in a Linux/amd64 node image. The Dockerfile pins the
+`v0.1.0-rc.2` release archive and verifies its SHA-256 and ELF architecture.
+The stage includes the upstream license files and the mount profile from
+the pinned sandboxd submodule.
+
 Source version/revision labels and artifact URL overrides are declared near their uses so changing those inputs preserves preceding dependency layers.
 
 ## Build proxy and network

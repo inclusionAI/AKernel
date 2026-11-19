@@ -35,6 +35,8 @@ print_component_versions=0
 # Explicit caller values take precedence over values saved in an environment.
 caller_runc_set="${AKERNEL_ENABLE_RUNC+x}"
 caller_runc="${AKERNEL_ENABLE_RUNC-}"
+caller_ascend_set="${AKERNEL_ENABLE_ASCEND+x}"
+caller_ascend="${AKERNEL_ENABLE_ASCEND-}"
 caller_kata_set="${AKERNEL_ENABLE_KATA+x}"
 caller_kata="${AKERNEL_ENABLE_KATA-}"
 caller_firecracker_set="${AKERNEL_ENABLE_FIRECRACKER+x}"
@@ -155,17 +157,29 @@ if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
 fi
 
 if [[ -n "${caller_runc_set}" ]]; then AKERNEL_ENABLE_RUNC="${caller_runc}"; fi
+if [[ -n "${caller_ascend_set}" ]]; then AKERNEL_ENABLE_ASCEND="${caller_ascend}"; fi
 if [[ -n "${caller_kata_set}" ]]; then AKERNEL_ENABLE_KATA="${caller_kata}"; fi
 if [[ -n "${caller_firecracker_set}" ]]; then AKERNEL_ENABLE_FIRECRACKER="${caller_firecracker}"; fi
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC-false}"
+AKERNEL_ENABLE_ASCEND="${AKERNEL_ENABLE_ASCEND-false}"
 AKERNEL_ENABLE_KATA="${AKERNEL_ENABLE_KATA-true}"
 AKERNEL_ENABLE_FIRECRACKER="${AKERNEL_ENABLE_FIRECRACKER-true}"
-for flag in AKERNEL_ENABLE_RUNC AKERNEL_ENABLE_KATA AKERNEL_ENABLE_FIRECRACKER; do
+for flag in AKERNEL_ENABLE_RUNC AKERNEL_ENABLE_ASCEND AKERNEL_ENABLE_KATA AKERNEL_ENABLE_FIRECRACKER; do
   case "${!flag}" in
     true|false) ;;
     *) die "${flag} must be true or false" ;;
   esac
 done
+
+if [[ "${AKERNEL_ENABLE_ASCEND}" == true ]]; then
+  case "${target_arch}" in
+    amd64|x86_64) ;;
+    *) die "AKERNEL_ENABLE_ASCEND=true requires linux/amd64" ;;
+  esac
+  if [[ "${AKERNEL_ENABLE_RUNC}" != true ]]; then
+    die "AKERNEL_ENABLE_ASCEND=true requires AKERNEL_ENABLE_RUNC=true"
+  fi
+fi
 
 # The manifests, not caller or profile variables, are the release-pin source of
 # truth. Missing fields must stay missing so the preflight checks reject them.
@@ -386,6 +400,7 @@ node_build_args=(
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
   --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA}"
   --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC}"
+  --build-arg "AKERNEL_ENABLE_ASCEND=${AKERNEL_ENABLE_ASCEND}"
   --build-arg "AKERNEL_ENABLE_FIRECRACKER=${AKERNEL_ENABLE_FIRECRACKER}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"

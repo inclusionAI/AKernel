@@ -73,6 +73,33 @@ The node must support TC eBPF and bpffs. bpfnat does not manage host firewall
 policy, so custom host-network deployments must allow forwarding to and from
 the sandbox bridge when their `FORWARD` policy is `DROP`.
 
+### Accelerators
+
+The node container must have access to the host NVIDIA devices and userspace
+driver libraries for NVIDIA GPU sandboxes. The Linux/amd64 image includes the
+NVIDIA CLI and Container Toolkit runtime hook. Runsc requires a driver version
+compatible with gVisor nvproxy.
+
+Ascend support targets physical Ascend 310P and 910 A2/A3 devices on native
+Linux/amd64 nodes. For a guided cloud profile, run
+`make config ENABLE_RUNC=true ENABLE_ASCEND=true`. For a direct Helm deployment,
+build with `AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true` and set
+`core.node.config.sandboxd.enableRunc=true` and
+`core.node.config.sandboxd.enableAscend=true` in the umbrella chart. Terraform
+exposes `enable_runc` and `enable_ascend` for the same settings. The image
+packages [ascend-oci-adapter v0.1.0-rc.2](https://github.com/openYuanrong-mirror/ascend-oci-adapter/releases/tag/v0.1.0-rc.2)
+with the mount profile from the pinned sandboxd source.
+
+Label the intended Ascend nodes `akernel.io/ascend=true` before enabling
+the DaemonSet, including when Terraform provisions the cluster. The DaemonSet
+selects Linux/amd64 nodes with that label and mounts the host paths
+`/usr/local/Ascend/driver`, `/usr/local/dcmi`, and `/usr/local/bin/npu-smi`
+read-only. FlowGW users can also set
+`core.node.config.sandboxd.mountAscendQueueSchedule=true` in Helm or
+`mount_ascend_queue_schedule = true` in Terraform when
+`/var/queue_schedule` exists on every selected host. Preserve exactly one
+`# AKERNEL_XPU_ASCEND` marker in a custom sandboxd configuration.
+
 ### systemd container identity
 
 The all-in-one image, Helm node template, and standalone launcher set

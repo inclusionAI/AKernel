@@ -6,7 +6,7 @@ project guidance.
 
 ## Project Overview
 
-AKernel provides standalone and cluster-backed sandbox environments for agents and developer workflows. The current public user-facing surface is the Python `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI. The default sandbox runtime is gVisor runsc. Runtime identifiers and generic JSON-compatible runtime configuration are forwarded to the selected backend, which owns availability and compatibility checks. The bundled deployment also advertises Kata Containers and Firecracker on KVM-capable nodes. The native Linux runc payload is build-time optional and must be explicitly included and enabled by an operator. Creation-time network policies and atomic runtime replacement support unrestricted networking, blocking new flows except the YuanRong control and published sandbox-port routes, or denying exact and leading-wildcard DNS names. Experimental whole-device NVIDIA GPU requests require runsc. Configurable writable-storage requests are supported by runsc and Firecracker.
+AKernel provides standalone and cluster-backed sandbox environments for agents and developer workflows. The current public user-facing surface is the Python `akernel-sdk`, including the `akernel_sdk.Sandbox` API and the `ak` CLI. The default sandbox runtime is gVisor runsc. Runtime identifiers and generic JSON-compatible runtime configuration are forwarded to the selected backend, which owns availability and compatibility checks. The bundled deployment also advertises Kata Containers and Firecracker on KVM-capable nodes. The native Linux runc payload is build-time optional and must be explicitly included and enabled by an operator. Creation-time network policies and atomic runtime replacement support unrestricted networking, blocking new flows except the YuanRong control and published sandbox-port routes, or denying exact and leading-wildcard DNS names. Experimental whole-device NVIDIA GPUs support runsc and runc on Linux/amd64. Physical Ascend NPUs require runc and opt-in Linux/amd64 packaging and deployment. Configurable writable-storage requests are supported by runsc and Firecracker.
 
 Use AKernel when a task needs an isolated remote environment with command
 execution, file operations, interactive PTYs, port forwarding, or reverse
@@ -139,7 +139,7 @@ also excludes virtiofsd.
 
 The sandboxd submodule's runtime manifest is the source of truth for the gVisor, runc, and Firecracker releases used by both sandboxd E2E and AKernel packaging. Test an unreleased runtime by checking out the sandboxd commit that pins it rather than overriding manifest fields from the AKernel build. Keep sandboxd's pooled-TAP contract and the matching gVisor compatibility patches validated together when upgrading.
 
-Native Linux/arm64 builds support the `rrt` runtime profile with runsc and optional runc. Set `AKERNEL_TARGETARCH=arm64`, `AKERNEL_ENABLE_KATA=false`, and `AKERNEL_ENABLE_FIRECRACKER=false`; use `AKERNEL_ENABLE_RUNC=true` to include runc. ARM64 rejects the Python profile, VM payloads, and NVIDIA GPU requests. Builds require Docker BuildKit. The target precedence is explicit `AKERNEL_TARGETARCH`, then a supported single-platform `DOCKER_DEFAULT_PLATFORM`, then the stable `amd64` default; never infer the builder's architecture from the Docker client's host. Explicit runtime flags override the selected deployment profile, which overrides defaults. Validate the merged flags, release pins, and URL/checksum override pairs before either Docker build.
+Native Linux/arm64 builds support the `rrt` runtime profile with runsc and optional runc. Set `AKERNEL_TARGETARCH=arm64`, `AKERNEL_ENABLE_KATA=false`, and `AKERNEL_ENABLE_FIRECRACKER=false`; use `AKERNEL_ENABLE_RUNC=true` to include runc. ARM64 rejects the Python profile, VM payloads, and accelerator support. Builds require Docker BuildKit. The target precedence is explicit `AKERNEL_TARGETARCH`, then a supported single-platform `DOCKER_DEFAULT_PLATFORM`, then the stable `amd64` default; never infer the builder's architecture from the Docker client's host. Explicit runtime flags override the selected deployment profile, which overrides defaults. Validate the merged flags, release pins, and URL/checksum override pairs before either Docker build.
 
 The build selects architecture-matched gVisor and runc pins from the sandboxd manifest and distill-fs pins from `builder/distill-fs-versions.env`, explicitly sets both Docker build platforms, and passes the target architecture to sandboxd compilation. Check downloaded executable ELF headers against the target architecture with `builder/scripts/verify-elf-arch.sh`; checksum verification, manifest claims, or successful execution under emulation do not establish architecture. Keep the RRT release's AMD64 and ARM64 checksums synchronized with `OPEN_YR_VERSION`, and the collector archive checksums synchronized with `OTELCOL_CONTRIB_VERSION`. Collector URL overrides require a matching checksum. `make build-helper-test` covers build arguments and ELF validation without Docker builds.
 
@@ -253,9 +253,20 @@ direct configuration, build an image with `AKERNEL_ENABLE_RUNC=true`, then use
 `AKERNEL_ENABLE_RUNC=true` for standalone,
 `node.config.sandboxd.enableRunc=true` for Helm, or `enable_runc=true` for
 Terraform. Runc uses the host kernel and therefore has a different isolation
-boundary from runsc. It does not support experimental GPU or explicit
-`storage_mb` requests. Its optional `enableKVM` extra configuration requires a
-usable `/dev/kvm` device.
+boundary from runsc. It supports NVIDIA GPU and opt-in physical Ascend NPU
+requests on compatible Linux/amd64 nodes. Runsc and Firecracker support explicit
+writable storage quotas. Runc's optional `enableKVM` extra configuration requires
+a usable `/dev/kvm` device.
+
+Guided cloud profiles enable Ascend with `ENABLE_RUNC=true ENABLE_ASCEND=true`.
+Standalone uses `AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true` for both
+build and launch. The Dockerfile verifies the pinned adapter release archive
+and native AMD64 ELF. The daemon discovers and leases devices through the
+packaged mount profile from sandboxd. Preserve the `# AKERNEL_XPU_ASCEND` marker
+in custom Helm and standalone configurations. The chart selects Linux/amd64
+nodes labeled `akernel.io/ascend=true`. Keep driver binds read-only and mount
+FlowGW only when the host directory exists. See
+[accelerator deployment](deploy/README.md#accelerators).
 
 Standalone configures resolver sources by DNS mode. Enabling runc copies an approved host resolver into the data mount and sets `plugin.runtime.direct_resolv_conf_path`, while `plugin.runtime.resolv_conf_path` remains the node resolver used by managed DNS. `AKERNEL_RUNC_RESOLV_CONF` selects the host source; systemd-resolved hosts require it explicitly because a flat file cannot preserve split DNS. Preserve the direct-resolver marker under `[plugin.runtime]` in custom templates, and drain sandboxes before refreshing the resolver snapshot or replacing the node. See [`deploy/standalone/README.md#dns-resolver-sources`](deploy/standalone/README.md#dns-resolver-sources) for mode selection and reachability requirements.
 

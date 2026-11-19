@@ -116,11 +116,16 @@ class Manager:
         return revision, actual
 
     def configure(self, arch):
-        for name in ("RUNC", "KATA", "FIRECRACKER", "GPU"):
+        for name in ("RUNC", "KATA", "FIRECRACKER", "GPU", "ASCEND"):
             key = f"AKERNEL_ENABLE_{name}"
             self.env.setdefault(key, "false")
             if self.env[key] not in ("true", "false"):
                 raise Failure(f"{key} must be true or false")
+        if self.env["AKERNEL_ENABLE_ASCEND"] == "true":
+            if arch != "amd64" or platform.system() != "Linux" or platform.machine() not in ("x86_64", "amd64"):
+                raise Failure("AKERNEL_ENABLE_ASCEND requires native Linux/amd64 with Docker")
+            if self.env["AKERNEL_ENABLE_RUNC"] != "true":
+                raise Failure("AKERNEL_ENABLE_ASCEND=true requires AKERNEL_ENABLE_RUNC=true")
         if arch == "arm64" and any(self.env[f"AKERNEL_ENABLE_{name}"] != "false" for name in ("KATA", "FIRECRACKER", "GPU")):
             raise Failure("ARM64 requires Kata, Firecracker and GPU disabled")
         if self.env.get("RUNTIME_PROFILE", "rrt") != "rrt":
@@ -202,8 +207,13 @@ class Manager:
             # Do not load the default cloud deployment profile.
             self.run("bash", str(self.root / "deploy/scripts/build-image.sh"), "--repository", image.rsplit(":", 1)[0], "--tag", image.rsplit(":", 1)[1], "--runtime-profile", "rrt")
             obj = json.loads(self.capture("docker", "image", "inspect", image))[0]
-            if f"{obj['Os']}/{obj['Architecture']}" != f"linux/{arch}" or obj["Config"]["Labels"].get("org.opencontainers.image.revision") != revision:
+            labels = obj["Config"]["Labels"]
+            if f"{obj['Os']}/{obj['Architecture']}" != f"linux/{arch}" or labels.get("org.opencontainers.image.revision") != revision:
                 raise Failure("built image platform or source revision does not match")
+            if self.env["AKERNEL_ENABLE_ASCEND"] == "true" and not all(
+                labels.get(f"org.akernel.{feature}.enabled") == "true" for feature in ("runc", "ascend")
+            ):
+                raise Failure("built image must include the requested runc and Ascend payloads")
             self.state.update(image_id=obj["Id"], status="starting")
             self.save()
             self.env["IMAGE"] = image

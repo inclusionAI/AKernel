@@ -23,6 +23,7 @@ TOKEN_FILE="${DATA_DIR}/token"
 SANDBOXD_CONFIG_FILE="${DATA_DIR}/sandboxd/config.toml"
 AKERNEL_NAT_BACKEND="${AKERNEL_NAT_BACKEND:-iptables}"
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC:-false}"
+AKERNEL_ENABLE_ASCEND="${AKERNEL_ENABLE_ASCEND-false}"
 AKERNEL_CHUNK_DB_SIZE="${AKERNEL_CHUNK_DB_SIZE:-}"
 YR_IMAGE_PROCESS_CONFIG="${YR_IMAGE_PROCESS_CONFIG:-/run/akernel/yr-image-process.json}"
 LITEBUS_DATA_KEY=""
@@ -33,6 +34,7 @@ DOCKER_PREFIX=()
 CONTAINER_PLATFORM_ARGS=()
 PROXY_RUN_ARGS=()
 GPU_RUN_ARGS=()
+ASCEND_RUN_ARGS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -106,6 +108,17 @@ check_prerequisites() {
             exit 1
             ;;
     esac
+    case "${AKERNEL_ENABLE_ASCEND}" in
+        true|false) ;;
+        *)
+            log_error "AKERNEL_ENABLE_ASCEND must be true or false"
+            exit 1
+            ;;
+    esac
+    if [[ "${AKERNEL_ENABLE_ASCEND}" == true && "${AKERNEL_ENABLE_RUNC}" != true ]]; then
+        log_error "AKERNEL_ENABLE_ASCEND=true requires AKERNEL_ENABLE_RUNC=true"
+        exit 1
+    fi
     if [[ "${DATA_DIR}" != /* ]]; then
         log_error "AKERNEL_STANDALONE_DATA_DIR must be an absolute path"
         exit 1
@@ -265,6 +278,32 @@ configure_gpu() {
     log_info "Enabling NVIDIA GPU access for the AKernel node container"
 }
 
+configure_ascend() {
+    if [[ "${AKERNEL_ENABLE_ASCEND}" != true ]]; then
+        return 0
+    fi
+
+    local path
+    for path in /usr/local/Ascend/driver /usr/local/dcmi; do
+        if [[ ! -d "${path}" ]]; then
+            log_error "Required Ascend host directory is missing: ${path}"
+            exit 1
+        fi
+        ASCEND_RUN_ARGS+=(--mount "type=bind,source=${path},target=${path},readonly")
+    done
+    path=/usr/local/bin/npu-smi
+    if [[ ! -f "${path}" || ! -x "${path}" ]]; then
+        log_error "Required Ascend host executable is missing: ${path}"
+        exit 1
+    fi
+    ASCEND_RUN_ARGS+=(--mount "type=bind,source=${path},target=${path},readonly")
+    path=/var/queue_schedule
+    if [[ -d "${path}" ]]; then
+        ASCEND_RUN_ARGS+=(--mount "type=bind,source=${path},target=${path},readonly")
+    fi
+    log_info "Enabling Ascend NPU access for runc sandboxes"
+}
+
 configure_network() {
     local config_tmp="${SANDBOXD_CONFIG_FILE}.tmp"
     local sed_args=(
@@ -285,6 +324,22 @@ configure_network() {
         "${CONFIG_DIR}/sandboxd_config.toml"; then
         log_error "Missing nat_backend in ${CONFIG_DIR}/sandboxd_config.toml"
         exit 1
+    fi
+    if [[ "${AKERNEL_ENABLE_ASCEND}" == true ]]; then
+        if ! awk '
+            /^[[:space:]]*# AKERNEL_XPU_ASCEND[[:space:]]*$/ { count++ }
+            END { exit !(count == 1) }
+        ' "${CONFIG_DIR}/sandboxd_config.toml"; then
+            log_error "AKERNEL_ENABLE_ASCEND requires exactly one # AKERNEL_XPU_ASCEND marker in sandboxd_config.toml"
+            exit 1
+        fi
+        sed_args+=(
+            -e '/^[[:space:]]*# AKERNEL_XPU_ASCEND[[:space:]]*$/c\
+[plugin.xpu.ascend]\
+enabled=true\
+adapter="/usr/local/libexec/akernel/ascend-oci-adapter"\
+mount_profile="/etc/akernel/ascend/mounts.json"'
+        )
     fi
     if [[ "${AKERNEL_ENABLE_RUNC}" == "true" ]]; then
         if ! grep -q '^[[:space:]]*# AKERNEL_RUNTIME_RUNC[[:space:]]*$' \
@@ -366,7 +421,20 @@ validate_host_platform() {
         log_error "AKERNEL_ENABLE_GPU currently requires Docker"
         exit 1
     fi
-    if [[ "$(uname -s)" == "Darwin" ]]; then
+    if [[ "${AKERNEL_ENABLE_ASCEND}" == true ]]; then
+        if [[ "${DOCKER_CMD}" != docker || "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
+            log_error "AKERNEL_ENABLE_ASCEND requires native Linux/amd64 with Docker"
+            exit 1
+        fi
+        case "$("${DOCKER_PREFIX[@]}" docker info --format '{{.OSType}}/{{.Architecture}}')" in
+            linux/amd64|linux/x86_64) ;;
+            *)
+                log_error "AKERNEL_ENABLE_ASCEND requires a native linux/amd64 Docker engine"
+                exit 1
+                ;;
+        esac
+        CONTAINER_PLATFORM_ARGS=(--platform linux/amd64)
+    elif [[ "$(uname -s)" == "Darwin" ]]; then
         if [[ "${DOCKER_CMD}" != docker ||
               "$("${DOCKER_PREFIX[@]}" docker info --format '{{.OperatingSystem}}')" != OrbStack ]]; then
             log_error "macOS standalone requires OrbStack Docker"
@@ -398,14 +466,14 @@ validate_image_platform() {
     local platform
     platform="$("${DOCKER_PREFIX[@]}" ${DOCKER_CMD} image inspect \
         --format '{{.Os}}/{{.Architecture}}' "${image}")"
-    if [[ "${platform}" != linux/arm64 ]]; then
-        log_error "Image ${image} is not native linux/arm64; select an ARM64 image reference. Existing local tags are not overwritten automatically"
+    if [[ "${platform}" != "${CONTAINER_PLATFORM_ARGS[1]}" ]]; then
+        log_error "Image ${image} is not native ${CONTAINER_PLATFORM_ARGS[1]}; select a matching image reference. Existing local tags are not overwritten automatically"
         exit 1
     fi
 }
 
 validate_image_capabilities() {
-    if [[ "${#CONTAINER_PLATFORM_ARGS[@]}" -gt 0 ]]; then
+    if [[ "${CONTAINER_PLATFORM_ARGS[1]:-}" == linux/arm64 ]]; then
         local runtime
         for runtime in kata firecracker; do
             if [[ "$("${DOCKER_PREFIX[@]}" docker image inspect \
@@ -421,10 +489,16 @@ validate_image_capabilities() {
         log_error "AKERNEL_ENABLE_RUNC requires an image built with the runc payload enabled"
         exit 1
     fi
+    if [[ "${AKERNEL_ENABLE_ASCEND}" == true &&
+          "$("${DOCKER_PREFIX[@]}" docker image inspect \
+            --format '{{index .Config.Labels "org.akernel.ascend.enabled"}}' "${IMAGE}")" != true ]]; then
+        log_error "AKERNEL_ENABLE_ASCEND requires an image built with the Ascend adapter enabled"
+        exit 1
+    fi
 }
 
 prepare_host_network_modules() {
-    if [[ "${#CONTAINER_PLATFORM_ARGS[@]}" -gt 0 ]]; then
+    if [[ "${CONTAINER_PLATFORM_ARGS[1]:-}" == linux/arm64 ]]; then
         "${DOCKER_PREFIX[@]}" docker run "${CONTAINER_PLATFORM_ARGS[@]}" --rm --privileged --net bridge \
             -e AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC}" \
             -v "${SCRIPT_DIR}/orbstack-preflight.sh:/orbstack-preflight.sh:ro" \
@@ -529,6 +603,7 @@ start_node_container() {
         -e ENABLE_METRICS="${ENABLE_METRICS:-false}" \
         "${PROXY_RUN_ARGS[@]}" \
         "${GPU_RUN_ARGS[@]}" \
+        "${ASCEND_RUN_ARGS[@]}" \
         --entrypoint=/usr/local/bin/akernel-entrypoint \
         -v "${DATA_DIR}:/home/akernel" \
         -v "${CONFIG_DIR}/oss_auths.json:/home/akernel/sandboxd/config/oss_auths.json:ro" \
@@ -680,8 +755,9 @@ check_prerequisites
 cleanup_existing
 validate_host_platform
 ensure_image "${IMAGE}"
-ensure_image "${TRAEFIK_IMAGE}"
 validate_image_capabilities
+configure_ascend
+ensure_image "${TRAEFIK_IMAGE}"
 prepare_data
 prepare_host_network_modules
 configure_auth

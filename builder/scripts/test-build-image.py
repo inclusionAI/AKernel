@@ -42,6 +42,15 @@ AMBIENT_BUILD_PREFIXES = (
 
 
 class BuildImageTests(unittest.TestCase):
+
+    def test_nvidia_packages_use_the_same_release(self):
+        dockerfile = (ROOT / "builder/node.Dockerfile").read_text()
+        for name in (
+            "libnvidia-container1", "libnvidia-container-tools",
+            "nvidia-container-toolkit", "nvidia-container-toolkit-base",
+        ):
+            self.assertIn(f'"{name}=${{LIBNVIDIA_CONTAINER_VERSION}}"', dockerfile)
+
     def test_gvisor_download_keeps_http11_and_archive_verification(self):
         dockerfile = (ROOT / "builder/node.Dockerfile").read_text()
         gvisor = dockerfile.split("AS gvisor-runtime", 1)[1].split("\nFROM ", 1)[0]
@@ -155,6 +164,33 @@ class BuildImageTests(unittest.TestCase):
         return dict(call[index + 1].split("=", 1)
                     for index, value in enumerate(call[:-1])
                     if value == "--build-arg" and "=" in call[index + 1])
+
+    def test_ascend_is_opt_in_and_caller_can_override_cloud_profile(self):
+        self.write_profile(AKERNEL_ENABLE_ASCEND="true")
+        result = self.run_helper("--env", "test", AKERNEL_TARGETARCH="amd64")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        runtime, node = self.docker_calls()
+        self.assertNotIn("AKERNEL_ENABLE_ASCEND", self.build_arguments(runtime))
+        self.assertEqual(self.build_arguments(node)["AKERNEL_ENABLE_ASCEND"], "true")
+        self.calls.unlink()
+
+        result = self.run_helper(
+            "--env", "test", AKERNEL_TARGETARCH="amd64", AKERNEL_ENABLE_ASCEND="false"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.build_arguments(self.docker_calls()[1])["AKERNEL_ENABLE_ASCEND"], "false")
+
+    def test_ascend_requires_amd64_and_runc_before_docker_build(self):
+        for environment, message in (
+            ({"AKERNEL_TARGETARCH": "arm64"}, "requires linux/amd64"),
+            ({"AKERNEL_TARGETARCH": "amd64", "AKERNEL_ENABLE_RUNC": "false"},
+             "requires AKERNEL_ENABLE_RUNC=true"),
+        ):
+            with self.subTest(environment=environment):
+                result = self.run_helper(AKERNEL_ENABLE_ASCEND="true", **environment)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(message, result.stdout)
+                self.assertEqual(self.docker_calls(), [])
 
     def write_profile(self, **values):
         profile = self.root / ".akernel/test/config.env"

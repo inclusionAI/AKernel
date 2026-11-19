@@ -55,6 +55,7 @@ class StartConfigTest(unittest.TestCase):
             DATA_DIR=str(self.data_dir),
             SANDBOXD_CONFIG_FILE=str(self.config_output),
             AKERNEL_NAT_BACKEND="iptables",
+            AKERNEL_ENABLE_ASCEND="false",
             AKERNEL_ENABLE_RUNC="true",
             AKERNEL_RUNC_RESOLV_CONF=str(self.source),
             AKERNEL_CHUNK_DB_SIZE="",
@@ -134,6 +135,18 @@ class StartConfigTest(unittest.TestCase):
             config["plugin.runtime"]["resolv_conf_path"], '"/etc/resolv.conf"'
         )
         self.assertFalse(self.resolver_output.exists())
+
+    def test_ascend_adds_provider_config_without_changing_runtime_settings(self):
+        result = self.generate(AKERNEL_ENABLE_ASCEND="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = self.read_sections()
+        self.assertEqual(dict(config["plugin.xpu.ascend"]), {
+            "enabled": "true",
+            "adapter": '"/usr/local/libexec/akernel/ascend-oci-adapter"',
+            "mount_profile": '"/etc/akernel/ascend/mounts.json"',
+        })
+        self.assertEqual(config["plugin.runtime"]["direct_resolv_conf_path"], DIRECT_PATH)
+        self.assertIn("plugin.image", config)
 
     def test_custom_node_resolver_is_not_replaced(self):
         self.template.write_text(

@@ -7,6 +7,7 @@ ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG AKERNEL_RUNTIME_PROFILE=rrt
 ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
+ARG AKERNEL_ENABLE_ASCEND=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG OPEN_YR_VERSION=0.10.2rc10
@@ -269,6 +270,50 @@ RUN mkdir -p /runc/usr/local/bin
 
 FROM runc-runtime-${AKERNEL_ENABLE_RUNC} AS runc-runtime
 
+FROM ubuntu:24.04 AS ascend-adapter-true
+ARG TARGETARCH
+ARG AKERNEL_ENABLE_RUNC
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+
+COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
+COPY ./src/sandboxd/configs/ascend/mounts.json /tmp/ascend-mounts.json
+RUN set -eux; \
+    test "${TARGETARCH}" = amd64; \
+    test "${AKERNEL_ENABLE_RUNC}" = true; \
+    apt-get -o Acquire::Retries=3 update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    rm -rf /var/lib/apt/lists/*; \
+    version=v0.1.0-rc.2; \
+    sha256=abe3b926750c2467dc5544645bae530ec4bac8572615b0678892a4408d26954c; \
+    bundle="ascend-oci-adapter_${version}_linux_amd64"; \
+    directory="$(mktemp -d)"; \
+    archive="${directory}/${bundle}.tar.gz"; \
+    curl -fSL --retry 10 --retry-delay 2 --retry-all-errors \
+      "https://github.com/openYuanrong-mirror/ascend-oci-adapter/releases/download/${version}/${bundle}.tar.gz" \
+      -o "${archive}"; \
+    printf '%s  %s\n' "${sha256}" "${archive}" | sha256sum -c -; \
+    tar -xzf "${archive}" -C "${directory}"; \
+    payload="${directory}/${bundle}"; \
+    test -x "${payload}/bin/ascend-oci-adapter"; \
+    sh /usr/local/libexec/verify-elf-arch.sh "${payload}/bin/ascend-oci-adapter" "${TARGETARCH}"; \
+    test -f "${payload}/licenses/ascend-oci-adapter/LICENSE"; \
+    test -f "${payload}/licenses/mind-cluster/LICENSE"; \
+    test -f "${payload}/licenses/mind-cluster/Third_Party_Open_Source_Software_Notice.md"; \
+    install -D -m 0755 "${payload}/bin/ascend-oci-adapter" \
+      /ascend/usr/local/libexec/akernel/ascend-oci-adapter; \
+    install -D -m 0644 /tmp/ascend-mounts.json /ascend/etc/akernel/ascend/mounts.json; \
+    mkdir -p /ascend/opt/akernel/licenses; \
+    cp -a "${payload}/licenses/." /ascend/opt/akernel/licenses/; \
+    rm -rf "${directory}"
+
+FROM ubuntu:24.04 AS ascend-adapter-false
+RUN mkdir -p /ascend
+
+FROM ascend-adapter-${AKERNEL_ENABLE_ASCEND} AS ascend-adapter
+
 FROM ubuntu:24.04 AS distill-fs-runtime
 ARG TARGETARCH
 ARG DISTILL_FS_RELEASE
@@ -293,6 +338,7 @@ ENV container=oci
 
 ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_ENABLE_RUNC
+ARG AKERNEL_ENABLE_ASCEND
 ARG AKERNEL_ENABLE_FIRECRACKER
 ARG AKERNEL_RUNTIME_PROFILE
 ARG GVISOR_RELEASE
@@ -367,7 +413,11 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       "libnvidia-container1=${LIBNVIDIA_CONTAINER_VERSION}" \
-      "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}"; \
+      "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}" \
+      "nvidia-container-toolkit=${LIBNVIDIA_CONTAINER_VERSION}" \
+      "nvidia-container-toolkit-base=${LIBNVIDIA_CONTAINER_VERSION}"; \
+    command -v nvidia-container-cli; \
+    test -x /usr/bin/nvidia-container-runtime-hook; \
     rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -462,6 +512,7 @@ COPY --from=distill-fs-runtime /distill-fs/share/distill-fs/ /usr/local/share/di
 COPY --from=kata-runtime /kata/opt/kata /opt/kata
 COPY --from=runc-runtime /runc/usr/local/bin/ /usr/local/bin/
 COPY --from=firecracker-runtime /firecracker/ /
+COPY --from=ascend-adapter /ascend/ /
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
       ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2; \
     fi
@@ -565,6 +616,7 @@ LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.akernel.runc.version="${RUNC_VERSION}" \
       org.akernel.runc.binary.sha256="${RUNC_SHA256}" \
       org.akernel.runc.enabled="${AKERNEL_ENABLE_RUNC}" \
+      org.akernel.ascend.enabled="${AKERNEL_ENABLE_ASCEND}" \
       org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}" \
       org.akernel.firecracker.release="${FIRECRACKER_RELEASE}" \
       org.akernel.firecracker.enabled="${AKERNEL_ENABLE_FIRECRACKER}"
