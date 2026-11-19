@@ -36,6 +36,8 @@ JUICEFS_CACHE_LARGE_WRITE ?= true
 CHECKPOINT_STORAGE_HOST_PATH ?=
 CHECKPOINT_STORAGE_EXISTING_CLAIM ?=
 ENABLE_RUNC ?=
+ENABLE_ASCEND ?=
+MOUNT_ASCEND_QUEUE_SCHEDULE ?=
 SCHEDULE_PLACEMENT_POLICY ?=
 GRAFANA_PUBLIC_ACCESS ?=
 GRAFANA_ADMIN_PASSWORD ?=
@@ -54,6 +56,7 @@ help:
 	@echo "  make config INSTALL_DRAGONFLY=true Enable optional P2P image distribution"
 	@echo "  make config NODE_IMAGE_PULL_MODE=direct Use direct registry pulls on new ACK workers"
 	@echo "  make config ENABLE_RUNC=true       Build and register the optional runc runtime"
+	@echo "  make config ENABLE_RUNC=true ENABLE_ASCEND=true  Enable Ascend workers"
 	@echo "  make config SANDBOX_MEMORY_LIMIT_ENABLED=true SANDBOX_MEMORY_TOTAL_RESERVE=16GiB Opt into a qualified cgroup v2 sandbox budget"
 	@echo "  make config JUICEFS_ENABLED=true JUICEFS_STORAGE_CLASS=... Deploy JuiceFS/PostgreSQL/Ceph"
 	@echo "  make config CHECKPOINT_STORAGE_HOST_PATH=/srv/shared Use an existing AFS/JuiceFS mount"
@@ -65,6 +68,7 @@ help:
 	@echo "  make build AKERNEL_ENABLE_KATA=false Exclude the optional Kata payload"
 	@echo "  make build AKERNEL_ENABLE_FIRECRACKER=false Exclude Firecracker"
 	@echo "  make build AKERNEL_ENABLE_RUNC=true Include the optional runc payload"
+	@echo "  make build AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true Include the Ascend adapter"
 	@echo "  make build AKERNEL_TARGETARCH=arm64 AKERNEL_ENABLE_KATA=false AKERNEL_ENABLE_FIRECRACKER=false AKERNEL_ENABLE_RUNC=true Build native arm64 runc image"
 	@echo "  make versions                       Show locally selected component versions"
 	@echo "  make push                          Push the configured all-in-one image"
@@ -117,6 +121,8 @@ config:
 	if [[ -n "$(CHECKPOINT_STORAGE_HOST_PATH)" ]]; then args+=(--checkpoint-storage-host-path "$(CHECKPOINT_STORAGE_HOST_PATH)"); fi; \
 	if [[ -n "$(CHECKPOINT_STORAGE_EXISTING_CLAIM)" ]]; then args+=(--checkpoint-storage-existing-claim "$(CHECKPOINT_STORAGE_EXISTING_CLAIM)"); fi; \
 	if [[ -n "$(ENABLE_RUNC)" ]]; then args+=(--enable-runc "$(ENABLE_RUNC)"); fi; \
+	if [[ -n "$(ENABLE_ASCEND)" ]]; then args+=(--enable-ascend "$(ENABLE_ASCEND)"); fi; \
+	if [[ -n "$(MOUNT_ASCEND_QUEUE_SCHEDULE)" ]]; then args+=(--mount-ascend-queue-schedule "$(MOUNT_ASCEND_QUEUE_SCHEDULE)"); fi; \
 	if [[ -n "$(SCHEDULE_PLACEMENT_POLICY)" ]]; then args+=(--schedule-placement-policy "$(SCHEDULE_PLACEMENT_POLICY)"); fi; \
 	if [[ -n "$(GRAFANA_PUBLIC_ACCESS)" ]]; then args+=(--grafana-public-access "$(GRAFANA_PUBLIC_ACCESS)"); fi; \
 	if [[ -n "$(GRAFANA_ADMIN_PASSWORD)" ]]; then args+=(--grafana-admin-password "$(GRAFANA_ADMIN_PASSWORD)"); fi; \

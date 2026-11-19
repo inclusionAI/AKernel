@@ -38,6 +38,49 @@ class PressureConfigTest(unittest.TestCase):
                     prepared = yaml.safe_load(destination.read_text())
                     node = prepared["service_overrides"]["adxlet"]["config"]
                     self.assertEqual(node.get("pressure"), DEFAULT_PRESSURE)
+                    self.assertEqual(node["resource_source"], {"disk_path": "/home/akernel"})
+
+    def test_ascend_replaces_auto_source_and_composes_with_existing_overlays(self):
+        source = ROOT / "builder/config/adx-standalone.yaml"
+        release_dump = {
+            "services": [
+                {"role": "coordinator", "config": {"rpc_timeout_seconds": 90}},
+                {"role": "adxlet", "config": {
+                    "rpc_timeout_seconds": 90,
+                    "resource_source": {
+                        "kind": "auto", "disk_path": "/home/akernel", "valid_for_seconds": 42,
+                    },
+                    "pressure": DEFAULT_PRESSURE,
+                    "execd_env": {"LITERAL": "${REMAIN_LITERAL}"},
+                }},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "prepared.yaml"
+            with (
+                patch.dict(os.environ, {"ENABLE_TRACE": "true"}),
+                patch.object(CONFIG.subprocess, "run") as run,
+            ):
+                run.side_effect = [
+                    type("Result", (), {"stdout": yaml.safe_dump(release_dump)})(),
+                    type("Result", (), {"stdout": "afs-dfs fuse.afs rw"})(),
+                ]
+                CONFIG.configure(
+                    source, destination, Path("/mnt/akernel-shared"), "checkpoints/test",
+                    ascend=True,
+                )
+            self.assertEqual(run.call_args_list[0].args[0][-2:], ["config", "dump"])
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+            coordinator, adxlet = yaml.safe_load(destination.read_text())["services"]
+            node = adxlet["config"]
+            self.assertEqual(node["resource_source"], {
+                "kind": "sandboxd", "socket": "/var/run/resource.sock", "valid_for_seconds": 42,
+            })
+            self.assertEqual(node["pressure"], DEFAULT_PRESSURE)
+            self.assertEqual(node["rpc_timeout_seconds"], 90)
+            self.assertEqual(node["execd_env"]["LITERAL"], "$${REMAIN_LITERAL}")
+            self.assertEqual(node["execd_env"]["ADX_TRACE_ENABLED"], "true")
+            self.assertEqual(node["checkpoint_storage"], coordinator["config"]["checkpoint_reclaimers"][0])
 
     def test_preparation_preserves_operator_pressure_policy(self):
         policy = {

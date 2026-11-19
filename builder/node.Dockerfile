@@ -6,6 +6,7 @@ ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
 ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
+ARG AKERNEL_ENABLE_ASCEND=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
 ARG SANDBOXD_BUILD_IMAGE=golang:1.25.5-bookworm
 ARG GVISOR_DOWNLOAD_IMAGE=ubuntu:24.04
@@ -16,6 +17,8 @@ ARG RUNC_VERSION
 ARG RUNC_SHA256
 ARG RUNC_RELEASE_BASE_URL
 ARG RUNC_BUILD_IMAGE=ubuntu:24.04
+ARG ASCEND_ADAPTER_AMD64_URL=https://github.com/openYuanrong-mirror/ascend-oci-adapter/releases/download/v0.1.0-rc.2/ascend-oci-adapter_v0.1.0-rc.2_linux_amd64.tar.gz
+ARG ASCEND_ADAPTER_AMD64_SHA256=abe3b926750c2467dc5544645bae530ec4bac8572615b0678892a4408d26954c
 ARG LIBNVIDIA_CONTAINER_VERSION=1.19.1-1
 ARG KATA_BUILD_IMAGE=ubuntu:24.04
 ARG KATA_RELEASE=4.0.0
@@ -309,6 +312,30 @@ RUN mkdir -p /runc/usr/local/bin
 
 FROM runc-runtime-${AKERNEL_ENABLE_RUNC} AS runc-runtime
 
+FROM ${RUNC_BUILD_IMAGE} AS ascend-adapter-true
+ARG TARGETARCH
+ARG AKERNEL_ENABLE_RUNC
+ARG ASCEND_ADAPTER_AMD64_URL
+ARG ASCEND_ADAPTER_AMD64_SHA256
+ARG AKERNEL_APT_UBUNTU_MIRROR
+ARG AKERNEL_APT_UBUNTU_PORTS_MIRROR
+RUN test "${TARGETARCH}" = amd64 && test "${AKERNEL_ENABLE_RUNC}" = true
+RUN --mount=type=bind,source=builder/scripts/configure-apt-mirror.sh,target=/tmp/configure-apt-mirror.sh \
+    sh /tmp/configure-apt-mirror.sh
+RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-get-update.sh \
+    sh /tmp/apt-get-update.sh && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+COPY ./builder/scripts/install-ascend-adapter.sh ./builder/scripts/verify-elf-arch.sh /tmp/
+COPY ./src/sandboxd/configs/ascend/mounts.json /tmp/ascend-mounts.json
+RUN sh /tmp/install-ascend-adapter.sh "${ASCEND_ADAPTER_AMD64_URL}" \
+      "${ASCEND_ADAPTER_AMD64_SHA256}" /tmp/ascend-mounts.json /ascend
+
+FROM ${RUNC_BUILD_IMAGE} AS ascend-adapter-false
+RUN mkdir -p /ascend
+
+FROM ascend-adapter-${AKERNEL_ENABLE_ASCEND} AS ascend-adapter
+
 FROM ubuntu:24.04 AS distill-fs-runtime
 ARG TARGETARCH
 ARG DISTILL_FS_RELEASE
@@ -334,6 +361,7 @@ ENV container=oci
 
 ARG AKERNEL_ENABLE_KATA
 ARG AKERNEL_ENABLE_RUNC
+ARG AKERNEL_ENABLE_ASCEND
 ARG AKERNEL_ENABLE_FIRECRACKER
 ARG GVISOR_RELEASE
 ARG GVISOR_SHA512
@@ -395,7 +423,10 @@ RUN --mount=type=bind,source=builder/scripts/apt-get-update.sh,target=/tmp/apt-g
     sh /tmp/apt-get-update.sh; \
     apt-get install -y --no-install-recommends \
       "libnvidia-container1=${LIBNVIDIA_CONTAINER_VERSION}" \
-      "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}"; \
+      "libnvidia-container-tools=${LIBNVIDIA_CONTAINER_VERSION}" \
+      "nvidia-container-toolkit=${LIBNVIDIA_CONTAINER_VERSION}" \
+      "nvidia-container-toolkit-base=${LIBNVIDIA_CONTAINER_VERSION}"; \
+    test -x /usr/bin/nvidia-container-runtime-hook; \
     rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -464,6 +495,7 @@ COPY --from=distill-fs-runtime /distill-fs/share/distill-fs/ /usr/local/share/di
 COPY --from=kata-runtime /kata/opt/kata /opt/kata
 COPY --from=runc-runtime /runc/usr/local/bin/ /usr/local/bin/
 COPY --from=firecracker-runtime /firecracker/ /
+COPY --from=ascend-adapter /ascend/ /
 RUN if [ "${AKERNEL_ENABLE_KATA}" = "true" ]; then \
       ln -sf /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2; \
     fi
@@ -559,6 +591,7 @@ LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.akernel.runc.version="${RUNC_VERSION}" \
       org.akernel.runc.binary.sha256="${RUNC_SHA256}" \
       org.akernel.runc.enabled="${AKERNEL_ENABLE_RUNC}" \
+      org.akernel.ascend.enabled="${AKERNEL_ENABLE_ASCEND}" \
       org.akernel.kata.enabled="${AKERNEL_ENABLE_KATA}" \
       org.akernel.firecracker.release="${FIRECRACKER_RELEASE}" \
       org.akernel.firecracker.enabled="${AKERNEL_ENABLE_FIRECRACKER}"

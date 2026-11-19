@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -49,6 +50,64 @@ class AdxChartTest(unittest.TestCase):
             if resource.get("kind") == kind and resource["metadata"]["name"] == name:
                 return resource
         self.fail(f"missing {kind}/{name}")
+
+    def test_ascend_worker_placement_configuration_and_mounts_are_opt_in(self):
+        default = self.resource("DaemonSet", "akernel-node")["spec"]["template"]["spec"]
+        self.assertNotIn("akernel.io/ascend", default.get("nodeSelector", {}))
+        self.assertFalse(any(v["name"].startswith("ascend-") for v in default["volumes"]))
+        raw = self.resource("ConfigMap", "akernel-node-config")["data"]["sandboxd_config.toml"]
+        self.assertNotIn("xpu", tomllib.loads(raw)["plugin"])
+
+        for queue in ("true", "false"):
+            with self.subTest(queue=queue):
+                resources, _ = render(
+                    "node.config.sandboxd.enableRunc=true",
+                    "node.config.sandboxd.enableAscend=true",
+                    f"node.config.sandboxd.mountAscendQueueSchedule={queue}",
+                    "node.nodeSelector.pool=dedicated",
+                )
+                pod = next(r for r in resources if r["kind"] == "DaemonSet")["spec"]["template"]["spec"]
+                self.assertEqual(pod["nodeSelector"], {
+                    "akernel.io/ascend": "true", "pool": "dedicated",
+                    "kubernetes.io/arch": "amd64", "kubernetes.io/os": "linux",
+                })
+                self.assertIn("prepare-runc-filesystems", [c["name"] for c in pod["initContainers"]])
+                preparer = next(c for c in pod["initContainers"] if c["name"] == "prepare-runc-filesystems")
+                self.assertIn("AKERNEL_ENABLE_ASCEND=true", preparer["command"][-1])
+                paths = {
+                    "/usr/local/Ascend/driver": "Directory",
+                    "/usr/local/dcmi": "Directory", "/usr/local/bin/npu-smi": "File",
+                }
+                if queue == "true":
+                    paths["/var/queue_schedule"] = "Directory"
+                volumes = {v["name"]: v["hostPath"] for v in pod["volumes"]
+                           if v["name"].startswith("ascend-")}
+                mounts = [m for m in pod["containers"][0]["volumeMounts"] if m["name"] in volumes]
+                self.assertEqual({v["path"]: v["type"] for v in volumes.values()}, paths)
+                self.assertEqual(len(mounts), len(paths))
+                for mount in mounts:
+                    self.assertTrue(mount["readOnly"])
+                    self.assertEqual(mount["mountPath"], volumes[mount["name"]]["path"])
+                node_config = next(r for r in resources if r["metadata"]["name"] == "akernel-node-config")
+                plugin = tomllib.loads(node_config["data"]["sandboxd_config.toml"])["plugin"]
+                self.assertEqual(plugin["xpu"]["ascend"], {
+                    "enabled": True, "adapter": "/usr/local/libexec/akernel/ascend-oci-adapter",
+                    "mount_profile": "/etc/akernel/ascend/mounts.json",
+                })
+                self.assertEqual(plugin["node_resource"]["sock_path"], "/var/run/resource.sock")
+
+    def test_invalid_ascend_settings_fail_render(self):
+        enabled = "node.config.sandboxd.enableAscend=true"
+        runc = "node.config.sandboxd.enableRunc=true"
+        for settings, message in (
+            ((enabled,), "requires enableRunc=true"),
+            (("node.config.sandboxd.mountAscendQueueSchedule=true",), "requires enableAscend=true"),
+            ((enabled, runc, r"node.nodeSelector.kubernetes\.io/arch=arm64"),
+             "requires worker nodeSelector kubernetes.io/arch=amd64"),
+        ):
+            with self.subTest(settings=settings), self.assertRaises(subprocess.CalledProcessError) as error:
+                render(*settings)
+            self.assertIn(message, error.exception.stderr)
 
     def test_runc_filesystem_preparation_is_opt_in(self) -> None:
         default = self.resource("DaemonSet", "akernel-node")["spec"]["template"]["spec"]

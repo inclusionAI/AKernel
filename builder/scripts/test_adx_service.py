@@ -13,6 +13,7 @@ class AdxServiceTest(unittest.TestCase):
             source.write_bytes(
                 b"AKERNEL_ADX_CONFIG=/etc/akernel/adx-node.yaml\0"
                 b"AKERNEL_ADX_MANAGED_CREDENTIALS=external\0"
+                b"AKERNEL_ENABLE_ASCEND=true\0"
                 b"ADX_REDIS_URL=redis://example/\0"
                 b"NODE_NAME=node-from-pod\0INSTANCE_IP=192.0.2.10\0"
                 b"AWS_ACCESS_KEY_ID=test-access\0AWS_SECRET_ACCESS_KEY=test-secret\0"
@@ -33,6 +34,7 @@ class AdxServiceTest(unittest.TestCase):
             inherited = json.loads(result.stdout)
             self.assertEqual(inherited["AKERNEL_ADX_CONFIG"], "/etc/akernel/adx-node.yaml")
             self.assertEqual(inherited["AKERNEL_ADX_MANAGED_CREDENTIALS"], "external")
+            self.assertEqual(inherited["AKERNEL_ENABLE_ASCEND"], "true")
             self.assertEqual(inherited["ADX_REDIS_URL"], "redis://example/")
             self.assertEqual(inherited["NODE_NAME"], "explicit-node")
             self.assertEqual(inherited["INSTANCE_IP"], "192.0.2.10")

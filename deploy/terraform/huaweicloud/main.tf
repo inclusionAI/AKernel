@@ -9,6 +9,14 @@ provider "huaweicloud" {
 resource "null_resource" "input_validation" {
   lifecycle {
     precondition {
+      condition     = !var.enable_ascend || var.enable_runc
+      error_message = "enable_ascend requires enable_runc=true."
+    }
+    precondition {
+      condition     = !var.mount_ascend_queue_schedule || var.enable_ascend
+      error_message = "mount_ascend_queue_schedule requires enable_ascend=true."
+    }
+    precondition {
       condition     = var.create_cluster || length(var.kubeconfig_path) > 0
       error_message = "kubeconfig_path must be set when create_cluster=false."
     }
@@ -107,6 +115,8 @@ locals {
     sandboxd_nat_backend        = var.sandboxd_nat_backend
     chunk_db_size               = var.chunk_db_size
     enable_runc                 = var.enable_runc
+    enable_ascend               = var.enable_ascend
+    mount_ascend_queue_schedule = var.mount_ascend_queue_schedule
     runsc_checkpoint_mode       = var.runsc_checkpoint_mode
     native_filestore            = var.native_filestore
     node_secret_create          = var.node_secret_create

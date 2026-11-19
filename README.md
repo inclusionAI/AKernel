@@ -173,16 +173,19 @@ with Sandbox(cpu=1000, memory=2048) as sandbox:
     print(sandbox.files.read("/tmp/hello.txt"))
 ```
 
-Experimental gVisor sandboxes can request an exact NVIDIA GPU model:
+Sandbox requests can select a whole NVIDIA GPU by model:
 
 ```python
 with Sandbox(xpu="gpu:l20:1") as sandbox:
     print(sandbox.commands.run("nvidia-smi -L").stdout)
 ```
 
-GPU sandboxes require a compatible NVIDIA node and the gVisor `runsc`
-runtime. `storage_mb` is measured in MiB and is supported by `runsc` and
-Firecracker.
+Experimental GPU sandboxes use `runsc` or `runc` on compatible NVIDIA workers.
+Physical Ascend 310P and 910 A2/A3 use `runc` on opt-in Linux/amd64 workers.
+For example, `Sandbox(runtime="runc", xpu="npu:ascend910:1")` requests one
+device from a worker that reports model `ascend910`.
+`storage_mb` is measured in MiB and is supported by `runsc` and Firecracker.
+See [accelerator workers](./deploy/README.md#accelerator-workers) for prerequisites.
 
 See the complete [basic usage example](./sdk/python/examples/basic_usage.py), the [sandbox runtime example](./sdk/python/examples/sandbox_runtime.py), and the other [SDK examples](./sdk/python/examples/) for more operations.
 

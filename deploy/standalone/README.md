@@ -17,7 +17,7 @@ source .akernel/standalone/data/sdk-env.sh
 
 `make standalone` checks the host and Docker daemon, initializes `src/sandboxd` if missing, verifies its revision against the parent gitlink, builds the current source, and starts that exact image through `start.sh`. It waits for the node and gateway health checks before printing the SDK address and environment-file path. It does not need a cloud profile or registry push.
 
-The source entry point selects the Docker daemon's native architecture and uses the `execd` profile with runsc. Kata, Firecracker, runc, and GPU access are disabled unless explicitly enabled on a supported platform. It builds a unique local image tag and records source revision, image, and container identities in `source-state.json` under the data directory. Local AKernel edits are built and marked `.dirty` in the recorded revision. An initialized sandboxd checkout must be clean and match the gitlink; the helper does not fetch, switch, or overwrite it.
+The source entry point selects the Docker daemon's native architecture and uses the `execd` profile with runsc. Kata, Firecracker, runc and accelerator access are disabled unless explicitly enabled on a supported platform. It builds a unique local image tag and records source revision, image, and container identities in `source-state.json` under the data directory. Local AKernel edits are built and marked `.dirty` in the recorded revision. An initialized sandboxd checkout must be clean and match the gitlink; the helper does not fetch, switch, or overwrite it.
 
 The default source data directory is `.akernel/standalone/data`, including the bootstrap API key, SDK token reference, generated service configuration, `source-state.json`, and `sdk-env.sh`. The environment file reads the token from its protected file when sourced; commands print credential paths rather than token values. The default local state directory is ignored by Git; keep custom data directories out of version control too.
 
@@ -82,8 +82,8 @@ environment used by the launcher. To override a custom memory policy, put its
 boolean `enabled` field in the standard `[plugin.resource.memory_limit]`
 section. See the [PVM deployment guide](../pvm-runtime.md#deployment-and-storage-profile).
 
-The bundled ADX profile retains its `auto` resource source, including PVM and
-trace/shared-storage variants. `auto` does not guarantee that public scheduling
+The bundled ADX profile defaults to its `auto` resource source. `auto` does
+not guarantee that public scheduling
 capacity follows the sandbox parent ceiling. Before enabling the policy,
 operators must configure and qualify a compatible ADX `resource_source`, whether
 using the bundled profile or a custom `AKERNEL_ADX_CONFIG`. Verify memory
@@ -97,15 +97,40 @@ Runsc is the source default. Opt into runc with
 `make standalone AKERNEL_ENABLE_RUNC=true` and an approved
 `AKERNEL_RUNC_RESOLV_CONF`. Linux/amd64 with usable `/dev/kvm` can also enable
 `AKERNEL_ENABLE_KATA=true` or `AKERNEL_ENABLE_FIRECRACKER=true`.
-Experimental runsc GPU access requires host NVIDIA drivers and Container
-Toolkit, with `AKERNEL_ENABLE_GPU=true`.
+Standalone NVIDIA container access requires host NVIDIA drivers and Container
+Toolkit, with `AKERNEL_ENABLE_GPU=true`. To schedule GPU requests, ADX needs a
+resource source that exposes device inventory, such as sandboxd's resource socket.
 
 Native ARM64 and Apple Silicon OrbStack builds require architecture-matched
 `ADX_RELEASE_URL` / `ADX_RELEASE_SHA256` and `ADX_EXECD_URL` /
-`ADX_EXECD_SHA256`; the default archive pins are AMD64. VM and GPU payloads
+`ADX_EXECD_SHA256`; the default archive pins are AMD64. VM and accelerator payloads
 remain disabled on ARM64. The launcher verifies image architecture and probes
 TUN/TAP, cgroups, iptables, FUSE and loop-backed ext4 before creating credentials.
 See [build downloads](../../builder/README.md) for mirror and archive options.
+
+### Ascend NPU access
+
+Use a native Linux/amd64 Docker host with physical Ascend 310P or 910 A2/A3,
+the host Ascend driver, and a working `npu-smi info`. For a source build, run
+from the repository root.
+
+```bash
+make standalone AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true
+```
+
+For an existing image with both payloads, launch it with the same two flags.
+
+```bash
+IMAGE=akernel-ascend:local AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true \
+  ./deploy/standalone/start.sh
+```
+
+The launcher verifies and mounts `/usr/local/Ascend/driver`, `/usr/local/dcmi`
+and `/usr/local/bin/npu-smi` read-only into the node container. An existing
+FlowGW `/var/queue_schedule` directory is also mounted read-only. Sandboxd
+applies its narrower mount profile to the leased runc sandbox. Ascend opt-in
+switches ADX resource observation to `/var/run/resource.sock` so ADX can
+schedule physical devices. Ordinary standalone uses ADX's `auto` source.
 
 ### DNS resolver sources
 

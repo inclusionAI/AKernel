@@ -32,6 +32,7 @@ from akernel_sdk._addresses import Endpoint
 from akernel_sdk._backends import adx
 from akernel_sdk._backends.base import BackendConfig, SandboxSpec
 from akernel_sdk._backends.errors import BackendOperationError, TimeoutException
+from akernel_sdk._sandbox_resources import normalize_xpu
 from akernel_sdk.types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config
 
 
@@ -73,6 +74,32 @@ class AdxBackendTest(unittest.TestCase):
             gateway_endpoint=Endpoint("gateway.example", 8443, "https", True),
             token="secret",
         )
+
+    def test_normalized_ascend_request_is_preserved_by_native_transport(self):
+        requests = []
+
+        def send(_client, request, **_kwargs):
+            requests.append(request)
+            return httpx.Response(
+                403, json={"message": "stop after encoding"}, request=request
+            )
+
+        with (
+            patch.object(httpx.Client, "send", autospec=True, side_effect=send),
+            self.assertRaises(BackendOperationError),
+        ):
+            adx.AdxBackend(self.config).create(
+                _spec(runtime="runc", xpu=normalize_xpu(" NPU:Ascend910B4:01 "))
+            )
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        self.assertEqual(
+            (request.method, request.url.path),
+            ("POST", "/api/environment/v1/environments"),
+        )
+        body = json.loads(request.content)
+        self.assertEqual(body["xpu"], "npu:ascend910b4:1")
+        self.assertEqual(body["rootfs"]["runtime"], "runc")
 
     def test_managed_default_reserves_floor_through_native_request_encoding(self):
         key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"

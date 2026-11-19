@@ -76,6 +76,26 @@ data:
 {{- end }}
 {{- $sandboxdConfig = replace $runcMarker "runc=\"/usr/local/bin/runc\"" $sandboxdConfig }}
 {{- end }}
+{{- $sandboxd := .Values.node.config.sandboxd }}
+{{- if not (and (kindIs "bool" $sandboxd.enableAscend) (kindIs "bool" $sandboxd.mountAscendQueueSchedule)) }}
+{{- fail "node.config.sandboxd.enableAscend and mountAscendQueueSchedule must be boolean" }}
+{{- end }}
+{{- if and $sandboxd.mountAscendQueueSchedule (not $sandboxd.enableAscend) }}
+{{- fail "node.config.sandboxd.mountAscendQueueSchedule requires enableAscend=true" }}
+{{- end }}
+{{- if $sandboxd.enableAscend }}
+{{- if ne (toString $sandboxd.enableRunc) "true" }}
+{{- fail "node.config.sandboxd.enableAscend requires enableRunc=true" }}
+{{- end }}
+{{- $ascendMarker := "(?m)^[\\t ]*# AKERNEL_XPU_ASCEND[\\t ]*$" }}
+{{- if ne (len (regexFindAll $ascendMarker $sandboxdConfig -1)) 1 }}
+{{- fail "node.config.sandboxd.enableAscend requires exactly one # AKERNEL_XPU_ASCEND marker in node.config.sandboxd.config" }}
+{{- end }}
+{{- $sandboxdConfig = regexReplaceAll $ascendMarker $sandboxdConfig `[plugin.xpu.ascend]
+enabled=true
+adapter="/usr/local/libexec/akernel/ascend-oci-adapter"
+mount_profile="/etc/akernel/ascend/mounts.json"` }}
+{{- end }}
 {{- $chunkDbSize := .Values.node.config.sandboxd.chunkDbSize | default "" }}
 {{- if $chunkDbSize }}
 {{- if not (regexMatch "^[0-9]+(B|KiB|MiB|GiB|TiB)?$" $chunkDbSize) }}
