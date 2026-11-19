@@ -168,6 +168,16 @@ class AscendAdapterInstallTest(unittest.TestCase):
                             (destination / "etc/akernel/ascend/mounts.json").read_text(),
                             profile.read_text(),
                         )
+                        loader_config = destination / "etc/ld.so.conf.d/akernel-ascend.conf"
+                        self.assertEqual(
+                            loader_config.read_text().splitlines(),
+                            [
+                                "/usr/local/Ascend/driver/lib64/common",
+                                "/usr/local/Ascend/driver/lib64/driver",
+                                "/usr/local/dcmi",
+                            ],
+                        )
+                        self.assertEqual(loader_config.stat().st_mode & 0o777, 0o644)
                         for license_path in license_paths:
                             self.assertTrue((destination / "opt/akernel" / license_path).is_file())
 

@@ -25,11 +25,18 @@ tar --no-same-owner -xzf "$archive" -C "$workdir" \
 source="$workdir/$bundle"
 sh "$script_dir/verify-elf-arch.sh" "$source/bin/ascend-oci-adapter" amd64
 mkdir -p "$destination/usr/local/libexec/akernel" "$destination/etc/akernel/ascend" \
+    "$destination/etc/ld.so.conf.d" \
     "$destination/opt/akernel/licenses/ascend-oci-adapter" \
     "$destination/opt/akernel/licenses/mind-cluster"
 install -m 0755 "$source/bin/ascend-oci-adapter" \
     "$destination/usr/local/libexec/akernel/ascend-oci-adapter"
 install -m 0644 "$mount_profile" "$destination/etc/akernel/ascend/mounts.json"
+cat >"$destination/etc/ld.so.conf.d/akernel-ascend.conf" <<'EOF'
+/usr/local/Ascend/driver/lib64/common
+/usr/local/Ascend/driver/lib64/driver
+/usr/local/dcmi
+EOF
+chmod 0644 "$destination/etc/ld.so.conf.d/akernel-ascend.conf"
 install -m 0644 "$source/licenses/ascend-oci-adapter/LICENSE" \
     "$destination/opt/akernel/licenses/ascend-oci-adapter/"
 install -m 0644 "$source/licenses/mind-cluster/LICENSE" \
