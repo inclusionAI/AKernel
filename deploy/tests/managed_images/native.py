@@ -617,7 +617,7 @@ configure_network
             )
             image = built.managed_image
             source = client.Sandbox(
-                image=built.reference,
+                image=f"http://{built.reference}",
                 cpu=1000,
                 memory=1024,
                 idle_timeout=1200,
