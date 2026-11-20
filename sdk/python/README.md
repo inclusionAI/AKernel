@@ -1787,6 +1787,7 @@ handles. It does not interpret Dockerfiles or start a local Docker daemon.
 `no_cache=True` is an explicit rebuild choice; fresh environments retain native
 BuildKit cache use by default. Build failure stdout/stderr can be retained using
 `build_image(..., log_path=...)`. Cleanup failures retain environment identity.
+
 `artifact.has_startup_command` reports whether the effective OCI ENTRYPOINT/CMD
 is nonempty. Pass it as `Sandbox(..., inherit_entrypoint=artifact.has_startup_command)`
 when the task should run the image's startup command. Images that clear both
@@ -1814,3 +1815,37 @@ changed provider identity, and automatic Registry artifact GC remain outside
 the qualified contract.
 Operators own Registry TLS and repository-scoped authorization. A shared
 Registry account does not provide per-tenant image isolation.
+
+### Managed image ownership
+
+Managed image ownership requires a supporting control-plane and planning-capable managed-tools deployment. Existing builds without `retention` keep their lifetime behavior and are not enrolled for reclamation. `ImageRetention()` enrolls a new permanently retained publication; `ImageRetention.ephemeral()` requests a 24-hour grace after all caller and platform references disappear. Image creation time does not start that grace.
+
+```python
+from akernel_sdk import Client, ImageRetention, build_image
+
+client = Client()
+built = build_image(
+    "./environment", profile="managed-build", client=client,
+    retention=ImageRetention.ephemeral(),
+    request_id="persisted-build-request-identity",
+)
+image = built.managed_image
+if image is None:
+    raise RuntimeError("expected a managed publication")
+with client.Sandbox(image=built.reference) as sandbox:
+    snapshot = sandbox.create_snapshot()
+    image.release()  # publisher release; sandbox/Snapshot still protect it
+client.Sandbox.delete_snapshot(snapshot.snapshot_id)
+```
+
+Persist the request identity before submission. The server allocates the publication ID and repeating the request returns that same ID and state, including after cancellation or deletion. After an interrupted response, query `client.images.get(publication_id)` or repeat `client.images.begin(request_id, retention)`. Build failures expose `publication_id` when known and preserve builder cleanup context. Use `image.cancel_preparation()` to settle a preparation before the plan was recorded. Once a plan exists, an administrator must confirm that the writer can no longer publish, then reconcile the tags that were actually written.
+
+`built.managed_image` is a server handle. `ManagedImages()` captures its API endpoint, credential and TLS policy when constructed. Create a new client to select another connection. An opted-in `build_image()` without an explicit client shares one Client for publication and execution. `client.images.list(page_size=100)` lazily pages active publications. Accessing `image.outputs` on a summary loads its receipt, and `image.reference` requires exactly one output. Use `image.refresh()` for the full receipt with holds, retention, grace timestamp and the last observed reference sample. Retired publications remain queryable by ID or the original request ID. The operator's explicit observation checks current references and reports candidate eligibility.
+
+`hold = image.retain(lease_id)` acquires an independent durable hold; `hold.release()` releases exactly that hold idempotently. `image.release(lease_id)` can also reconcile a persisted hold identity. Default `image.release()` releases the original `publisher` hold only. Released IDs cannot be reused. Keep an application hold across retries instead of allocating one per attempt. `image.extend(unix_seconds)` only extends minimum retention. `image.pin()` selects permanent retention. Refresh and explicitly call `image.set_retention(ImageRetention.ephemeral(...))` to change policy; stale revisions conflict, and changing policy restarts future grace observation. SDK destruction and local connection closure do not release ownership.
+
+The control plane recognizes exact registered repositories in image roots and image mounts. Pending and dormant consumers and restored Snapshots carry durable dependencies. Consumers outside those platform records must retain a caller hold while they require a managed output.
+
+For managed Compose, pass `retention` and a persisted `request_id` to `ComposeProject.prepare()`. All build and image-only service outputs share one publication. Use `image_client=client.images` and create the outer sandbox through `client.Sandbox(**project.sandbox_options())`; ownership-enabled startup rejects a sandbox with an unbound or different API identity before starting its runtime. A different gateway route on the same API identity is allowed. `project.managed_image` exposes the publisher handle. Restored descriptors retain `managed_image_id`; `attach()` neither creates nor rebuilds a publication. Query that ID with the same client's `images` API.
+
+Reclamation is disabled by default and requires separately qualified backend, tools and operator configuration. The SDK never supplies Registry deletion credentials or runs blob GC. See the [operator procedure](../../builder/managed-docker/README.md#managed-image-reclamation) and [isolated qualification](../../deploy/tests/managed_images/README.md). Manifest deletion and physical recovery are separate observations.

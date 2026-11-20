@@ -56,6 +56,7 @@ class BackendOperationError(RuntimeError):
         outcome: str | None = None,
         request_id: str | None = None,
         operation_id: str | None = None,
+        publication_id: str | None = None,
         environment_id: str | None = None,
         status_code: int | None = None,
         scheduling_failure: dict[str, Any] | None = None,
@@ -73,6 +74,7 @@ class BackendOperationError(RuntimeError):
         self.outcome = outcome
         self.request_id = request_id
         self.operation_id = operation_id
+        self.publication_id = publication_id
         self.environment_id = environment_id
         self.status_code = status_code
         self.scheduling_failure = scheduling_failure

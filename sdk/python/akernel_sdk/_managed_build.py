@@ -7,13 +7,17 @@ import re
 import shlex
 import tarfile
 import tempfile
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._backends.errors import BackendOperationError, retain_failure_context
+from ._backends.registry import _config_from_env
+from ._managed_images import ImageRetention, ManagedImage
 
 if TYPE_CHECKING:
+    from ._client import Client
     from .sandbox import Sandbox
 
 
@@ -31,6 +35,7 @@ class BuiltImage:
     cwd: str | None = None
     user: str | None = None
     has_startup_command: bool = True
+    managed_image: ManagedImage | None = field(default=None, compare=False, repr=False)
 
 
 def upload_context(sandbox: Sandbox, source: Path, destination: str) -> None:
@@ -63,6 +68,9 @@ def build_image(
     log_path: str | Path | None = None,
     cpu_request: int | None = None,
     memory_request: int | None = None,
+    retention: ImageRetention | None = None,
+    request_id: str | None = None,
+    client: Client | None = None,
 ) -> BuiltImage:
     """Submit an original context through an authorized platform build profile.
 
@@ -76,6 +84,12 @@ def build_image(
     Optional preparation CPU/memory requests use millicores/MiB. The existing
     preparation limits remain 1000 millicores and 2048 MiB; these settings do
     not change task resources or pretend the builder can use unlimited memory.
+
+    retention explicitly enrolls the output in the server's managed image
+    lifecycle. Keep request_id across interrupted calls to reconcile a lost
+    response. A registered attempt is never automatically rebuilt. Its publisher
+    hold survives SDK exit and is released through BuiltImage.managed_image.
+    Omission retains the existing publication and lifetime behavior.
     """
     from ._docker_runtime import DockerRuntime
     from .sandbox import Sandbox
@@ -96,18 +110,76 @@ def build_image(
             or not 1 <= request <= limit
         ):
             raise ValueError(f"{name} must be an integer between 1 and {limit}")
+    if request_id is not None and retention is None:
+        raise ValueError("request_id requires explicit managed image retention")
+    publication = None
+    if retention is not None:
+        if client is None:
+            from ._client import Client as ConnectionClient
+
+            client = ConnectionClient._from_config(_config_from_env())
+        images = client.images
+        identity = request_id or uuid.uuid4().hex
+        try:
+            publication = images.begin(identity, retention)
+            if publication.state != "preparing":
+                raise BackendOperationError(
+                    "Publication already submitted; "
+                    "query its managed image instead of rebuilding"
+                )
+        except BaseException as error:
+            error.request_id = identity  # type: ignore[attr-defined]
+            if publication is not None:
+                error.publication_id = publication.id  # type: ignore[attr-defined]
+            raise
+        options["extra_config"] = {
+            **options.get("extra_config", {}),
+            "managedImagePublications": [publication.id],
+        }
     failure: BaseException | None = None
-    builder = Sandbox(
-        cpu=1000 if cpu_request is None else cpu_request,
-        memory=2048 if memory_request is None else memory_request,
-        cpu_limit=1000,
-        mem_limit=2048,
-        idle_timeout=max(300, timeout + 60),
-        schedule_timeout=schedule_timeout,
-        **options,
-    )
+    sandbox_type = client.Sandbox if client is not None else Sandbox
+    try:
+        builder = sandbox_type(
+            cpu=1000 if cpu_request is None else cpu_request,
+            memory=2048 if memory_request is None else memory_request,
+            cpu_limit=1000,
+            mem_limit=2048,
+            idle_timeout=max(300, timeout + 60),
+            schedule_timeout=schedule_timeout,
+            **options,
+        )
+    except BaseException as error:
+        if publication is not None:
+            error.publication_id = publication.id  # type: ignore[attr-defined]
+        raise
     try:
         upload_context(builder, source, "/work/context")
+        publication_flags = ["--publication-id", publication.id] if publication else []
+        if publication is not None:
+            builder.commands.run(
+                shlex.join(
+                    [
+                        "python3",
+                        "/usr/lib/akernel/compose.py",
+                        "image-build",
+                        "--context",
+                        "/work/context",
+                        "--result",
+                        "/work/publication-plan.json",
+                        "--plan-only",
+                        *publication_flags,
+                    ]
+                ),
+                timeout=60,
+                check=True,
+            )
+            plan = json.loads(
+                builder.commands.run(
+                    "cat /work/publication-plan.json", timeout=20, check=True
+                ).stdout
+            )
+            planned_outputs = plan["publication_plan"]
+            attempt_id = publication._register_outputs(planned_outputs)
         result = builder.commands.run(
             shlex.join(
                 [
@@ -119,6 +191,7 @@ def build_image(
                     "--result",
                     "/work/artifact.json",
                     *(["--no-cache"] if no_cache else []),
+                    *publication_flags,
                 ]
             ),
             timeout=timeout,
@@ -142,6 +215,10 @@ def build_image(
         ):
             raise ValueError("Runtime returned an invalid artifact reference")
         process = handle.get("image_process", {})
+        if publication is not None:
+            publication._complete_publication(
+                planned_outputs, {"single": reference}, attempt_id
+            )
         return BuiltImage(
             reference=reference,
             envs=dict(
@@ -150,9 +227,12 @@ def build_image(
             cwd=process.get("WorkingDir") or None,
             user=process.get("User") or None,
             has_startup_command=bool(process.get("Entrypoint") or process.get("Cmd")),
+            managed_image=publication,
         )
     except BaseException as error:
         failure = error
+        if publication is not None:
+            error.publication_id = publication.id  # type: ignore[attr-defined]
         if (
             isinstance(error, BackendOperationError)
             and error.command_result is not None
@@ -181,6 +261,8 @@ def build_image(
                 cleanup_failure = BackendOperationError(
                     "Managed build preparation cleanup failed",
                     environment_id=builder.id,
+                    operation_id=publication.id if publication is not None else None,
+                    publication_id=publication.id if publication is not None else None,
                 )
                 retain_failure_context(cleanup_failure, builder.id, cleanup)
                 raise cleanup_failure from cleanup

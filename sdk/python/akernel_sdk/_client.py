@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 from ._addresses import _parse_endpoint, api_endpoint_from_env
 from ._backends.base import BackendConfig
 from ._backends.registry import new_backend
+from ._managed_images import ManagedImages
 from ._tls import verification_from_env
 from .sandbox import Sandbox
 
@@ -95,10 +96,23 @@ class Client:
         if not isinstance(verify, bool):
             raise TypeError("verify_tls must be a boolean")
         config = BackendConfig(endpoint, gateway, credential.strip(), verify)
+        self._bind(config)
+
+    @classmethod
+    def _from_config(cls, config: BackendConfig) -> Client:
+        """Share an already normalized connection without reparsing its routes."""
+        connection = cls.__new__(cls)
+        connection._bind(config)
+        return connection
+
+    def _bind(self, config: BackendConfig) -> None:
         backend = new_backend(config)
+        gateway = config.gateway_endpoint
+        self.images = ManagedImages(config)
 
         class BoundSandbox(Sandbox):
             _bound_backend = backend
             _bound_gateway = gateway
+            _bound_config = config
 
         self.Sandbox = BoundSandbox

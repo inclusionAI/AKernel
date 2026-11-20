@@ -26,6 +26,7 @@ from ._backends.errors import (
 from ._docker_runtime import DockerRuntime
 from ._image_plan import ImageMountPlan
 from ._image_resolver import prepare_compose_images
+from ._managed_images import ImageRetention, ManagedImage, ManagedImages
 from .types import CommandResult, HttpReverseTunnel, Mount
 
 if TYPE_CHECKING:
@@ -105,6 +106,7 @@ class ComposeProject:
     _contents: list[str]
     _sandbox: Sandbox | None
     _startup_attempted: bool
+    _publication: ManagedImage | None
 
     @classmethod
     def prepare(
@@ -124,6 +126,9 @@ class ComposeProject:
         prebuilt_images: Mapping[str, str] | None = None,
         remote_directory: str = "/opt/akernel-compose/project",
         directories: Mapping[str, int] | None = None,
+        retention: ImageRetention | None = None,
+        request_id: str | None = None,
+        image_client: ManagedImages | None = None,
     ) -> ComposeProject:
         if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project_name) is None:
             raise ValueError("Invalid Compose project_name")
@@ -166,6 +171,14 @@ class ComposeProject:
             names.append(f"override-{index}.json")
             contents.append(json.dumps(override))
         runtime = runtime or DockerRuntime()
+        if (
+            retention is not None or request_id is not None
+        ) and runtime.profile is None:
+            raise ValueError(
+                "Managed image retention requires a managed runtime profile"
+            )
+        if request_id is not None and retention is None:
+            raise ValueError("request_id requires explicit managed image retention")
         # Managed inputs are interpreted only by the bundled official Compose
         # CLI. safe_load cannot implement native merge tags, include or profiles.
         services = {} if runtime.profile is not None else _services(contents)
@@ -230,6 +243,21 @@ class ComposeProject:
             "managed_runtime_profile": runtime.profile,
         }
         options = runtime.sandbox_options()
+        result._publication = None
+        if retention is not None:
+            result._publication = (image_client or ManagedImages()).begin(
+                request_id or uuid4().hex, retention
+            )
+            if result._publication.state != "preparing":
+                raise BackendOperationError(
+                    "Compose publication already submitted; "
+                    "query it instead of rebuilding"
+                )
+            result._descriptor["managed_image_id"] = result._publication.id
+            options["extra_config"] = {
+                **options.get("extra_config", {}),
+                "managedImagePublications": [result._publication.id],
+            }
         result._descriptor["sandbox_options"] = {
             **options,
             "mounts": [
@@ -263,7 +291,13 @@ class ComposeProject:
         result._runtime = None
         result._context = None
         result._contents = []
+        result._publication = None
         return result
+
+    @property
+    def managed_image(self) -> ManagedImage | None:
+        """Original publisher handle; restored descriptors expose managed_image_id."""
+        return self._publication
 
     @property
     def descriptor(self) -> dict[str, Any]:
@@ -306,6 +340,21 @@ class ComposeProject:
             or self._startup_attempted
         ):
             raise RuntimeError("Compose runtime startup is fresh-only")
+        if self._publication is not None:
+            expected = self._publication._images._config
+            actual = getattr(type(sandbox), "_bound_config", None)
+            if actual is None or (
+                actual.api_endpoint.base_url(),
+                actual.token,
+                actual.verify_tls,
+            ) != (
+                expected.api_endpoint.base_url(),
+                expected.token,
+                expected.verify_tls,
+            ):
+                raise ValueError(
+                    "Managed image ownership requires a Sandbox from the same Client"
+                )
         self._startup_attempted = True
         self._runtime.start(sandbox, network=self._descriptor["network"])
         self._sandbox = sandbox
@@ -492,6 +541,33 @@ class ComposeProject:
 
     def build(self, *, no_cache: bool = False, timeout: int = 600) -> None:
         if self._descriptor.get("managed_runtime_profile"):
+            publication = self._publication
+            if self._descriptor.get("managed_image_id") and publication is None:
+                raise RuntimeError("A restored publication cannot be rebuilt")
+            flags = ["--publication-id", publication.id] if publication else []
+            if publication is not None:
+                if publication.state != "preparing":
+                    raise RuntimeError(
+                        "Publication already submitted; reconcile its original outcome"
+                    )
+                planned = self._execute(
+                    shlex.join(
+                        [
+                            "python3",
+                            "/usr/lib/akernel/compose.py",
+                            "build",
+                            "--descriptor",
+                            self._descriptor["directory"] + ".config/descriptor.json",
+                            "--plan-only",
+                            *flags,
+                        ]
+                    ),
+                    timeout=60,
+                )
+                if planned.exit_code != 0:
+                    raise ComposeOperationError("plan", planned)
+                planned_outputs = json.loads(planned.stdout)["publication_plan"]
+                attempt_id = publication._register_outputs(planned_outputs)
             command = shlex.join(
                 [
                     "python3",
@@ -500,6 +576,7 @@ class ComposeProject:
                     "--descriptor",
                     self._descriptor["directory"] + ".config/descriptor.json",
                     *(["--no-cache"] if no_cache else []),
+                    *flags,
                 ]
             )
             try:
@@ -511,6 +588,17 @@ class ComposeProject:
                 (self._output / "build.log").write_text(result.stdout + result.stderr)
             if result.exit_code != 0:
                 raise ComposeOperationError("build", result)
+            if publication is not None:
+                receipt = self._execute(
+                    shlex.join(
+                        ["cat", self._descriptor["directory"] + ".build/artifacts.json"]
+                    ),
+                    timeout=20,
+                )
+                if receipt.exit_code != 0:
+                    raise ComposeOperationError("publication receipt", receipt)
+                outputs = json.loads(receipt.stdout)
+                publication._complete_publication(planned_outputs, outputs, attempt_id)
             return
         if not self._descriptor["prebuilt_only"]:
             self._operation(["build", *(["--no-cache"] if no_cache else [])], timeout)
