@@ -24,12 +24,12 @@ moves or rollouts without changing Registry placement or storage.
 
 ## Memory-pressure admission
 
-Bundled standalone and Helm execution nodes enable memory-only ADX pressure
-sampling. Memory use at or above 90% closes admission for new Environments;
-it reopens at or below 80%. Existing Environments continue running. The sample
-uses the higher of host memory use derived from `MemAvailable` and visible
-finite cgroup memory-limit usage. Sampling errors release the pressure gate;
-capacity and maintenance admission still apply.
+Bundled standalone and Helm execution nodes disable ADX pressure admission by
+default. When memory sampling is enabled, memory use at or above 90% closes
+admission for new Environments; it reopens at or below 80%. Existing
+Environments continue running. The sample uses whole-node memory from
+`/proc/meminfo`, derived from `MemTotal` and `MemAvailable`. Sampling errors
+release the pressure gate; capacity and maintenance admission still apply.
 
 Helm passes `adx.node.pressure` directly to adxlet using ADX field names. The
 umbrella chart uses the `core.` prefix. Its defaults are:
@@ -38,11 +38,11 @@ umbrella chart uses the `core.` prefix. Its defaults are:
 adx:
   node:
     pressure:
-      memory_enabled: true
+      memory_enabled: false
       disk_enabled: false
 ```
 
-Set `memory_enabled: false` to disable memory sampling. To tune hysteresis, add
+Set `memory_enabled: true` to enable memory sampling. To tune hysteresis, add
 `thresholds.memory_high_percent` and `thresholds.memory_low_percent` to the map;
 the low threshold must be smaller than the high threshold. Standalone uses the
 same defaults in `builder/config/adx-standalone.yaml`. Custom configurations

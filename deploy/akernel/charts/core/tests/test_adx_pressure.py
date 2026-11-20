@@ -20,18 +20,18 @@ def configs(values=None, *, umbrella=False):
 
 
 class AdxPressureTest(unittest.TestCase):
-    def test_core_and_umbrella_enable_only_node_memory_pressure(self):
+    def test_core_and_umbrella_disable_node_pressure_by_default(self):
         for umbrella in (False, True):
             with self.subTest(umbrella=umbrella):
                 roles = configs(umbrella=umbrella)
                 self.assertEqual(roles["adxlet"].get("pressure"), {
-                    "memory_enabled": True, "disk_enabled": False,
+                    "memory_enabled": False, "disk_enabled": False,
                 })
                 for role in ("coordinator", "apiserver", "ingress"):
                     self.assertNotIn("pressure", roles[role])
 
-    def test_operator_can_disable_memory_sampling(self):
-        policy = {"memory_enabled": False, "disk_enabled": False}
+    def test_operator_can_enable_memory_sampling(self):
+        policy = {"memory_enabled": True, "disk_enabled": False}
         for umbrella in (False, True):
             values = {"adx": {"node": {"pressure": policy}}}
             if umbrella:
