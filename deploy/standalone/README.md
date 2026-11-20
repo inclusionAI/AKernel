@@ -103,7 +103,10 @@ Toolkit, with `AKERNEL_ENABLE_GPU=true`.
 Native ARM64 and Apple Silicon OrbStack builds require architecture-matched
 `ADX_RELEASE_URL` / `ADX_RELEASE_SHA256` and `ADX_EXECD_URL` /
 `ADX_EXECD_SHA256`; the default archive pins are AMD64. VM and GPU payloads
-remain disabled on ARM64. The launcher verifies image architecture and probes
+remain disabled on ARM64. Source builds on ARM64 or with custom ADX archives
+use the Execd-only rootfs by default. Set `AKERNEL_ENABLE_E2B=true` only with
+a matching, envd-enabled ADX artifact pair.
+The launcher verifies image architecture and probes
 TUN/TAP, cgroups, iptables, FUSE and loop-backed ext4 before creating credentials.
 See [build downloads](../../builder/README.md) for mirror and archive options.
 

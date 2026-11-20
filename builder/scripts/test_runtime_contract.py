@@ -132,12 +132,16 @@ class RuntimeContractTest(unittest.TestCase):
     def test_actor_runtime_entrypoint_is_absent(self) -> None:
         self.assertFalse((ROOT / "builder/scripts/entryfile.sh").exists())
 
-    def test_image_build_exposes_only_the_execd_profile(self) -> None:
+    def test_image_build_defaults_to_the_e2b_runtime(self) -> None:
         runtime = (ROOT / "builder/runtime.Dockerfile").read_text(encoding="utf-8")
+        node = (ROOT / "builder/node.Dockerfile").read_text(encoding="utf-8")
         build = (ROOT / "deploy/scripts/build-image.sh").read_text(encoding="utf-8")
         self.assertNotIn("openyuanrong_sdk", runtime)
         self.assertNotIn("runtime-python", runtime)
         self.assertIn("false) runtime_target=runtime-execd", build)
+        self.assertEqual(runtime.rsplit("\nFROM ", 1)[-1].splitlines()[0], "scratch AS runtime-e2b")
+        self.assertEqual(re.findall(r'org\.akernel\.runtime\.profile="([^"]+)"', node),
+                         ['${AKERNEL_RUNTIME_PROFILE}'])
         self.assertNotIn("--runtime-profile", build)
 
     def test_dockerfiles_install_the_pinned_release_build(self) -> None:

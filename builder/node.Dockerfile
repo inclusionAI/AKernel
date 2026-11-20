@@ -4,6 +4,7 @@
 
 ARG AKERNEL_NODE_BASE_IMAGE=ubuntu:24.04
 ARG AKERNEL_RUNTIME_IMAGE=akernel-runtime:local
+ARG AKERNEL_RUNTIME_PROFILE=execd-envd
 ARG AKERNEL_ENABLE_KATA=true
 ARG AKERNEL_ENABLE_RUNC=false
 ARG AKERNEL_ENABLE_FIRECRACKER=true
@@ -142,6 +143,29 @@ RUN mkdir -p /kata/opt/kata
 FROM kata-runtime-${AKERNEL_ENABLE_KATA} AS kata-runtime
 
 FROM ${AKERNEL_RUNTIME_IMAGE} AS runtime-image
+
+FROM adx-release AS verified-runtime
+ARG AKERNEL_RUNTIME_PROFILE
+ARG TARGETARCH
+RUN --mount=from=runtime-image,target=/runtime \
+    --mount=type=bind,source=builder/scripts/verify-e2b-release.py,target=/tmp/verify-e2b-release.py \
+    set -eu; \
+    mkdir -p /verified-runtime; \
+    case "${AKERNEL_RUNTIME_PROFILE}" in \
+      execd-envd) \
+        python3 /tmp/verify-e2b-release.py \
+          /runtime/runtime-metadata/adx-component-manifest.json /opt/adx/current/manifest.json \
+          --runtime /runtime --architecture "${TARGETARCH}"; \
+        cp -a /runtime/runtime-metadata /verified-runtime/metadata; \
+        ;; \
+      execd) \
+        if test -e /runtime/runtime-metadata || test -L /runtime/runtime-metadata; then \
+          echo "execd requires an Execd-only runtime image" >&2; exit 1; \
+        fi \
+        ;; \
+      *) echo "unsupported runtime profile: ${AKERNEL_RUNTIME_PROFILE}" >&2; exit 1 ;; \
+    esac; \
+    cp /runtime/akernel-runtime-rootfs.img /verified-runtime/
 
 FROM ${SANDBOXD_BUILD_IMAGE} AS sandboxd-builder
 ARG TARGETARCH
@@ -420,17 +444,10 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
 
 
 COPY ./builder/scripts/verify-elf-arch.sh /usr/local/libexec/verify-elf-arch.sh
-COPY --from=runtime-image /akernel-runtime-rootfs.img /opt/akernel/runtime/akernel-runtime-rootfs.img
-RUN --mount=from=runtime-image,target=/mnt/akernel-runtime \
-    mkdir -p /opt/akernel/runtime/metadata && \
-    if test -d /mnt/akernel-runtime/runtime-metadata; then \
-      cp -a /mnt/akernel-runtime/runtime-metadata/. /opt/akernel/runtime/metadata/; \
-    fi
-COPY ./builder/scripts/verify-e2b-release.py /usr/local/libexec/verify-e2b-release.py
+COPY --from=verified-runtime /verified-runtime/ /opt/akernel/runtime/
 
 # ADX provides the control and data plane processes. AKernel keeps building
-# sandboxd from pinned sources. The default rootfs installs only EXECD; the
-# opt-in E2B rootfs reuses the envd-enabled ADX Execd component.
+# sandboxd from pinned sources and verifies the packaged runtime separately.
 COPY --from=adx-release /opt/adx/current/bin/ /opt/adx/current/bin/
 COPY --from=adx-release /opt/adx/current/third_party/ /opt/adx/current/third_party/
 COPY --from=adx-release /opt/adx/current/LICENSE /opt/adx/current/LICENSE
@@ -445,11 +462,6 @@ RUN set -eux; \
     test -x /opt/adx/current/bin/adx-apiserver; \
     test -x /opt/adx/current/runtime/adx-execd; \
     test ! -e /opt/adx/current/runtime/adx-runtime-rootfs.img; \
-    if test -f /opt/akernel/runtime/metadata/adx-component-manifest.json; then \
-      python3 /usr/local/libexec/verify-e2b-release.py \
-        /opt/akernel/runtime/metadata/adx-component-manifest.json \
-        /opt/adx/current/manifest.json; \
-    fi; \
     for binary in adxctl adx-coordinator adxlet adx-apiserver; do \
       sh /usr/local/libexec/verify-elf-arch.sh "/opt/adx/current/bin/${binary}" "${TARGETARCH}"; \
     done; \
@@ -550,9 +562,10 @@ RUN chmod 0644 /etc/logrotate.d/gvisor && \
 # Metadata-only changes must not invalidate fixed runtime download layers.
 ARG AKERNEL_VERSION
 ARG AKERNEL_REVISION
+ARG AKERNEL_RUNTIME_PROFILE
 LABEL org.opencontainers.image.version="${AKERNEL_VERSION}" \
       org.opencontainers.image.revision="${AKERNEL_REVISION}" \
-      org.akernel.runtime.profile="rrt" \
+      org.akernel.runtime.profile="${AKERNEL_RUNTIME_PROFILE}" \
       org.akernel.gvisor.release="${GVISOR_RELEASE}" \
       org.akernel.gvisor.archive.sha512="${GVISOR_SHA512}" \
       org.akernel.distill-fs.archive.sha256="${DISTILL_FS_SHA256}" \

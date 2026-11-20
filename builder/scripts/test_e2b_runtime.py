@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Verify the optional runtime reuses an intact, architecture-matched ADX component."""
+"""Verify the runtime reuses an intact, architecture-matched ADX component."""
 import hashlib
 import importlib.util
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -62,6 +63,77 @@ class E2bRuntimeTest(unittest.TestCase):
             release_path.write_text(json.dumps(changed))
             with self.subTest(key=key), self.assertRaises(ValueError):
                 verifier.verify(self.source / "manifest.json", release_path)
+
+        release_path.write_text(json.dumps(release))
+        self.module.prepare(self.source, self.output, "amd64")
+        manifest_path = self.output / "runtime-metadata/adx-component-manifest.json"
+        verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
+        with self.assertRaisesRegex(ValueError, "node architecture"):
+            verifier.verify(manifest_path, release_path, runtime=self.output, architecture="arm64")
+        for path in ("akernel-runtime-rootfs.img", "runtime-metadata/envd/manifest.json",
+                     "runtime-metadata/envd/LICENSE"):
+            with self.subTest(path=path):
+                artifact = self.output / path
+                original = artifact.read_bytes()
+                artifact.write_bytes(b"changed")
+                with self.assertRaisesRegex(ValueError, "runtime artifact checksum mismatch"):
+                    verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
+                artifact.write_bytes(original)
+
+        for path, component_name, release_name in (
+                ("akernel-runtime-rootfs.img", "adx-runtime-rootfs.img", "runtime/adx-runtime-rootfs.img"),
+                ("runtime-metadata/envd/manifest.json", "envd-manifest.json", "runtime/envd/manifest.json"),
+                ("runtime-metadata/envd/LICENSE", "envd-LICENSE", "runtime/envd/LICENSE")):
+            with self.subTest(release_name=release_name):
+                artifact = self.output / path
+                original = artifact.read_bytes()
+                release["files"][release_name] = component["files"][component_name]
+                release_path.write_text(json.dumps(release))
+                verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
+                artifact.write_bytes(b"unexpected carrier artifact")
+                component["files"][component_name] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+                manifest_path.write_text(json.dumps(component))
+                with self.assertRaisesRegex(ValueError, "platform release checksum mismatch"):
+                    verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
+                artifact.write_bytes(original)
+                component["files"][component_name] = release["files"][release_name]
+                manifest_path.write_text(json.dumps(component))
+
+        manifest_path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            verifier.verify(manifest_path, release_path, runtime=self.output, architecture="amd64")
+
+    def test_checks_the_guest_binaries_before_publishing_the_runtime(self):
+        header = bytearray(64)
+        header[:7] = b"\x7fELF\x02\x01\x01"
+        header[16:24] = b"\x02\x00\x3e\x00\x01\x00\x00\x00"
+        header[52] = 64
+        execd = bytes(header) + b"execd"
+        envd = bytes(header) + b"envd"
+        (self.source / "adx-execd").write_bytes(execd)
+        self.envd["sha256"] = hashlib.sha256(envd).hexdigest()
+        self.write_manifest()
+        run = self.module.subprocess.run
+
+        def extract_or_run(command, **kwargs):
+            if command[0] != "fsck.erofs":
+                return run(command, **kwargs)
+            bin_dir = Path(command[1].split("=", 1)[1]) / "usr/local/bin"
+            bin_dir.mkdir(parents=True)
+            for name, data in (("adx-execd", execd), ("envd", guest_envd)):
+                file = bin_dir / name
+                file.write_bytes(data)
+                file.chmod(0o755)
+            return None
+
+        with mock.patch.object(self.module.subprocess, "run", side_effect=extract_or_run):
+            guest_envd = envd + b"changed"
+            with self.assertRaisesRegex(ValueError, "guest binary checksum mismatch: envd"):
+                self.module.prepare(self.source, self.output, "amd64", verify_guest_binaries=True)
+            self.assertFalse(self.output.exists())
+            guest_envd = envd
+            self.module.prepare(self.source, self.output, "amd64", verify_guest_binaries=True)
+            self.assertTrue(self.output.is_dir())
 
     def test_rejects_missing_envd_tampering_symlinks_and_wrong_architecture(self):
         cases = ("missing envd", "tampered rootfs", "symlink", "wrong target",
