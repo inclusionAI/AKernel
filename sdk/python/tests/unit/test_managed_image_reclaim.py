@@ -62,7 +62,9 @@ class ManagedImageReclaim(unittest.TestCase):
         image.outputs = {"single": reference}
         image.info = {
             "image": {
-                "plan": {"single": "registry.test/publications/owned/service:build"}
+                "registered_outputs": {
+                    "single": "registry.test/publications/owned/service:build"
+                }
             },
             "eligible_for_reclamation": True,
             "reclamation_enabled": False,
@@ -84,7 +86,7 @@ class ManagedImageReclaim(unittest.TestCase):
         image = MagicMock()
         image.state = "ready"
         image.info = {
-            "image": {"plan": {"single": tagged}},
+            "image": {"registered_outputs": {"single": tagged}},
             "eligible_for_reclamation": True,
             "reclamation_enabled": True,
         }

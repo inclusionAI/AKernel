@@ -8,6 +8,7 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -112,8 +113,13 @@ class ManagedImage:
         )
         return self
 
-    def _publish_receipt(
-        self, plan: Mapping[str, str], outputs: Mapping[str, str]
+    def _register_outputs(self, outputs: Mapping[str, str]) -> str:
+        attempt_id = uuid4().hex
+        self._mutate("register_outputs", outputs=dict(outputs), attempt_id=attempt_id)
+        return attempt_id
+
+    def _complete_publication(
+        self, plan: Mapping[str, str], outputs: Mapping[str, str], attempt_id: str
     ) -> None:
         if plan.keys() != outputs.keys():
             raise ValueError("Runtime returned an incomplete publication receipt")
@@ -129,7 +135,7 @@ class ManagedImage:
                     "Runtime returned a reference outside the publication plan"
                 )
             digests[name] = digest
-        self._mutate("publish", digests=digests)
+        self._mutate("complete", digests=digests, attempt_id=attempt_id)
 
     def cancel_preparation(self) -> ManagedImage:
         """Cancel before plan registration; a planned writer needs reconciliation."""

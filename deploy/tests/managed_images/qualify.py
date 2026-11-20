@@ -246,9 +246,7 @@ def main():
                 else None
             )
             publication = (
-                f"qualification/{secrets.token_hex(16)}/publications/{image.id}"
-                if image
-                else None
+                f"qualification/direct-publisher/{image.id}" if image else None
             )
             repo = f"{publication}/service-0" if publication else "legacy/keep"
             tagged = f"{registry_authority}/{repo}:build"
@@ -258,7 +256,7 @@ def main():
                     plan["absent"] = (
                         f"{registry_authority}/{publication}/service-1:build"
                     )
-                image._mutate("plan", outputs=plan)
+                attempt_id = image._register_outputs(plan)
             config = b'{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":[]}}'
             layers = [shared, unique]
             with httpx.Client() as http:
@@ -324,7 +322,11 @@ def main():
                 )
                 response.raise_for_status()
             if image and not partial:
-                image._mutate("publish", digests={"single": sha(manifest)})
+                image._complete_publication(
+                    plan,
+                    {"single": f"{registry_authority}/{repo}@{sha(manifest)}"},
+                    attempt_id,
+                )
             return image, repo, f"{registry_authority}/{repo}@{sha(manifest)}"
 
         doomed, _, _ = publish("owned-delete", os.urandom(2 * 1024 * 1024))

@@ -108,8 +108,8 @@ class ManagedImagesTest(unittest.TestCase):
         image = ManagedImage(images, view("publishing"))
         plan = {"single": REFERENCE.split("@", 1)[0] + ":build"}
         with self.assertRaisesRegex(ValueError, "outside the publication plan"):
-            image._publish_receipt(
-                plan, {"single": REFERENCE.replace("service-0", "legacy")}
+            image._complete_publication(
+                plan, {"single": REFERENCE.replace("service-0", "legacy")}, "attempt"
             )
         images._request.assert_not_called()
 
@@ -222,8 +222,9 @@ class ManagedImagesTest(unittest.TestCase):
 
             def mutate(method, identity="", body=None):
                 events.append(body["operation"])
-                result = view("publishing" if body["operation"] == "plan" else "ready")
-                return result
+                if body["operation"] == "register_outputs":
+                    return view("publishing")
+                return view("ready")
 
             images._request.side_effect = mutate
             builder = MagicMock()
@@ -267,7 +268,11 @@ class ManagedImagesTest(unittest.TestCase):
                     request_id="stable",
                     retention=ImageRetention.ephemeral(),
                 )
-            self.assertEqual(events, ["plan", "native-publish", "publish"])
+            self.assertEqual(events, ["register_outputs", "native-publish", "complete"])
+            registered = images._request.call_args_list[0].args[2]
+            completed = images._request.call_args_list[1].args[2]
+            self.assertRegex(registered["attempt_id"], "^[0-9a-f]{32}$")
+            self.assertEqual(registered["attempt_id"], completed["attempt_id"])
             self.assertEqual(result.managed_image.id, IMAGE_ID)
             factory.assert_called_once()
             self.assertEqual(

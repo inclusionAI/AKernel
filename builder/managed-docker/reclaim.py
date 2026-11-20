@@ -150,7 +150,7 @@ class Registry:
 
 def observed_outputs(image: ManagedImage, registry: Registry) -> dict[str, str]:
     result = {}
-    for name, tagged in image.info["image"]["plan"].items():
+    for name, tagged in image.info["image"]["registered_outputs"].items():
         reference = registry.resolve_tag(tagged)
         if reference is not None:
             result[name] = reference

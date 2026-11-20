@@ -567,11 +567,7 @@ class ComposeProject:
                 if planned.exit_code != 0:
                     raise ComposeOperationError("plan", planned)
                 planned_outputs = json.loads(planned.stdout)["publication_plan"]
-                publication._mutate(
-                    "plan",
-                    outputs=planned_outputs,
-                    builder_id=self._require_sandbox().id,
-                )
+                attempt_id = publication._register_outputs(planned_outputs)
             command = shlex.join(
                 [
                     "python3",
@@ -602,7 +598,7 @@ class ComposeProject:
                 if receipt.exit_code != 0:
                     raise ComposeOperationError("publication receipt", receipt)
                 outputs = json.loads(receipt.stdout)
-                publication._publish_receipt(planned_outputs, outputs)
+                publication._complete_publication(planned_outputs, outputs, attempt_id)
             return
         if not self._descriptor["prebuilt_only"]:
             self._operation(["build", *(["--no-cache"] if no_cache else [])], timeout)

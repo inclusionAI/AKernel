@@ -428,7 +428,6 @@ configure_network
                 "authority": self.registry_authority,
                 "repository_prefix": "managed",
             },
-            "publisher_profiles": ["qualification"],
         }
         overrides["adxlet"]["config"]["labels"] = {
             "AKERNEL_RUNTIME_PROFILE_qualification": "8192"
