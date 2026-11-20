@@ -617,7 +617,7 @@ configure_network
             )
             image = built.managed_image
             source = client.Sandbox(
-                image=f"http://{built.reference}",
+                image=built.reference,
                 cpu=1000,
                 memory=1024,
                 idle_timeout=1200,
@@ -753,9 +753,29 @@ configure_network
                     nydus |= "nydus" in json.dumps(descriptor)
             if not nydus:
                 raise AssertionError("native exporter did not produce Nydus metadata")
+            single_reference = single.reference
             self.results["manifest_deletion"] = [
                 self.operator(image) for image in (single, compose)
             ]
+            try:
+                late = self.client.Sandbox(
+                    image=f"http://{single_reference}",
+                    cpu=500,
+                    memory=1024,
+                    schedule_timeout=2,
+                )
+            except BackendOperationError as error:
+                if (
+                    error.status_code != 400
+                    or "requires a registered output" not in str(error)
+                ):
+                    raise
+            else:
+                self.sandboxes.append(late.id)
+                raise AssertionError(
+                    "a retired repository was admitted with a scheme prefix"
+                )
+            self.results["retired_reference_denied"] = True
             self.phase("no-writer physical Registry GC")
             before_gc = allocated(self.data / "registry")
             command("docker", "stop", self.buildkit)
