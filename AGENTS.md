@@ -78,6 +78,8 @@ Named creation reuses an already successful Environment and its retained
 resource allocation. Keep the standalone replay regression aligned with that
 contract; use `get_info()` to verify retained resources.
 
+Fresh sandbox creation can opt into `required_node_capabilities`. Keep the requirement on the authoritative ADX create operation through local and central scheduling, including operation replay. This requires an ADX SDK and control plane that support the constrained create endpoint. Treat a missing constraint protocol as an error before allocation.
+
 ## Common Commands
 
 All commands should be run from the repository root.

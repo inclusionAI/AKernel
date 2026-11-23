@@ -85,6 +85,7 @@ class SandboxSpec:
     extra_config: Mapping[str, object]
     create_timeout: int | None = None
     init_timeout: int = 30
+    required_node_capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

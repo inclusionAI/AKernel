@@ -118,6 +118,7 @@ class SchedulingErrorTest(unittest.TestCase):
             ("device_fit", "accelerator"),
             ("node_available", "health"),
             ("node_affinity", "placement"),
+            ("node_capability", "required capabilities"),
             ("placement_groups", "placement"),
             ("environment_affinity", "placement"),
             ("topology_spread", "placement"),

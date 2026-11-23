@@ -88,6 +88,34 @@ class SandboxTest(unittest.TestCase):
         self.session.terminate.assert_called_once_with()
         self.session.close.assert_called_once_with()
 
+    def test_create_preserves_required_node_capabilities_with_other_placement(self):
+        capabilities = ["checkpoint-restore.v1"]
+        sandbox = Sandbox.create(
+            runtime="runsc", node_id="worker-1", required_node_capabilities=capabilities
+        )
+        capabilities.append("other.v1")
+        spec = self.backend.create.call_args.args[0]
+        self.assertEqual(spec.required_node_capabilities, ("checkpoint-restore.v1",))
+        self.assertEqual((spec.runtime, spec.node_id), ("runsc", "worker-1"))
+        sandbox.close()
+
+    def test_invalid_required_node_capabilities_fail_before_creation(self):
+        for capabilities, error in (
+            ("checkpoint-restore.v1", TypeError),
+            ([1], TypeError),
+            ([""], ValueError),
+            ([" checkpoint-restore.v1"], ValueError),
+            (["checkpoint-restore.v1", "checkpoint-restore.v1"], ValueError),
+        ):
+            with self.subTest(capabilities=capabilities), self.assertRaises(error):
+                Sandbox(required_node_capabilities=capabilities)
+        with self.assertRaisesRegex(ValueError, "fresh creation"):
+            Sandbox.create(
+                "snap-1", required_node_capabilities=["checkpoint-restore.v1"]
+            )
+        self.backend.create.assert_not_called()
+        self.backend.from_snapshot.assert_not_called()
+
     def test_extra_config_is_validated_and_defensively_copied(self):
         labels = ["worker"]
         requested = {"featureFlag": True, "nested": {"labels": labels}}

@@ -31,7 +31,11 @@ from adx_environment.commands import Commands as NativeCommands
 from akernel_sdk._addresses import Endpoint
 from akernel_sdk._backends import adx
 from akernel_sdk._backends.base import BackendConfig, SandboxSpec
-from akernel_sdk._backends.errors import BackendOperationError, TimeoutException
+from akernel_sdk._backends.errors import (
+    BackendOperationError,
+    TimeoutException,
+    UnsupportedBackendFeatureError,
+)
 from akernel_sdk.types import HttpReverseTunnel, Mount, NetworkPolicy, S3Config
 
 
@@ -73,6 +77,74 @@ class AdxBackendTest(unittest.TestCase):
             gateway_endpoint=Endpoint("gateway.example", 8443, "https", True),
             token="secret",
         )
+
+    def test_required_node_capabilities_do_not_use_an_old_native_sdk(self):
+        def old_init(self):
+            pass
+
+        with (
+            patch.object(adx.adx_environment.Environment, "__init__", old_init),
+            patch.object(adx, "_OwnedSandbox") as create,
+        ):
+            with self.assertRaisesRegex(
+                UnsupportedBackendFeatureError, "required_node_capabilities"
+            ):
+                adx.AdxBackend(self.config).create(
+                    _spec(required_node_capabilities=("checkpoint-restore.v1",))
+                )
+        create.assert_not_called()
+
+    def test_required_node_capabilities_reach_native_create_with_node_id(self):
+        def compatible_init(self, *, required_node_capabilities=None):
+            pass
+
+        native = MagicMock(id="default-capable")
+        with (
+            patch.object(adx.adx_environment.Environment, "__init__", compatible_init),
+            patch.object(adx, "_OwnedSandbox", return_value=native) as create,
+        ):
+            adx.AdxBackend(self.config).create(
+                _spec(
+                    node_id="worker-1",
+                    required_node_capabilities=("checkpoint-restore.v1",),
+                )
+            )
+        self.assertEqual(create.call_args.kwargs["node_id"], "worker-1")
+        self.assertEqual(
+            create.call_args.kwargs["required_node_capabilities"],
+            ("checkpoint-restore.v1",),
+        )
+
+    def test_candidate_native_sdk_sends_constrained_create_to_its_own_endpoint(self):
+        if "required_node_capabilities" not in adx.inspect.signature(
+            adx.adx_environment.Environment.__init__
+        ).parameters:
+            self.skipTest("requires a native SDK with constrained creation")
+        observed = []
+
+        def send(_client, request, **_kwargs):
+            observed.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(404, json={"message": "old server"}, request=request)
+
+        with (
+            patch.object(httpx.Client, "send", send),
+            self.assertRaises(BackendOperationError) as failure,
+        ):
+            adx.AdxBackend(self.config).create(
+                _spec(
+                    image="tools:1",
+                    node_id="worker-1",
+                    required_node_capabilities=("checkpoint-restore.v1",),
+                )
+            )
+        self.assertEqual(len(observed), 1)
+        path, body = observed[0]
+        self.assertEqual(path, "/api/environment/v1/constrained-environments")
+        self.assertEqual(body["requiredNodeCapabilities"], ["checkpoint-restore.v1"])
+        self.assertEqual(body["rootfs"]["runtime"], "runsc")
+        self.assertIn("worker-1", json.dumps(body["scheduleAffinities"]))
+        self.assertEqual(failure.exception.code, "UNSUPPORTED")
+        self.assertEqual(failure.exception.outcome, "not_started")
 
     def test_managed_default_reserves_floor_through_native_request_encoding(self):
         key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"

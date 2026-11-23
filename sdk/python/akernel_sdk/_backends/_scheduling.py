@@ -39,6 +39,10 @@ _BLOCKERS = {
         "Request an available accelerator model/count or add compatible workers.",
     ),
     "node_affinity": ("node affinity mismatch", _PLACEMENT_HINT),
+    "node_capability": (
+        "required node capability unavailable",
+        "Use workers that advertise all required capabilities for this runtime.",
+    ),
     "placement_groups": ("placement group mismatch", _PLACEMENT_HINT),
     "environment_affinity": ("environment affinity mismatch", _PLACEMENT_HINT),
     "topology_spread": ("topology constraint", _PLACEMENT_HINT),

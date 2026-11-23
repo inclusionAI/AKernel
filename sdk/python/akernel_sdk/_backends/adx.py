@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import re
@@ -1430,6 +1431,12 @@ class AdxBackend:
             raise UnsupportedBackendFeatureError(
                 "Backend 'adx' requires reverse_port to equal listen_port - 1."
             )
+        if spec.required_node_capabilities and "required_node_capabilities" not in (
+            inspect.signature(adx_environment.Environment.__init__).parameters
+        ):
+            raise UnsupportedBackendFeatureError(
+                "required_node_capabilities requires a compatible adx-environment SDK."
+            )
 
     def _managed_storage(
         self, spec: SandboxSpec
@@ -1561,6 +1568,8 @@ class AdxBackend:
         )
         if affinities is not None:
             create_args["schedule_affinities"] = affinities
+        if spec.required_node_capabilities:
+            create_args["required_node_capabilities"] = spec.required_node_capabilities
         try:
             sandbox = _OwnedSandbox(**create_args)
         except UnsupportedBackendFeatureError:

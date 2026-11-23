@@ -91,6 +91,25 @@ def _normalize_mounts(mounts: Sequence[Mount] | None) -> list[Mount]:
     return result
 
 
+def _normalize_required_node_capabilities(
+    value: Sequence[str] | None,
+) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise TypeError("required_node_capabilities must be a sequence of strings")
+    capabilities = tuple(value)
+    if not all(isinstance(capability, str) for capability in capabilities):
+        raise TypeError("required_node_capabilities must contain only strings")
+    if any(not name or name != name.strip() for name in capabilities):
+        raise ValueError(
+            "capability identifiers must be non-empty with no outer whitespace"
+        )
+    if len(set(capabilities)) != len(capabilities):
+        raise ValueError("required_node_capabilities must not contain duplicates")
+    return capabilities
+
+
 def _normalize_extra_config(
     extra_config: Mapping[str, object] | None,
 ) -> Mapping[str, object]:
@@ -201,6 +220,7 @@ class Sandbox:
         extra_config: Mapping[str, object] | None = None,
         create_timeout: int | None = None,
         init_timeout: int = 30,
+        required_node_capabilities: Sequence[str] | None = None,
     ) -> None:
         """Create and wait for a sandbox to become ready.
 
@@ -237,6 +257,9 @@ class Sandbox:
             reverse_tunnel: SDK-side HTTP service exposed inside the sandbox.
             detached: Keep the sandbox alive when this client closes.
             node_id: Require placement on a specific AKernel node.
+            required_node_capabilities: Versioned capabilities that the selected
+                worker must advertise for the chosen runtime. All are required
+                alongside the other placement constraints.
             failover: Restore the same logical sandbox from its latest
                 checkpoint after failure. A shared checkpoint can move to
                 another eligible node; `node_id` still requires the specified
@@ -347,6 +370,7 @@ class Sandbox:
 
         ports = _normalize_ports(port_forwardings)
         mount_list = _normalize_mounts(mounts)
+        capabilities = _normalize_required_node_capabilities(required_node_capabilities)
         normalized_extra_config = _normalize_extra_config(extra_config)
         if reverse_tunnel is not None:
             conflicts = set(ports).intersection(
@@ -415,6 +439,7 @@ class Sandbox:
             extra_config=normalized_extra_config,
             create_timeout=create_timeout,
             init_timeout=init_timeout,
+            required_node_capabilities=capabilities,
         )
         self._session = self._backend().create(spec)
         try:
@@ -787,6 +812,7 @@ class Sandbox:
         storage_mb: int | None = None,
         storage_limit_mb: int = 0,
         inherit_entrypoint: bool = False,
+        required_node_capabilities: Sequence[str] | None = None,
     ) -> Sandbox:
         """Create from an image/default runtime, or restore an opaque snapshot ID.
 
@@ -797,6 +823,7 @@ class Sandbox:
         init_timeout is the initialization budget in seconds (1..86400, default
         30). An omitted timeout is schedule_timeout + init_timeout + 30;
         a smaller explicit timeout fails before allocation.
+        required_node_capabilities applies to fresh creation.
         Template aliases and foreign platform snapshot IDs are not resolved.
         """
         if snapshot_id is None:
@@ -825,7 +852,10 @@ class Sandbox:
                 storage_mb=storage_mb,
                 storage_limit_mb=storage_limit_mb,
                 inherit_entrypoint=inherit_entrypoint,
+                required_node_capabilities=required_node_capabilities,
             )
+        if _normalize_required_node_capabilities(required_node_capabilities):
+            raise ValueError("required_node_capabilities requires fresh creation")
         if (
             any(
                 v is not None

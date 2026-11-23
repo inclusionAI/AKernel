@@ -205,8 +205,20 @@ Sandbox(
     network_policy: NetworkPolicy | None = None,
     dockerfile: DockerfileLaunch | None = None,
     extra_config: Mapping[str, object] | None = None,
+    required_node_capabilities: Sequence[str] | None = None,
 )
 ```
+
+### Require node capabilities
+
+Fresh `Sandbox(...)` and `Sandbox.create(...)` calls accept `required_node_capabilities`. Provide versioned identifiers for behaviors that the selected runtime must support. Placement requires a worker to advertise every listed capability for that runtime in its current session, alongside the resource request and any explicit `node_id`. If no worker meets the requirements, the configured `schedule_timeout` applies.
+
+```python
+with Sandbox(runtime="runsc", required_node_capabilities=["checkpoint-restore.v1"]) as sandbox:
+    print(sandbox.id)
+```
+
+This request requires an ADX Environment SDK and control plane that support constrained creation. The adapter rejects the request before contacting the server when its native SDK lacks support. A server that lacks the constrained create endpoint rejects the operation before allocation. Empty and omitted capability lists use ordinary creation.
 
 ### Experimental GPU and writable storage
 
@@ -1527,6 +1539,7 @@ else:
 | `runtime_fit`, `device_fit` | Select a supported runtime or available accelerator model/count, or add compatible workers. |
 | `node_available`, `no_workers` | Ask the operator to check worker health/registration and register healthy workers. |
 | `node_affinity`, `placement_groups`, `environment_affinity`, `topology_spread` | Adjust placement constraints or add workers that satisfy them. |
+| `node_capability` | Use workers that advertise all requested capabilities for the selected runtime. |
 | `waiting_for_volume`, `volume_topology` | Wait for the volume to be released or select workers with access to its storage. |
 
 For example, a mixed rejection produces a message like:
