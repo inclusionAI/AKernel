@@ -211,7 +211,7 @@ Sandbox(
 
 ### Require node capabilities
 
-Fresh `Sandbox(...)` and `Sandbox.create(...)` calls accept `required_node_capabilities`. Provide versioned identifiers for behaviors that the selected runtime must support. Placement requires a worker to advertise every listed capability for that runtime in its current session, alongside the resource request and any explicit `node_id`. If no worker meets the requirements, the configured `schedule_timeout` applies.
+Fresh `Sandbox(...)` and `Sandbox.create(...)` calls accept `required_node_capabilities`. Provide up to 32 distinct versioned identifiers for behaviors that the selected runtime must support. Placement requires a worker to advertise every listed capability for that runtime in its current session, alongside the resource request and any explicit `node_id`. If no worker meets the requirements, the configured `schedule_timeout` applies.
 
 ```python
 with Sandbox(runtime="runsc", required_node_capabilities=["checkpoint-restore.v1"]) as sandbox:

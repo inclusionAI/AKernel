@@ -19,6 +19,7 @@ from __future__ import annotations
 import builtins
 import logging
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 
@@ -96,15 +97,18 @@ def _normalize_required_node_capabilities(
 ) -> tuple[str, ...]:
     if value is None:
         return ()
-    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
         raise TypeError("required_node_capabilities must be a sequence of strings")
+    if len(value) > 32:
+        raise ValueError("required_node_capabilities must contain at most 32 entries")
     capabilities = tuple(value)
     if not all(isinstance(capability, str) for capability in capabilities):
         raise TypeError("required_node_capabilities must contain only strings")
-    if any(not name or name != name.strip() for name in capabilities):
-        raise ValueError(
-            "capability identifiers must be non-empty with no outer whitespace"
-        )
+    if any(
+        re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,127}", name) is None
+        for name in capabilities
+    ):
+        raise ValueError("invalid node capability identifier")
     if len(set(capabilities)) != len(capabilities):
         raise ValueError("required_node_capabilities must not contain duplicates")
     return capabilities
@@ -371,6 +375,8 @@ class Sandbox:
         ports = _normalize_ports(port_forwardings)
         mount_list = _normalize_mounts(mounts)
         capabilities = _normalize_required_node_capabilities(required_node_capabilities)
+        if capabilities and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", runtime) is None:
+            raise ValueError("required_node_capabilities require a valid runtime name")
         normalized_extra_config = _normalize_extra_config(extra_config)
         if reverse_tunnel is not None:
             conflicts = set(ports).intersection(

@@ -102,13 +102,23 @@ class SandboxTest(unittest.TestCase):
     def test_invalid_required_node_capabilities_fail_before_creation(self):
         for capabilities, error in (
             ("checkpoint-restore.v1", TypeError),
+            (bytearray(b"checkpoint-restore.v1"), TypeError),
             ([1], TypeError),
             ([""], ValueError),
             ([" checkpoint-restore.v1"], ValueError),
+            (["checkpoint restore.v1"], ValueError),
+            (["checkpoint/restore.v1"], ValueError),
+            (["x" * 129], ValueError),
+            ([f"capability-{index}.v1" for index in range(33)], ValueError),
             (["checkpoint-restore.v1", "checkpoint-restore.v1"], ValueError),
         ):
             with self.subTest(capabilities=capabilities), self.assertRaises(error):
                 Sandbox(required_node_capabilities=capabilities)
+        with self.assertRaisesRegex(ValueError, "runtime"):
+            Sandbox(
+                runtime="invalid/runtime",
+                required_node_capabilities=["checkpoint-restore.v1"],
+            )
         with self.assertRaisesRegex(ValueError, "fresh creation"):
             Sandbox.create(
                 "snap-1", required_node_capabilities=["checkpoint-restore.v1"]

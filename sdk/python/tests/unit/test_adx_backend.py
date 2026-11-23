@@ -124,7 +124,7 @@ class AdxBackendTest(unittest.TestCase):
 
         def send(_client, request, **_kwargs):
             observed.append((request.url.path, json.loads(request.content)))
-            return httpx.Response(404, json={"message": "old server"}, request=request)
+            return httpx.Response(404, text="route not found", request=request)
 
         with (
             patch.object(httpx.Client, "send", send),
