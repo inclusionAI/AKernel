@@ -258,6 +258,7 @@ jobs:
 
       - name: Build all-in-one image
         env:
+          AKERNEL_BUILD_MIRROR: "aliyun"
           AKERNEL_ENABLE_KATA: "false"
           AKERNEL_ENABLE_FIRECRACKER: "false"
           AKERNEL_ENABLE_RUNC: "false"

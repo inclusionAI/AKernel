@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Memory-only admission defaults survive standalone configuration preparation."""
+"""Pressure admission defaults and overrides survive configuration preparation."""
 
 import importlib.util
 import os
@@ -16,16 +16,16 @@ SPEC = importlib.util.spec_from_file_location(
 )
 CONFIG = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CONFIG)
-DEFAULT_PRESSURE = {"memory_enabled": True, "disk_enabled": False}
+DEFAULT_PRESSURE = {"memory_enabled": False, "disk_enabled": False}
 
 
 class PressureConfigTest(unittest.TestCase):
-    def test_standalone_enables_only_memory_pressure(self):
+    def test_standalone_disables_pressure_by_default(self):
         deployment = yaml.safe_load((ROOT / "builder/config/adx-standalone.yaml").read_text())
         node = deployment["service_overrides"]["adxlet"]["config"]
         self.assertEqual(node.get("pressure"), DEFAULT_PRESSURE)
 
-    def test_preparation_preserves_memory_only_defaults(self):
+    def test_preparation_preserves_disabled_defaults(self):
         for pvm in (False, True):
             for trace in (False, True):
                 with self.subTest(pvm=pvm, trace=trace), tempfile.TemporaryDirectory() as directory:
@@ -41,7 +41,7 @@ class PressureConfigTest(unittest.TestCase):
 
     def test_preparation_preserves_operator_pressure_policy(self):
         policy = {
-            "memory_enabled": False,
+            "memory_enabled": True,
             "disk_enabled": False,
             "thresholds": {"memory_high_percent": 95, "memory_low_percent": 85},
         }
