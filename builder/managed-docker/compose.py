@@ -353,7 +353,7 @@ def build_plan(
     return bake, references, service_targets
 
 
-def build(descriptor: dict, profile: dict, *, no_cache: bool = False) -> dict:
+def build(descriptor: dict, profile: dict, *, no_cache: bool = False, publication_id: str | None = None, plan_only: bool = False) -> dict:
     os.environ.setdefault("BUILDX_NO_DEFAULT_ATTESTATIONS", "1")
     os.environ.update(descriptor.get("environment", {}))
     command = compose_command(descriptor)
@@ -372,11 +372,13 @@ def build(descriptor: dict, profile: dict, *, no_cache: bool = False) -> dict:
         config,
         bake,
         profile["registry"],
-        profile["prefix"],
+        publication_prefix(profile, publication_id),
         no_cache,
         profile.get("registry_insecure", False),
-        "build-" + uuid.uuid4().hex,
+        "build-" + (publication_id[:32] if publication_id else uuid.uuid4().hex),
     )
+    if plan_only:
+        return {"publication_plan": targets}
     root = Path(descriptor["directory"] + ".build")
     root.mkdir(mode=0o700, exist_ok=True)
     plan_path = root / "bake.json"
@@ -506,20 +508,30 @@ def start_builder(profile: dict) -> None:
     )
 
 
-def image_build(context: str, profile: dict, *, no_cache: bool = False) -> dict:
+def publication_prefix(profile: dict, publication_id: str | None) -> str:
+    if publication_id is None:
+        return profile["prefix"]
+    if re.fullmatch(r"[0-9a-f]{64}", publication_id) is None:
+        raise ValueError("Invalid managed publication identity")
+    return profile["prefix"].rstrip("/") + "/publications/" + publication_id
+
+
+def image_build(context: str, profile: dict, *, no_cache: bool = False, publication_id: str | None = None, plan_only: bool = False) -> dict:
     os.environ.setdefault("BUILDX_NO_DEFAULT_ATTESTATIONS", "1")
-    start_builder(profile)
     metadata = context + ".metadata.json"
     plan, targets, service_targets = build_plan(
         {},
         {"services": {"single": {"build": {}}}},
         {"target": {"single": {"context": context}}},
         profile["registry"],
-        profile["prefix"],
+        publication_prefix(profile, publication_id),
         no_cache,
         profile.get("registry_insecure", False),
-        "build-" + uuid.uuid4().hex,
+        "build-" + (publication_id[:32] if publication_id else uuid.uuid4().hex),
     )
+    if plan_only:
+        return {"publication_plan": targets}
+    start_builder(profile)
     plan_path = context + ".bake.json"
     Path(plan_path).write_text(json.dumps(plan))
     values = bake_metadata(
@@ -676,6 +688,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--context")
     parser.add_argument("--result")
+    parser.add_argument("--publication-id")
+    parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--container")
     parser.add_argument("--port", type=int)
     args = parser.parse_args()
@@ -686,7 +700,7 @@ if __name__ == "__main__":
         if not args.context or not args.result:
             parser.error("image-build requires context and result")
         Path(args.result).write_text(
-            json.dumps(image_build(args.context, profile, no_cache=args.no_cache))
+            json.dumps(image_build(args.context, profile, no_cache=args.no_cache, publication_id=args.publication_id, plan_only=args.plan_only))
         )
     elif args.operation == "reconnect":
         import sys
@@ -706,7 +720,7 @@ if __name__ == "__main__":
         if args.operation == "describe":
             result = describe(descriptor)
         elif args.operation == "build":
-            result = build(descriptor, profile, no_cache=args.no_cache)
+            result = build(descriptor, profile, no_cache=args.no_cache, publication_id=args.publication_id, plan_only=args.plan_only)
         else:
             result = prepare(descriptor, profile)
         print(json.dumps(result))
