@@ -218,7 +218,7 @@ with Sandbox(runtime="runsc", required_node_capabilities=["checkpoint-restore"])
     print(sandbox.id)
 ```
 
-`checkpoint-restore` requires the selected runtime to support both operations and the worker's checkpoint storage to be ready.
+`checkpoint-restore` requires the selected runtime to support both operations and the worker to have writable capture staging. For S3-backed checkpoints, access to the required objects is checked during publication and restore.
 
 This request requires an ADX Environment SDK and control plane that support constrained creation. The adapter rejects the request before contacting the server when its native SDK lacks support. A server that lacks the constrained create endpoint rejects the operation before allocation. Empty and omitted capability lists use ordinary creation.
 
