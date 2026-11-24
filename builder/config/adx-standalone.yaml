@@ -27,7 +27,7 @@ service_overrides:
       resource_source:
         disk_path: /home/akernel
       pressure:
-        memory_enabled: true
+        memory_enabled: false
         disk_enabled: false
   apiserver:
     config:

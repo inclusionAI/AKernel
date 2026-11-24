@@ -22,14 +22,46 @@ For private Registries serving Nydus through Dragonfly, install the
 namespace-and-Pod ingress selectors and verifies all configured seeds after Registry
 moves or rollouts without changing Registry placement or storage.
 
+## Upgrading custom ADX configurations
+
+Before deploying the pinned ADX version, prepare the following migration for
+custom configurations selected by `AKERNEL_ADX_CONFIG` that contain
+`local_rootfs_templates`:
+
+1. Remove `local_rootfs_templates` from both the API Server and adxlet role
+   configurations. In profile-based YAML, these maps are under
+   `service_overrides.apiserver.config` and
+   `service_overrides.adxlet.config`.
+2. For callers that use Local rootfs, set the API Server's
+   `allowed_local_rootfs_dirs` to operator-controlled parent directories.
+   Prepare and retain the required rootfs directory or file on every eligible
+   worker, or select workers that provide it. Each requested absolute path
+   must be a strict descendant of an allowed directory.
+3. Replace named-template requests (`rootfs_template`) with
+   `rootfs.type=local` and an explicit `rootfs.path`. Supply the required
+   image environment and startup parameters through `env` and `process`.
+   See the [pinned ADX Local rootfs interface](https://github.com/openJiuwen-ai/agent-dx/blob/482977aa4bfc03d28af809fe2b031afc8b6a58d0/platform/api/http/environment-create.md#caller-prepared-local-rootfs)
+   for the request and runtime constraints.
+
+The services reject the removed field at startup; `adxctl validate` or
+`adxctl render` alone is insufficient to check this migration.
+
+Retain the qualified complete runsc bundle and original EROFS bytes while
+legacy workloads or checkpoints depend on them. Keep the original workers
+available until those checkpoints are retired or candidate workers using the
+retained artifacts pass restore and post-restore checks of process state and
+file contents. Follow the
+[runtime rootfs pinning guide](docs/runtime-rootfs-pinning.md) before changing
+worker or guest runtime artifacts.
+
 ## Memory-pressure admission
 
-Bundled standalone and Helm execution nodes enable memory-only ADX pressure
-sampling. Memory use at or above 90% closes admission for new Environments;
-it reopens at or below 80%. Existing Environments continue running. The sample
-uses the higher of host memory use derived from `MemAvailable` and visible
-finite cgroup memory-limit usage. Sampling errors release the pressure gate;
-capacity and maintenance admission still apply.
+Bundled standalone and Helm execution nodes disable ADX pressure admission by
+default. When memory sampling is enabled, memory use at or above 90% closes
+admission for new Environments; it reopens at or below 80%. Existing
+Environments continue running. The sample uses whole-node memory from
+`/proc/meminfo`, derived from `MemTotal` and `MemAvailable`. Sampling errors
+release the pressure gate; capacity and maintenance admission still apply.
 
 Helm passes `adx.node.pressure` directly to adxlet using ADX field names. The
 umbrella chart uses the `core.` prefix. Its defaults are:
@@ -38,11 +70,11 @@ umbrella chart uses the `core.` prefix. Its defaults are:
 adx:
   node:
     pressure:
-      memory_enabled: true
+      memory_enabled: false
       disk_enabled: false
 ```
 
-Set `memory_enabled: false` to disable memory sampling. To tune hysteresis, add
+Set `memory_enabled: true` to enable memory sampling. To tune hysteresis, add
 `thresholds.memory_high_percent` and `thresholds.memory_low_percent` to the map;
 the low threshold must be smaller than the high threshold. Standalone uses the
 same defaults in `builder/config/adx-standalone.yaml`. Custom configurations
