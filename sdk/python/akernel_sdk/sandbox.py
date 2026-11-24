@@ -261,7 +261,7 @@ class Sandbox:
             reverse_tunnel: SDK-side HTTP service exposed inside the sandbox.
             detached: Keep the sandbox alive when this client closes.
             node_id: Require placement on a specific AKernel node.
-            required_node_capabilities: Versioned capabilities that the selected
+            required_node_capabilities: Capabilities that the selected
                 worker must advertise for the chosen runtime. All are required
                 alongside the other placement constraints.
             failover: Restore the same logical sandbox from its latest

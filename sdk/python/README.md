@@ -211,12 +211,14 @@ Sandbox(
 
 ### Require node capabilities
 
-Fresh `Sandbox(...)` and `Sandbox.create(...)` calls accept `required_node_capabilities`. Provide up to 32 distinct versioned identifiers for behaviors that the selected runtime must support. Placement requires a worker to advertise every listed capability for that runtime in its current session, alongside the resource request and any explicit `node_id`. If no worker meets the requirements, the configured `schedule_timeout` applies.
+Fresh `Sandbox(...)` and `Sandbox.create(...)` calls accept `required_node_capabilities`. Provide up to 32 distinct capability identifiers for behaviors that the selected runtime must support. Placement requires a worker to advertise every listed capability for that runtime in its current session, alongside the resource request and any explicit `node_id`. If no worker meets the requirements, the configured `schedule_timeout` applies.
 
 ```python
-with Sandbox(runtime="runsc", required_node_capabilities=["checkpoint-restore.v1"]) as sandbox:
+with Sandbox(runtime="runsc", required_node_capabilities=["checkpoint-restore"]) as sandbox:
     print(sandbox.id)
 ```
+
+`checkpoint-restore` requires the selected runtime to support both operations and the worker's checkpoint storage to be ready.
 
 This request requires an ADX Environment SDK and control plane that support constrained creation. The adapter rejects the request before contacting the server when its native SDK lacks support. A server that lacks the constrained create endpoint rejects the operation before allocation. Empty and omitted capability lists use ordinary creation.
 

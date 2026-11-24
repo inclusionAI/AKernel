@@ -90,7 +90,7 @@ class AdxBackendTest(unittest.TestCase):
                 UnsupportedBackendFeatureError, "required_node_capabilities"
             ):
                 adx.AdxBackend(self.config).create(
-                    _spec(required_node_capabilities=("checkpoint-restore.v1",))
+                    _spec(required_node_capabilities=("checkpoint-restore",))
                 )
         create.assert_not_called()
 
@@ -106,13 +106,13 @@ class AdxBackendTest(unittest.TestCase):
             adx.AdxBackend(self.config).create(
                 _spec(
                     node_id="worker-1",
-                    required_node_capabilities=("checkpoint-restore.v1",),
+                    required_node_capabilities=("checkpoint-restore",),
                 )
             )
         self.assertEqual(create.call_args.kwargs["node_id"], "worker-1")
         self.assertEqual(
             create.call_args.kwargs["required_node_capabilities"],
-            ("checkpoint-restore.v1",),
+            ("checkpoint-restore",),
         )
 
     def test_candidate_native_sdk_sends_constrained_create_to_its_own_endpoint(self):
@@ -134,13 +134,13 @@ class AdxBackendTest(unittest.TestCase):
                 _spec(
                     image="tools:1",
                     node_id="worker-1",
-                    required_node_capabilities=("checkpoint-restore.v1",),
+                    required_node_capabilities=("checkpoint-restore",),
                 )
             )
         self.assertEqual(len(observed), 1)
         path, body = observed[0]
         self.assertEqual(path, "/api/environment/v1/constrained-environments")
-        self.assertEqual(body["requiredNodeCapabilities"], ["checkpoint-restore.v1"])
+        self.assertEqual(body["requiredNodeCapabilities"], ["checkpoint-restore"])
         self.assertEqual(body["rootfs"]["runtime"], "runsc")
         self.assertIn("worker-1", json.dumps(body["scheduleAffinities"]))
         self.assertEqual(failure.exception.code, "UNSUPPORTED")
