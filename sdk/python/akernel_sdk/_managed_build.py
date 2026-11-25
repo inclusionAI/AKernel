@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 import tarfile
@@ -16,6 +17,8 @@ from ._ephemeral_images import PROFILE, Retention
 
 if TYPE_CHECKING:
     from .sandbox import Sandbox
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -116,18 +119,20 @@ def build_image(
         raise ValueError(f"Temporary Registry slots are selected through {PROFILE!r}")
     elif ttl_seconds is not None:
         raise ValueError(f"ttl_seconds requires profile={PROFILE!r}")
-    options = DockerRuntime(profile=profile).sandbox_options()
     failure: BaseException | None = None
-    builder = Sandbox(
-        cpu=1000 if cpu_request is None else cpu_request,
-        memory=2048 if memory_request is None else memory_request,
-        cpu_limit=1000,
-        mem_limit=2048,
-        idle_timeout=max(300, timeout + 60),
-        schedule_timeout=schedule_timeout,
-        **options,
-    )
+    builder = None
+    publication_planned = False
     try:
+        options = DockerRuntime(profile=profile).sandbox_options()
+        builder = Sandbox(
+            cpu=1000 if cpu_request is None else cpu_request,
+            memory=2048 if memory_request is None else memory_request,
+            cpu_limit=1000,
+            mem_limit=2048,
+            idle_timeout=max(300, timeout + 60),
+            schedule_timeout=schedule_timeout,
+            **options,
+        )
         upload_context(builder, source, "/work/context")
         command = [
             "python3",
@@ -152,6 +157,7 @@ def build_image(
             retention.request(
                 "plan", publication=publication["id"], tag=planned["tag"]
             )
+            publication_planned = True
         result = builder.commands.run(
             shlex.join(command),
             timeout=timeout,
@@ -197,6 +203,16 @@ def build_image(
     except BaseException as error:
         failure = error
         if (
+            retention is not None
+            and publication is not None
+            and "prepare_until" in publication
+            and not publication_planned
+        ):
+            try:
+                retention.request("cancel-build", publication=publication["id"])
+            except Exception:
+                logger.warning("Could not release the build reservation", exc_info=True)
+        if (
             isinstance(error, BackendOperationError)
             and error.command_result is not None
             and log_path is not None
@@ -215,15 +231,16 @@ def build_image(
                     )
         raise
     finally:
-        try:
-            builder.kill()
-        except BaseException as cleanup:
-            if failure is not None:
-                retain_failure_context(failure, builder.id, cleanup)
-            else:
-                cleanup_failure = BackendOperationError(
-                    "Managed build preparation cleanup failed",
-                    environment_id=builder.id,
-                )
-                retain_failure_context(cleanup_failure, builder.id, cleanup)
-                raise cleanup_failure from cleanup
+        if builder is not None:
+            try:
+                builder.kill()
+            except BaseException as cleanup:
+                if failure is not None:
+                    retain_failure_context(failure, builder.id, cleanup)
+                else:
+                    cleanup_failure = BackendOperationError(
+                        "Managed build preparation cleanup failed",
+                        environment_id=builder.id,
+                    )
+                    retain_failure_context(cleanup_failure, builder.id, cleanup)
+                    raise cleanup_failure from cleanup

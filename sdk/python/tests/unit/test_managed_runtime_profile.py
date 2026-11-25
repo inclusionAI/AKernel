@@ -238,6 +238,36 @@ class ManagedProfileContract(unittest.TestCase):
         self.assertEqual(caught.exception.code, "REGISTRY_CAPACITY_UNAVAILABLE")
         builder.assert_not_called()
 
+    def test_preparation_failure_releases_reservation_and_preserves_error(self):
+        publication = "e" * 32
+        retention = MagicMock()
+        retention.request.side_effect = [
+            {
+                "id": publication,
+                "profile": "harbor-ephemeral-a",
+                "prepare_until": 1500,
+            },
+            {},
+        ]
+        failed = TimeoutException("preparation timed out")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("akernel_sdk._managed_build.Retention", return_value=retention),
+            patch("akernel_sdk.sandbox.Sandbox", side_effect=failed),
+            self.assertRaises(TimeoutException) as caught,
+        ):
+            root = Path(directory)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            build_image(root, profile="harbor-ephemeral")
+        self.assertIs(caught.exception, failed)
+        self.assertEqual(
+            retention.request.call_args_list,
+            [
+                call("begin", ttl_seconds=None),
+                call("cancel-build", publication=publication),
+            ],
+        )
+
     def test_effective_empty_and_nonempty_image_startup(self):
         for process, expected in [
             ({}, False),

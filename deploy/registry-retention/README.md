@@ -100,6 +100,7 @@ while a GC command is running. Start it before sending builds to the profile.
   "high_watermark_percent": 80,
   "low_watermark_percent": 65,
   "max_in_flight_builds": 16,
+  "prepare_seconds": 600,
   "poll_seconds": 10,
   "max_sample_age_seconds": 60,
   "rotation_interval_seconds": 21600,
@@ -114,15 +115,19 @@ python3 retention.py --config /etc/retention/config.json \
   --database /var/lib/retention/state.sqlite maintain
 ```
 
-Admission stops at the high watermark and resumes at the low watermark. Both
-publication reservation and permission to push check volume measurements and
-the per-writer limit on in-flight builds. A missing or stale measurement closes
-admission for that slot. A rejected request returns HTTP 503 with code
+Admission stops at the high watermark and resumes at the low watermark.
+Each build reserves a place before it starts a preparation sandbox, and the
+reservation counts towards the per-writer limit through publication. The
+SDK releases unused reservations after preparation failures. Set
+`prepare_seconds` for the time allowed to schedule the sandbox, upload the
+context and register its publication plan. An expired reservation cannot
+start a push. Admission and planning both require a fresh volume measurement.
+A capacity rejection returns HTTP 503 with code
 `REGISTRY_CAPACITY_UNAVAILABLE`. Size the headroom and concurrency limit for the
 largest concurrent builds because the registry learns blob sizes during upload.
 
 The controller rotates at the high watermark or on the configured interval.
-It also rotates when the build limit stays occupied by stale plans, so an
+It also rotates when the build limit stays occupied entirely by stale plans, so an
 interrupted publication can be reconciled after fencing. Set
 `rotation_interval_seconds` to zero to disable periodic rotation.
 Rotation starts new builds on a healthy standby and gives planned builds on the
@@ -153,7 +158,7 @@ restart.
 | Action | Required behavior |
 | --- | --- |
 | `measure` | Write a JSON object to stdout with `storage_id`, `total_bytes`, `available_bytes` and `writable` (boolean). Verify the mounted volume, reachable Registry and effective write mode. This action may run during another action. |
-| `fence` | Drain or stop outstanding writers for this slot, keep the original read endpoint, put the Registry in read-only mode and disable the upload purger. Keep this fence in effect throughout GC, including across driver restarts. |
+| `fence` | Drain or stop outstanding writers for this slot, keep the original read endpoint, put the Registry in read-only mode and disable the upload purger. Keep this fence in effect throughout GC, including across driver restarts. Ensure stopped builds cannot resume an upload when the endpoint is writable again. The controller calls this action before GC even if the Registry already reports read-only mode. |
 | `gc` | Recheck the identity and write fence, then dry-run and run Distribution GC with the same Registry version and configuration. Serialize the GC process on that volume and return success only when it has completed. |
 | `restore` | Verify that GC has stopped, restore the writable Registry and pass a push/read smoke check on the same endpoint before reporting success. |
 

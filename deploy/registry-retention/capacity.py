@@ -42,6 +42,7 @@ class CapacityPolicy:
     high_watermark_percent: int = 80
     low_watermark_percent: int = 65
     max_in_flight_builds: int = 16
+    prepare_seconds: int = 600
     poll_seconds: int = 10
     max_sample_age_seconds: int = 60
     rotation_interval_seconds: int = 21600
@@ -61,7 +62,8 @@ class CapacityPolicy:
             raise ValueError("Capacity management requires distinct storage identities for all slots")
         for name, minimum in (
             ("low_watermark_percent", 1), ("high_watermark_percent", 2),
-            ("max_in_flight_builds", 1), ("poll_seconds", 1), ("max_sample_age_seconds", 1),
+            ("max_in_flight_builds", 1), ("prepare_seconds", 1),
+            ("poll_seconds", 1), ("max_sample_age_seconds", 1),
             ("rotation_interval_seconds", 0), ("drain_seconds", 1), ("driver_timeout_seconds", 1),
         ):
             value = getattr(self, name)
@@ -109,6 +111,7 @@ class CapacityController:
         if retention.capacity is None:
             raise ValueError("Configure capacity before starting Registry maintenance")
         self.policy = retention.capacity
+        self.probe_locks = {slot: threading.Lock() for slot in retention.registries}
 
     def driver(self, action: str, slot: str) -> str:
         command = [self.policy.driver, action, slot, self.policy.storage_ids[slot]]
@@ -123,6 +126,16 @@ class CapacityController:
             raise OSError(f"Registry maintenance driver {action} failed for {slot}") from exc
 
     def measure(self, slot: str) -> bool:
+        # A delayed probe must not overwrite a later observation of the same slot.
+        with self.probe_locks[slot]:
+            try:
+                return self._record_measurement(slot, int(time.time()))
+            except (OSError, ValueError):
+                with self.retention.database_session(write=True) as db:
+                    db.execute("UPDATE registry_capacity SET sampled_at=-1 WHERE slot=?", (slot,))
+                raise
+
+    def _record_measurement(self, slot: str, observed_since: int) -> bool:
         sample = json.loads(self.driver("measure", slot))
         if not isinstance(sample, dict) or sample.get("storage_id") != self.policy.storage_ids[slot]:
             raise ValueError(f"Registry storage identity could not be verified for {slot}")
@@ -149,18 +162,19 @@ class CapacityController:
                 ON CONFLICT(slot) DO UPDATE SET storage_id=excluded.storage_id, sampled_at=excluded.sampled_at,
                 total_bytes=excluded.total_bytes, available_bytes=excluded.available_bytes,
                 writable=excluded.writable, blocked=excluded.blocked""",
-                (slot, sample["storage_id"], int(time.time()), total, available, writable, blocked),
+                (slot, sample["storage_id"], observed_since, total, available, writable, blocked),
             )
         return writable
 
     def refresh(self):
         for slot in self.retention.registries:
-            try:
-                self.measure(slot)
-            except (OSError, ValueError, sqlite3.Error) as exc:
-                LOG.warning("Registry capacity sample failed for %s (%s)", slot, type(exc).__name__)
-                with self.retention.database_session(write=True) as db:
-                    db.execute("UPDATE registry_capacity SET sampled_at=-1 WHERE slot=?", (slot,))
+            self.refresh_slot(slot)
+
+    def refresh_slot(self, slot: str):
+        try:
+            self.measure(slot)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            LOG.warning("Registry capacity sample failed for %s (%s)", slot, type(exc).__name__)
 
     def reserve_rotation(self):
         now = int(time.time())
@@ -181,14 +195,14 @@ class CapacityController:
             elapsed = now - job["completed_at"]
             periodic = self.policy.rotation_interval_seconds and elapsed >= self.policy.rotation_interval_seconds
             in_flight = db.execute(
-                """SELECT COUNT(*) AS count, MIN(planned_at) AS oldest
+                """SELECT COUNT(*) AS count, MAX(planned_at) AS newest
                 FROM publications WHERE slot=? AND state='planned'""",
                 (active,),
             ).fetchone()
             stalled = (
                 in_flight["count"] >= self.policy.max_in_flight_builds
-                and in_flight["oldest"] is not None
-                and in_flight["oldest"] + self.policy.drain_seconds <= now
+                and in_flight["newest"] is not None
+                and in_flight["newest"] + self.policy.drain_seconds <= now
             )
             if not pressure and not periodic and not stalled:
                 return None
@@ -219,20 +233,27 @@ class CapacityController:
         if job is None:
             return
         slot = job["slot"]
+        with self.retention.database_session() as db:
+            state = db.execute("SELECT state FROM slots WHERE name=?", (slot,)).fetchone()["state"]
+            pending = db.execute(
+                "SELECT 1 FROM publications WHERE slot=? AND state='planned' LIMIT 1", (slot,)
+            ).fetchone()
+        valid_states = {"sealed"} if job["gc_complete"] else {"draining", "sealed"}
+        if state not in valid_states:
+            raise ValueError("Registry maintenance lost exclusive access to its slot")
         if not job["gc_complete"]:
-            with self.retention.database_session() as db:
-                state = db.execute("SELECT state FROM slots WHERE name=?", (slot,)).fetchone()["state"]
-                pending = db.execute(
-                    "SELECT 1 FROM publications WHERE slot=? AND state='planned' LIMIT 1", (slot,)
-                ).fetchone()
-            if state not in {"draining", "sealed"}:
-                raise ValueError("Registry maintenance lost exclusive access to its slot")
             if state == "draining" and pending and time.time() < job["drain_until"]:
                 return
-            if self.measure(slot):
-                if state == "draining":
+            if state == "draining":
+                try:
+                    writable = self.measure(slot)
+                except OSError:
+                    # The last fence attempt may have stopped the endpoint. The
+                    # driver revalidates its volume while bringing up read-only.
+                    writable = False
+                if writable:
                     self.retention.sweep(apply=True, slot=slot, pressure=bool(job["pressure"]))
-                self.driver("fence", slot)
+            self.driver("fence", slot)
             if self.measure(slot):
                 raise ValueError("Registry writers must be fenced before GC")
             self.retention.seal(slot)
@@ -254,18 +275,19 @@ class CapacityController:
     def run(self, *, once: bool):
         stopped = threading.Event()
 
-        def sampling():
-            # Admission stays fresh on the writable slot while a GC subprocess runs.
+        def sampling(slot):
+            # A slow driver probe on a retiring volume must not block the writer's probe.
             while not stopped.wait(self.policy.poll_seconds):
-                try:
-                    self.refresh()
-                except sqlite3.Error:
-                    LOG.warning("Could not update Registry capacity samples")
+                self.refresh_slot(slot)
 
         with maintenance_lock(self.retention.database):
             self.refresh()
-            sampler = threading.Thread(target=sampling, daemon=True)
-            sampler.start()
+            samplers = [
+                threading.Thread(target=sampling, args=(slot,), daemon=True)
+                for slot in self.retention.registries
+            ]
+            for sampler in samplers:
+                sampler.start()
             try:
                 while True:
                     try:
@@ -279,4 +301,5 @@ class CapacityController:
                     stopped.wait(self.policy.poll_seconds)
             finally:
                 stopped.set()
-                sampler.join()
+                for sampler in samplers:
+                    sampler.join()

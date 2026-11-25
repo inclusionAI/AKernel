@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS publications (
     id TEXT PRIMARY KEY, slot TEXT NOT NULL REFERENCES slots(name),
     ttl INTEGER NOT NULL, state TEXT NOT NULL, tag TEXT UNIQUE,
     reference TEXT UNIQUE, expires_at INTEGER, worklist TEXT, retry_at INTEGER NOT NULL DEFAULT 0,
-    pressure_evictable INTEGER NOT NULL DEFAULT 0, last_used_at INTEGER, planned_at INTEGER
+    pressure_evictable INTEGER NOT NULL DEFAULT 0, last_used_at INTEGER,
+    planned_at INTEGER, prepare_until INTEGER
 );
 CREATE TABLE IF NOT EXISTS holds (
     id TEXT PRIMARY KEY, publication TEXT NOT NULL REFERENCES publications(id),
@@ -103,6 +104,8 @@ class Retention:
                     "UPDATE publications SET planned_at=? WHERE state='planned'",
                     (math.ceil(time.time()),),
                 )
+            if "prepare_until" not in columns:
+                db.execute("ALTER TABLE publications ADD COLUMN prepare_until INTEGER")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS publication_slot_state ON publications(slot, state)"
             )
@@ -125,6 +128,11 @@ class Retention:
             if set(persisted) != {(n, r.origin, r.profile) for n, r in self.registries.items()}:
                 raise ValueError("Registry slot identity differs from durable state")
             if self.capacity is not None:
+                db.execute(
+                    """UPDATE publications SET prepare_until=?
+                    WHERE state='new' AND prepare_until IS NULL""",
+                    (math.ceil(time.time()) + self.capacity.prepare_seconds,),
+                )
                 db.executemany(
                     """INSERT OR IGNORE INTO registry_capacity
                     VALUES (?,?,-1,0,0,0,0)""",
@@ -165,29 +173,42 @@ class Retention:
         publication = uuid.uuid4().hex
         with self.database_session(write=True) as db:
             slot = db.execute("SELECT * FROM slots WHERE state='active'").fetchone()
-            self.require_build_capacity(db, slot["name"])
+            self.require_write_headroom(db, slot["name"])
+            prepare_until = None
+            if self.capacity is not None:
+                now = time.time()
+                db.execute(
+                    """UPDATE publications SET state='abandoned'
+                    WHERE slot=? AND state='new' AND prepare_until<=?""",
+                    (slot["name"], now),
+                )
+                in_flight = db.execute(
+                    "SELECT COUNT(*) FROM publications WHERE slot=? AND state IN ('new','planned')",
+                    (slot["name"],),
+                ).fetchone()[0]
+                if in_flight >= self.capacity.max_in_flight_builds:
+                    raise CapacityUnavailable("Temporary Registry is at its concurrent build limit; retry later")
+                prepare_until = math.ceil(now) + self.capacity.prepare_seconds
             db.execute(
-                """INSERT INTO publications(id, slot, ttl, state, pressure_evictable)
-                VALUES (?, ?, ?, 'new', ?)""",
-                (publication, slot["name"], ttl, self.lru_enabled),
+                """INSERT INTO publications(id, slot, ttl, state, pressure_evictable, prepare_until)
+                VALUES (?, ?, ?, 'new', ?, ?)""",
+                (publication, slot["name"], ttl, self.lru_enabled, prepare_until),
             )
-        return {"id": publication, "tag": "build-" + publication, "profile": slot["profile"]}
+        result = {"id": publication, "tag": "build-" + publication, "profile": slot["profile"]}
+        if prepare_until is not None:
+            result["prepare_until"] = prepare_until
+        return result
 
     @property
     def lru_enabled(self) -> bool:
         return self.capacity is not None and self.capacity.lru_idle_seconds is not None
 
-    def require_build_capacity(self, db, slot: str):
+    def require_write_headroom(self, db, slot: str):
         if self.capacity is None:
             return
         sample = db.execute("SELECT * FROM registry_capacity WHERE slot=?", (slot,)).fetchone()
         if not self.capacity.available(sample, int(time.time())):
             raise CapacityUnavailable("Temporary Registry has no verified write headroom; retry later")
-        planned = db.execute(
-            "SELECT COUNT(*) FROM publications WHERE slot=? AND state='planned'", (slot,)
-        ).fetchone()[0]
-        if planned >= self.capacity.max_in_flight_builds:
-            raise CapacityUnavailable("Temporary Registry is at its concurrent build limit; retry later")
 
     @staticmethod
     def publication(db, identity: str):
@@ -203,12 +224,32 @@ class Retention:
         with self.database_session(write=True) as db:
             row = self.publication(db, publication)
             self.registries[row["slot"]].repository(repository)
+            slot = db.execute("SELECT state FROM slots WHERE name=?", (row["slot"],)).fetchone()["state"]
+            now = time.time()
             if row["state"] == "planned" and row["tag"] == tag:
-                return {}
-            slot = db.execute("SELECT state FROM slots WHERE name=?", (row["slot"],)).fetchone()
-            if row["state"] != "new" or slot["state"] != "active":
+                drain = db.execute(
+                    "SELECT drain_until FROM registry_maintenance WHERE slot=?", (row["slot"],)
+                ).fetchone()
+                if slot in {"active", "draining"} and (drain is None or now < drain["drain_until"]):
+                    return {}
+                raise Conflict("Registry has fenced this publication; submit a new build")
+            if (
+                row["state"] in {"new", "abandoned"}
+                and row["prepare_until"] is not None and now >= row["prepare_until"]
+            ):
+                raise CapacityUnavailable("Temporary build preparation reservation expired; retry later")
+            if slot != "active":
                 raise Conflict("Registry is draining; submit a new build")
-            self.require_build_capacity(db, row["slot"])
+            if row["state"] != "new":
+                raise Conflict("Build preparation reservation is no longer active; submit a new build")
+            self.require_write_headroom(db, row["slot"])
+            if self.capacity is not None:
+                planned = db.execute(
+                    "SELECT COUNT(*) FROM publications WHERE slot=? AND state='planned'",
+                    (row["slot"],),
+                ).fetchone()[0]
+                if planned >= self.capacity.max_in_flight_builds:
+                    raise CapacityUnavailable("Temporary Registry is at its concurrent build limit; retry later")
             existing = db.execute(
                 """SELECT id FROM publications WHERE tag IS NOT NULL
                 AND substr(tag, 1, instr(tag, ':build-') - 1)=?""",
@@ -218,7 +259,15 @@ class Retention:
                 raise Conflict("Publication repository is already reserved")
             db.execute(
                 "UPDATE publications SET state='planned', tag=?, planned_at=? WHERE id=?",
-                (tag, math.ceil(time.time()), publication),
+                (tag, math.ceil(now), publication),
+            )
+        return {}
+
+    def cancel_build(self, publication: str):
+        with self.database_session(write=True) as db:
+            db.execute(
+                "UPDATE publications SET state='abandoned' WHERE id=? AND state='new'",
+                (publication,),
             )
         return {}
 
@@ -498,7 +547,7 @@ class Retention:
             "unconfirmed_holds": unconfirmed,
             "awaiting_stop_confirmation": awaiting_stop,
         }
-        if self.capacity is not None:
+        if maintenance is not None:
             result["capacity"] = capacity
             result["maintenance"] = dict(maintenance)
         return result
@@ -567,6 +616,7 @@ def server_handler(retention: Retention):
     actions = {
         "/v1/begin": retention.begin,
         "/v1/plan": retention.plan,
+        "/v1/cancel-build": retention.cancel_build,
         "/v1/commit": retention.commit,
         "/v1/acquire": retention.acquire,
         "/v1/bind": retention.bind,
@@ -695,12 +745,13 @@ def main():
         result = retention.cancel(args.hold)
     elif args.command == "release-hold":
         result = retention.release_stopped(args.hold)
-    elif retention.capacity is None:
-        result = getattr(retention, args.command)(args.slot)
     else:
         with maintenance_lock(retention.database):
-            if retention.status()["maintenance"]["slot"] is not None:
-                raise ValueError("Resume the queued Registry maintenance before manual rotation")
+            with retention.database_session() as db:
+                if db.execute(
+                    "SELECT 1 FROM registry_maintenance WHERE slot IS NOT NULL"
+                ).fetchone():
+                    raise ValueError("Resume the queued Registry maintenance before manual rotation")
             result = getattr(retention, args.command)(args.slot)
     print(json.dumps(result, indent=2))
 

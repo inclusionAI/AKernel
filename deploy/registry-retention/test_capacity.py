@@ -8,7 +8,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from capacity import CapacityController, CapacityUnavailable
-from retention import Conflict, Retention
+from retention import Conflict, Retention, main as retention_cli
 
 
 class CapacityTests(TestCase):
@@ -39,6 +39,7 @@ class CapacityTests(TestCase):
                 "driver": "/unused/capacity-driver",
                 "storage_ids": {"a": "volume-a", "b": "volume-b"},
                 "drain_seconds": 30,
+                "prepare_seconds": 60,
                 "max_in_flight_builds": 3,
                 "rotation_interval_seconds": 3600,
                 "lru_idle_seconds": 10,
@@ -122,32 +123,52 @@ class CapacityTests(TestCase):
         with self.assertRaises(CapacityUnavailable):
             self.retention.begin()
 
-    def test_burst_plans_are_atomically_bounded(self):
+    def test_burst_is_atomically_bounded_before_preparation(self):
         self.controller.refresh()
-        builds = [self.retention.begin() for _ in range(12)]
 
-        def try_plan(build):
+        def try_begin(_):
             try:
-                self.plan(build)
+                return self.retention.begin()
             except CapacityUnavailable:
-                return False
-            return True
+                return None
 
-        with ThreadPoolExecutor(max_workers=len(builds)) as workers:
-            accepted = list(workers.map(try_plan, builds))
-        self.assertEqual(sum(accepted), 3)
+        with ThreadPoolExecutor(max_workers=12) as workers:
+            builds = [build for build in workers.map(try_begin, range(12)) if build]
+        self.assertEqual(len(builds), 3)
+        for build in builds:
+            self.plan(build)
+        with self.assertRaises(CapacityUnavailable):
+            self.retention.begin()
         # The successful build releases a write admission without touching its TTL.
-        self.publish(builds[accepted.index(True)])
-        self.plan(builds[accepted.index(False)])
+        self.publish(builds[0])
+        self.plan(self.retention.begin())
+
+    def test_preparation_expiry_and_cancellation_release_only_unused_places(self):
+        self.controller.refresh()
+        cancelled, carries_write, expires = (self.retention.begin() for _ in range(3))
+        self.plan(carries_write)
+        self.retention.cancel_build(carries_write["id"])
+        with self.assertRaises(CapacityUnavailable):
+            self.retention.begin()
+        self.retention.cancel_build(cancelled["id"])
+        self.retention.begin()
+        self.clock.return_value = expires["prepare_until"]
+        self.controller.refresh()
+        self.retention.begin()
+        with self.assertRaisesRegex(CapacityUnavailable, "reservation expired"):
+            self.plan(expires)
+        self.publish(carries_write)
 
     def test_pressure_uses_lru_after_expiry_and_preserves_unused_and_live_images(self):
         self.controller.refresh()
         expired = self.retention.begin(4)
         self.plan(expired)
         self.publish(expired)
-        builds = [self.retention.begin() for _ in range(4)]
+        builds = []
         references = []
-        for build in builds:
+        for _ in range(4):
+            build = self.retention.begin()
+            builds.append(build)
             self.plan(build)
             reference, receipt = self.publish(build)
             self.assertTrue(receipt["pressure_evictable"])
@@ -270,6 +291,91 @@ class CapacityTests(TestCase):
             self.controller.cycle()
         self.assertEqual(self.calls, [])
         self.assertEqual(self.retention.status()["slots"][0]["state"], "draining")
+
+    def test_read_only_registry_still_requires_explicit_fence_before_gc(self):
+        self.capacity["a"] = 200
+        self.writable["a"] = False
+        self.controller.refresh()
+        self.controller.cycle()
+        self.assertEqual(self.calls, [("fence", "a"), ("gc", "a"), ("restore", "a")])
+
+    def test_retry_can_repair_endpoint_interrupted_by_fence(self):
+        self.controller.refresh()
+        self.capacity["a"] = 200
+        self.controller.refresh()
+        interrupted = False
+
+        def interrupt_once(action, slot):
+            nonlocal interrupted
+            if slot == "a" and action == "fence" and not interrupted:
+                interrupted = True
+                raise OSError("read-only endpoint still starting")
+            if slot == "a" and action == "measure" and interrupted and ("fence", "a") not in self.calls:
+                raise OSError("interrupted Registry is unavailable")
+            return self.driver(action, slot)
+
+        self.controller.driver = interrupt_once
+        with self.assertRaises(OSError):
+            self.controller.cycle()
+        self.controller.cycle()
+        self.assertEqual(self.calls, [("fence", "a"), ("gc", "a"), ("restore", "a")])
+
+    def test_manual_cli_defers_to_queued_maintenance_with_or_without_capacity(self):
+        self.capacity["a"] = 200
+        self.controller.refresh()
+        self.controller.reserve_rotation()
+        for config in (self.config, {**self.config, "capacity": None}):
+            path = self.database.with_name("config.json")
+            path.write_text(json.dumps(config))
+            with (
+                self.subTest(capacity=config["capacity"] is not None),
+                patch("sys.argv", [
+                    "retention.py", "--config", str(path), "--database", str(self.database),
+                    "seal", "a", "--writers-fenced",
+                ]),
+                self.assertRaisesRegex(ValueError, "queued Registry maintenance"),
+            ):
+                retention_cli()
+
+    def test_plan_replay_is_rejected_after_automatic_drain_window(self):
+        self.controller.refresh()
+        build = self.retention.begin()
+        self.plan(build)
+        self.capacity["a"] = 200
+        self.controller.refresh()
+        job = self.controller.reserve_rotation()
+        self.plan(build)
+        self.clock.return_value = job["drain_until"]
+        with self.assertRaisesRegex(Conflict, "fenced"):
+            self.plan(build)
+
+    def test_a_single_old_plan_does_not_stall_a_busy_writer(self):
+        self.controller.refresh()
+        self.plan(self.retention.begin())
+        self.clock.return_value += 29
+        for _ in range(2):
+            self.plan(self.retention.begin())
+        self.clock.return_value += 1
+        self.controller.refresh()
+        self.assertIsNone(self.controller.reserve_rotation())
+
+    def test_legacy_preparations_adopt_a_deadline_and_respect_write_limit(self):
+        capacity = self.config.pop("capacity")
+        self.retention = Retention(self.config, self.database)
+        prepared = [self.retention.begin() for _ in range(5)]
+        self.config["capacity"] = capacity
+        self.open()
+        self.controller.refresh()
+        for build in prepared[:3]:
+            self.plan(build)
+        with self.assertRaises(CapacityUnavailable):
+            self.plan(prepared[3])
+        self.publish(prepared[0])
+        self.clock.return_value += 60
+        self.controller.refresh()
+        with self.assertRaisesRegex(CapacityUnavailable, "reservation expired"):
+            self.plan(prepared[4])
+        self.plan(self.retention.begin())
 
     def test_stalled_build_limit_rotates_even_below_watermark(self):
         self.config["capacity"]["rotation_interval_seconds"] = 0
