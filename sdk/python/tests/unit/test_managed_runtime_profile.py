@@ -3,7 +3,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from akernel_sdk import DockerRuntime, TimeoutException, build_image
 from akernel_sdk._managed_build import upload_context
@@ -156,6 +156,51 @@ class ManagedProfileContract(unittest.TestCase):
             self.assertEqual(result.cwd, "/app")
             self.assertTrue(result.has_startup_command)
             sandbox.kill.assert_called_once()
+
+    def test_ephemeral_build_registers_plan_before_push_and_returns_expiry(self):
+        repository = "registry.test/akernel-ephemeral/" + "c" * 32 + "/service-0"
+        tag = "build-" + "e" * 32
+        reference = repository + "@sha256:" + "a" * 64
+        builder = MagicMock()
+        retention = MagicMock()
+        retention.request.side_effect = [
+            {"id": "e" * 32, "tag": tag, "profile": "harbor-ephemeral-b"},
+            {},
+            {"expires_at": 1750},
+        ]
+        files = iter([{"tag": repository + ":" + tag}, {"reference": reference}])
+
+        def execute(command, **_kwargs):
+            if "image-build" in command and "--plan-only" not in command:
+                self.assertEqual(retention.request.call_args.args, ("plan",))
+            body = ""
+            if command == "cat /work/artifact.json":
+                body = json.dumps(next(files))
+            return CommandResult(body, "", 0)
+
+        builder.commands.run.side_effect = execute
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("akernel_sdk.sandbox.Sandbox", return_value=builder) as factory,
+            patch("akernel_sdk._managed_build.Retention", return_value=retention),
+        ):
+            root = Path(directory)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            result = build_image(root, profile="harbor-ephemeral", ttl_seconds=750)
+        self.assertEqual(result.expires_at, 1750)
+        self.assertEqual(
+            factory.call_args.kwargs["extra_config"],
+            {"managedRuntimeProfile": "harbor-ephemeral-b"},
+        )
+        self.assertEqual(
+            retention.request.call_args_list,
+            [
+                call("begin", ttl_seconds=750),
+                call("plan", publication="e" * 32, tag=repository + ":" + tag),
+                call("commit", publication="e" * 32, reference=reference),
+            ],
+        )
+        builder.kill.assert_called_once()
 
     def test_effective_empty_and_nonempty_image_startup(self):
         for process, expected in [

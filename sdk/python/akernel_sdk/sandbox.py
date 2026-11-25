@@ -19,6 +19,7 @@ from __future__ import annotations
 import builtins
 import logging
 import math
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 
@@ -34,6 +35,7 @@ from ._backends.errors import BackendOperationError, retain_failure_context
 from ._backends.registry import load_backend
 from ._dockerfile_launch import DockerfileLaunch
 from ._dualmethod import DualMethod
+from ._ephemeral_images import Retention, temporary_reference
 from ._fork import ForkCleanupError, retain_fork_failure
 from ._sandbox_resources import (
     normalize_xpu,
@@ -367,6 +369,16 @@ class Sandbox:
             if not isinstance(image, str) or not image.strip():
                 raise ValueError("Dockerfile base image must be a non-empty string")
 
+        retention = None
+        if temporary_reference(image):
+            if detached or failover:
+                raise ValueError(
+                    "Temporary images require an owned sandbox without failover"
+                )
+            retention = Retention()
+            if name is None:
+                name = f"environment-{uuid.uuid4()}"
+
         self._session: BackendSession | None = None
         self._startup_command: CommandHandle | None = None
         self._pty: Pty | None = None
@@ -416,9 +428,29 @@ class Sandbox:
             create_timeout=create_timeout,
             init_timeout=init_timeout,
         )
-        self._session = self._backend().create(spec)
+        backend = self._backend()
+        hold = None
+        if retention is not None:
+            hold = retention.request("acquire", reference=image, name=name)["id"]
+        try:
+            self._session = backend.create(spec)
+        except BaseException as failure:
+            if (
+                retention is not None
+                and hold is not None
+                and getattr(failure, "outcome", None) == "not_started"
+            ):
+                try:
+                    retention.request("cancel", hold=hold)
+                except Exception:
+                    logger.warning(
+                        "Could not cancel image retention hold", exc_info=True
+                    )
+            raise
         try:
             self._id = self._session.id
+            if retention is not None and hold is not None:
+                retention.request("bind", hold=hold, environment_id=self._id)
             self._files = Filesystem(self._session.files)
             self._commands = Commands(self._session.commands)
             self._pty = Pty(self._id, driver=self._session.pty)
@@ -471,6 +503,8 @@ class Sandbox:
             raise ValueError("timeout must be between 1 and 3600")
         if self._closed or self._session is None:
             raise RuntimeError("cannot snapshot a closed sandbox")
+        if temporary_reference(self._image):
+            raise ValueError("Snapshots require a long-lived image")
         return self._session.create_snapshot(name, timeout)
 
     def fork(
@@ -536,6 +570,8 @@ class Sandbox:
             validate_init_timeout(init_timeout)
         if self._closed or self._session is None:
             raise RuntimeError("cannot fork a closed sandbox")
+        if temporary_reference(self._image):
+            raise ValueError("Fork requires a long-lived image")
         try:
             outcome = self._session.fork(
                 count, idle_timeout, snapshot_timeout, restore_timeout,

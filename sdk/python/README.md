@@ -1791,6 +1791,16 @@ BuildKit cache use by default. Build failure stdout/stderr can be retained using
 is nonempty. Pass it as `Sandbox(..., inherit_entrypoint=artifact.has_startup_command)`
 when the task should run the image's startup command. Images that clear both
 commands still support interactive sandbox creation with inheritance disabled.
+
+Use `build_image(context, profile="harbor-ephemeral")` for a single-use
+Dockerfile on a deployment with temporary image retention. The operator sets
+the default TTL and maximum. Pass `ttl_seconds` to override the default for
+one build. `artifact.expires_at` is the Unix timestamp after which new
+sandboxes must use a fresh build. A sandbox created with
+`Sandbox(image=artifact.reference)` keeps the image protected until the
+retention service confirms the instance has ended. Use a long-lived profile
+for Compose and reusable snapshots. [Operator setup and recovery](../../deploy/registry-retention/README.md)
+
 Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the
 temporary preparation sandbox's scheduling reservation. Its existing limits
 remain 1000 millicores and 2048 MiB; each request must be positive and no greater

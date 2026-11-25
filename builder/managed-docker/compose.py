@@ -506,10 +506,14 @@ def start_builder(profile: dict) -> None:
     )
 
 
-def image_build(context: str, profile: dict, *, no_cache: bool = False) -> dict:
-    os.environ.setdefault("BUILDX_NO_DEFAULT_ATTESTATIONS", "1")
-    start_builder(profile)
-    metadata = context + ".metadata.json"
+def image_build(
+    context: str,
+    profile: dict,
+    *,
+    no_cache: bool = False,
+    publication_tag: str | None = None,
+    plan_only: bool = False,
+) -> dict:
     plan, targets, service_targets = build_plan(
         {},
         {"services": {"single": {"build": {}}}},
@@ -518,8 +522,13 @@ def image_build(context: str, profile: dict, *, no_cache: bool = False) -> dict:
         profile["prefix"],
         no_cache,
         profile.get("registry_insecure", False),
-        "build-" + uuid.uuid4().hex,
+        publication_tag or "build-" + uuid.uuid4().hex,
     )
+    if plan_only:
+        return {"tag": targets["single"]}
+    os.environ.setdefault("BUILDX_NO_DEFAULT_ATTESTATIONS", "1")
+    start_builder(profile)
+    metadata = context + ".metadata.json"
     plan_path = context + ".bake.json"
     Path(plan_path).write_text(json.dumps(plan))
     values = bake_metadata(
@@ -676,6 +685,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--context")
     parser.add_argument("--result")
+    parser.add_argument("--publication-tag")
+    parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--container")
     parser.add_argument("--port", type=int)
     args = parser.parse_args()
@@ -685,8 +696,16 @@ if __name__ == "__main__":
     elif args.operation == "image-build":
         if not args.context or not args.result:
             parser.error("image-build requires context and result")
+        if args.plan_only and not args.publication_tag:
+            parser.error("image-build planning requires a publication tag")
         Path(args.result).write_text(
-            json.dumps(image_build(args.context, profile, no_cache=args.no_cache))
+            json.dumps(image_build(
+                args.context,
+                profile,
+                no_cache=args.no_cache,
+                publication_tag=args.publication_tag,
+                plan_only=args.plan_only,
+            ))
         )
     elif args.operation == "reconnect":
         import sys

@@ -61,6 +61,33 @@ class SandboxTest(unittest.TestCase):
         self.load_backend.start()
         self.addCleanup(self.load_backend.stop)
 
+    def test_temporary_sandbox_reserves_image_before_remote_create(self):
+        reference = (
+            f"registry.test/akernel-ephemeral/{'c' * 32}/service-0@sha256:{'a' * 64}"
+        )
+        with patch.object(sandbox_module, "Retention") as retention:
+            rpc = retention.return_value.request
+            rpc.return_value = {"id": "use-1"}
+
+            def create(spec):
+                self.assertEqual(rpc.call_args.args, ("acquire",))
+                self.assertEqual(rpc.call_args.kwargs, {
+                    "reference": reference, "name": spec.name,
+                })
+                self.session.id = "default-" + spec.name
+                return self.session
+
+            self.backend.create.side_effect = create
+            sandbox = Sandbox(image=reference)
+            self.assertEqual(rpc.call_args.args, ("bind",))
+            self.assertEqual(rpc.call_args.kwargs, {
+                "hold": "use-1", "environment_id": sandbox.id,
+            })
+            with self.assertRaisesRegex(ValueError, "long-lived image"):
+                sandbox.create_snapshot()
+            sandbox.kill()
+            self.assertEqual(rpc.call_count, 2)
+
     def test_default_constructor_and_info(self):
         sandbox = Sandbox(cpu=2000, memory=8192)
         self.assertEqual(sandbox.id, "physical-id")

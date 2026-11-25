@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._backends.errors import BackendOperationError, retain_failure_context
+from ._ephemeral_images import PROFILE, Retention
 
 if TYPE_CHECKING:
     from .sandbox import Sandbox
@@ -31,6 +32,7 @@ class BuiltImage:
     cwd: str | None = None
     user: str | None = None
     has_startup_command: bool = True
+    expires_at: int | None = None
 
 
 def upload_context(sandbox: Sandbox, source: Path, destination: str) -> None:
@@ -63,6 +65,7 @@ def build_image(
     log_path: str | Path | None = None,
     cpu_request: int | None = None,
     memory_request: int | None = None,
+    ttl_seconds: int | None = None,
 ) -> BuiltImage:
     """Submit an original context through an authorized platform build profile.
 
@@ -70,8 +73,10 @@ def build_image(
     and image provider. No host Docker daemon, helper binary or Registry route
     is needed on this client. The temporary preparation Sandbox is deleted on
     success/failure; unknown outcomes are not replayed. Cleanup errors preserve
-    the preparation Sandbox identity. The returned image lifetime follows the
-    platform profile's retention contract. Timeouts are seconds.
+    the preparation Sandbox identity. The temporary profile allows an optional
+    positive `ttl_seconds` override within the operator's limit. The reported
+    `expires_at` is the Unix timestamp after which new consumers are rejected.
+    Running consumers keep the image protected. Timeouts are seconds.
 
     Optional preparation CPU/memory requests use millicores/MiB. The existing
     preparation limits remain 1000 millicores and 2048 MiB; these settings do
@@ -80,7 +85,6 @@ def build_image(
     from ._docker_runtime import DockerRuntime
     from .sandbox import Sandbox
 
-    options = DockerRuntime(profile=profile).sandbox_options()
     source = Path(context).resolve(strict=True)
     if not source.is_dir() or not (source / "Dockerfile").is_file():
         raise ValueError("Native build requires a context containing Dockerfile")
@@ -96,6 +100,21 @@ def build_image(
             or not 1 <= request <= limit
         ):
             raise ValueError(f"{name} must be an integer between 1 and {limit}")
+    retention = None
+    publication = None
+    if profile == PROFILE:
+        if ttl_seconds is not None and (
+            type(ttl_seconds) is not int or ttl_seconds < 1
+        ):
+            raise ValueError("ttl_seconds must be a positive integer")
+        retention = Retention()
+        publication = retention.request("begin", ttl_seconds=ttl_seconds)
+        profile = publication["profile"]
+    elif isinstance(profile, str) and profile.startswith(PROFILE + "-"):
+        raise ValueError(f"Temporary Registry slots are selected through {PROFILE!r}")
+    elif ttl_seconds is not None:
+        raise ValueError(f"ttl_seconds requires profile={PROFILE!r}")
+    options = DockerRuntime(profile=profile).sandbox_options()
     failure: BaseException | None = None
     builder = Sandbox(
         cpu=1000 if cpu_request is None else cpu_request,
@@ -108,19 +127,31 @@ def build_image(
     )
     try:
         upload_context(builder, source, "/work/context")
+        command = [
+            "python3",
+            "/usr/lib/akernel/compose.py",
+            "image-build",
+            "--context",
+            "/work/context",
+            "--result",
+            "/work/artifact.json",
+            *(["--no-cache"] if no_cache else []),
+        ]
+        if retention is not None and publication is not None:
+            command += ["--publication-tag", publication["tag"]]
+            builder.commands.run(
+                shlex.join([*command, "--plan-only"]), timeout=20, check=True
+            )
+            planned = json.loads(
+                builder.commands.run(
+                    "cat /work/artifact.json", timeout=20, check=True
+                ).stdout
+            )
+            retention.request(
+                "plan", publication=publication["id"], tag=planned["tag"]
+            )
         result = builder.commands.run(
-            shlex.join(
-                [
-                    "python3",
-                    "/usr/lib/akernel/compose.py",
-                    "image-build",
-                    "--context",
-                    "/work/context",
-                    "--result",
-                    "/work/artifact.json",
-                    *(["--no-cache"] if no_cache else []),
-                ]
-            ),
+            shlex.join(command),
             timeout=timeout,
         )
         if log_path is not None:
@@ -141,6 +172,11 @@ def build_image(
             or re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", reference) is None
         ):
             raise ValueError("Runtime returned an invalid artifact reference")
+        expires_at = None
+        if retention is not None and publication is not None:
+            expires_at = retention.request(
+                "commit", publication=publication["id"], reference=reference
+            )["expires_at"]
         process = handle.get("image_process", {})
         return BuiltImage(
             reference=reference,
@@ -150,6 +186,7 @@ def build_image(
             cwd=process.get("WorkingDir") or None,
             user=process.get("User") or None,
             has_startup_command=bool(process.get("Entrypoint") or process.get("Cmd")),
+            expires_at=expires_at,
         )
     except BaseException as error:
         failure = error

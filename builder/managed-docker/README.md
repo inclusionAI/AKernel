@@ -119,6 +119,11 @@ and automatic Registry artifact GC are not provided by this profile.
 
 ## Packaging and compatibility
 
+The optional `harbor-ephemeral` SDK alias uses the same single-Dockerfile
+publication path. The tool's planning mode returns the exact repository and
+tag before Bake pushes. The AKernel retention service uses that plan to track
+the configured TTL and sandbox use. [Temporary image retention](../../deploy/registry-retention/README.md)
+
 Build the all-in-one image with the repository's maintained build helper. The
 Sandboxd gitlink and runtime manifests select the runtime implementation; the
 Agent DX source reference and platform/Execd URL/checksum pairs must identify the
