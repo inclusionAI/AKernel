@@ -839,6 +839,11 @@ Run SDK unit tests with:
 make sdk-test
 ```
 
+Temporary managed builds use the `harbor-ephemeral` SDK alias. Keep publication
+retention and usage holds in AKernel and query instance state through the
+existing ADX API. Use independent Registry storage for the write and
+maintenance targets. [Temporary image retention](deploy/registry-retention/README.md)
+
 Run syntax checks for the tracked Bash deployment scripts, Terraform shell
 templates, and Python deployment helpers with:
 

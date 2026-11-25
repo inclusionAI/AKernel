@@ -1,0 +1,25 @@
+{
+  "initial_slot": "a",
+  "default_ttl_seconds": 86400,
+  "max_ttl_seconds": 604800,
+  "auto_delete": false,
+  "runner_token_file": "/etc/retention/keys/runner",
+  "adx_origin": "https://akernel.example.internal",
+  "adx_token_file": "/etc/retention/keys/adx-observer",
+  "registries": {
+    "a": {
+      "origin": "https://registry-a.example.internal",
+      "profile": "harbor-ephemeral-a",
+      "token_realm": "https://registry-auth-a.example.internal/auth",
+      "token_service": "registry-a",
+      "credentials_file": "/etc/retention/keys/registry-a.json"
+    },
+    "b": {
+      "origin": "https://registry-b.example.internal",
+      "profile": "harbor-ephemeral-b",
+      "token_realm": "https://registry-auth-b.example.internal/auth",
+      "token_service": "registry-b",
+      "credentials_file": "/etc/retention/keys/registry-b.json"
+    }
+  }
+}

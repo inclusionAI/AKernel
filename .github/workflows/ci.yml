@@ -28,6 +28,8 @@ jobs:
           python-version: "3.12"
       - name: Test managed runtime adapters
         run: python -m unittest discover -s builder/managed-docker -p 'test_*.py'
+      - name: Test temporary Registry retention
+        run: python -m unittest discover -s deploy/registry-retention -p 'test_*.py'
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
