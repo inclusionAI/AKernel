@@ -20,8 +20,11 @@ _PREFIX = "akernel-ephemeral"
 def temporary_reference(image: str | None) -> bool:
     if image is None:
         return False
-    reference = image.removeprefix("https://").removeprefix("http://")
-    return reference.partition("/")[2].startswith(_PREFIX + "/")
+    return canonical_reference(image).partition("/")[2].startswith(_PREFIX + "/")
+
+
+def canonical_reference(image: str) -> str:
+    return image.removeprefix("https://").removeprefix("http://")
 
 
 class Retention:

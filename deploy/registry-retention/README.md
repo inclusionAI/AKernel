@@ -68,11 +68,16 @@ python3 retention.py --config /etc/retention/config.json \
   --tls-cert /etc/retention/tls/tls.crt --tls-key /etc/retention/tls/tls.key
 ```
 
-The service protects busy, paused and pending instances after TTL. A confirmed
-terminal absence from the ADX instance query releases a bound hold. Lost
-creation responses remain protected until the service observes the expected
-instance with the exact image, or an operator confirms the create never reached
-the backend. Inspect `status` before using `cancel-hold --confirmed-absent`.
+The service protects busy, paused and pending instances after TTL. An owned
+SDK sandbox reports a confirmed DELETE when Harbor stops the environment.
+The service then verifies that ADX has removed that instance before releasing
+the image hold. ADX can retire a lost worker's directory entry without
+contacting it, so a missing entry alone keeps the hold in place.
+
+Inspect `status` for unresolved holds. Use `cancel-hold --confirmed-absent`
+for a create known never to have started. An operator who verifies physical
+teardown of an existing sandbox can use `release-hold --confirmed-stopped`.
+The latter also checks that the instance is absent from ADX.
 
 ## Reclaim and rotate
 

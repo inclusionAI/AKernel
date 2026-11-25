@@ -385,6 +385,8 @@ class Sandbox:
         self._closed = False
         self._terminated = detached
         self._remote_deleted = False
+        self._image_hold: tuple[Retention, str] | None = None
+        self._termination_confirmed = False
         self._detached = detached
         self._reverse_tunnel = reverse_tunnel
         self._forwarded_ports = set(ports)
@@ -451,6 +453,7 @@ class Sandbox:
             self._id = self._session.id
             if retention is not None and hold is not None:
                 retention.request("bind", hold=hold, environment_id=self._id)
+                self._image_hold = (retention, hold)
             self._files = Filesystem(self._session.files)
             self._commands = Commands(self._session.commands)
             self._pty = Pty(self._id, driver=self._session.pty)
@@ -1014,6 +1017,8 @@ class Sandbox:
         result._closed = False
         result._terminated = detached
         result._remote_deleted = False
+        result._image_hold = None
+        result._termination_confirmed = False
         result._detached = detached
         result._reverse_tunnel = reverse_tunnel
         result._forwarded_ports = set(ports)
@@ -1315,6 +1320,19 @@ class Sandbox:
         if errors:
             raise errors[0]
 
+    def _finish_image_hold(self) -> None:
+        if self._image_hold is None or not self._termination_confirmed:
+            return
+        retention, hold = self._image_hold
+        try:
+            retention.request("finish", hold=hold, environment_id=self._id)
+        except Exception:
+            logger.warning(
+                "Could not report sandbox termination to image retention", exc_info=True
+            )
+        else:
+            self._image_hold = None
+
     def _kill(self, *, delete_remote: bool | None = None) -> None:
         """Release client resources and terminate a non-detached sandbox.
 
@@ -1328,6 +1346,7 @@ class Sandbox:
             raise TypeError("delete_remote must be a boolean or None")
         remote = not self._detached if delete_remote is None else delete_remote
         if self._closed and (not remote or self._remote_deleted):
+            self._finish_image_hold()
             return
 
         local_errors: list[Exception] = []
@@ -1336,12 +1355,13 @@ class Sandbox:
         if self._session is not None:
             if remote and not self._remote_deleted:
                 try:
-                    self._session.terminate()
+                    self._termination_confirmed = self._session.terminate() is True
                 except Exception as error:
                     terminate_error = error
                 else:
                     self._terminated = True
                     self._remote_deleted = True
+                    self._finish_image_hold()
 
         if not self._closed:
             if self._pty is not None:

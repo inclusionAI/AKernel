@@ -75,6 +75,9 @@ class RetentionTests(TestCase):
             self.assertEqual(self.retention.sweep(apply=False), [])
         self.clock.return_value += 61
         with patch.object(self.retention, "observe", return_value=None):
+            self.assertEqual(self.retention.sweep(apply=False), [])
+            self.assertEqual(self.retention.status()["awaiting_stop_confirmation"][0]["id"], hold)
+            self.retention.finish(hold, "default-task-1")
             self.assertEqual(len(self.retention.sweep(apply=False)), 1)
 
     def test_lost_create_response_is_reconciled_without_guessing(self):
@@ -90,7 +93,27 @@ class RetentionTests(TestCase):
         self.assertEqual(self.retention.status()["unconfirmed_holds"], [])
         self.clock.return_value += 61
         with patch.object(self.retention, "observe", return_value=None):
+            self.assertEqual(self.retention.sweep(apply=False), [])
+            self.retention.release_stopped(hold)
             self.assertEqual(len(self.retention.sweep(apply=False)), 1)
+
+    def test_publication_repository_is_exclusive(self):
+        _, reference, _ = self.publication()
+        duplicate = self.retention.begin()
+        tag = reference.split("@", 1)[0] + ":" + duplicate["tag"]
+        with self.assertRaises(Conflict):
+            self.retention.plan(duplicate["id"], tag)
+
+    def test_absent_registry_tag_cannot_commit_without_a_digest(self):
+        build = self.retention.begin()
+        repository = "registry-a.example.test/akernel-ephemeral/" + "a" * 32 + "/service-0"
+        self.retention.plan(build["id"], repository + ":" + build["tag"])
+        registry = self.retention.registries["a"]
+        with (
+            patch.object(registry, "resolve", return_value=None),
+            self.assertRaises(ValueError),
+        ):
+            self.retention.commit(build["id"], None)
 
     def test_binding_checks_the_authoritative_instance_image(self):
         _, reference, _ = self.publication()

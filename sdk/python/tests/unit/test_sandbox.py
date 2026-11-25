@@ -85,8 +85,14 @@ class SandboxTest(unittest.TestCase):
             })
             with self.assertRaisesRegex(ValueError, "long-lived image"):
                 sandbox.create_snapshot()
+            self.session.terminate.return_value = True
             sandbox.kill()
-            self.assertEqual(rpc.call_count, 2)
+            self.assertEqual(rpc.call_args.args, ("finish",))
+            self.assertEqual(
+                rpc.call_args.kwargs,
+                {"hold": "use-1", "environment_id": sandbox.id},
+            )
+            self.assertEqual(rpc.call_count, 3)
 
     def test_default_constructor_and_info(self):
         sandbox = Sandbox(cpu=2000, memory=8192)

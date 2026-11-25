@@ -16,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from registry import DIGEST, Registry, request, trusted_url
 
@@ -35,9 +35,12 @@ CREATE TABLE IF NOT EXISTS publications (
 CREATE TABLE IF NOT EXISTS holds (
     id TEXT PRIMARY KEY, publication TEXT NOT NULL REFERENCES publications(id),
     instance TEXT NOT NULL, bound INTEGER NOT NULL DEFAULT 0,
+    finished INTEGER NOT NULL DEFAULT 0,
     retry_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS publication_expiry ON publications(state, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS publication_repository
+    ON publications(substr(tag, 1, instr(tag, ':build-') - 1)) WHERE tag IS NOT NULL;
 CREATE INDEX IF NOT EXISTS holds_publication ON holds(publication);
 """
 
@@ -67,6 +70,9 @@ class Retention:
             raise ValueError("Invalid default or maximum retention TTL")
         self.runner_token = self.read_token(config["runner_token_file"])
         self.adx_origin = trusted_url(config["adx_origin"], origin=True)
+        observer = urlsplit(self.adx_origin)
+        if observer.scheme != "https" and observer.hostname not in {"127.0.0.1", "::1"}:
+            raise ValueError("ADX instance observation requires HTTPS")
         self.adx_token_file = config["adx_token_file"]
         self.auto_delete = config.get("auto_delete", False)
         if type(self.auto_delete) is not bool:
@@ -75,6 +81,8 @@ class Retention:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript(SCHEMA)
         with self.database_session(write=True) as db:
+            if "finished" not in {row["name"] for row in db.execute("PRAGMA table_info(holds)")}:
+                db.execute("ALTER TABLE holds ADD COLUMN finished INTEGER NOT NULL DEFAULT 0")
             db.executemany(
                 "INSERT OR IGNORE INTO slots VALUES (?, ?, ?, ?)",
                 [
@@ -146,6 +154,13 @@ class Retention:
             slot = db.execute("SELECT state FROM slots WHERE name=?", (row["slot"],)).fetchone()
             if row["state"] != "new" or slot["state"] != "active":
                 raise Conflict("Registry is draining; submit a new build")
+            existing = db.execute(
+                """SELECT id FROM publications WHERE tag IS NOT NULL
+                AND substr(tag, 1, instr(tag, ':build-') - 1)=?""",
+                (repository,),
+            ).fetchone()
+            if existing:
+                raise Conflict("Publication repository is already reserved")
             db.execute(
                 "UPDATE publications SET state='planned', tag=? WHERE id=?", (tag, publication)
             )
@@ -154,6 +169,13 @@ class Retention:
     def commit(self, publication: str, reference: str):
         with self.database_session() as db:
             row = self.publication(db, publication)
+        repository = row["tag"].rsplit(":", 1)[0] if row["tag"] else None
+        if (
+            not isinstance(reference, str)
+            or not re.fullmatch(DIGEST, reference.rpartition("@")[2])
+            or reference.rpartition("@")[0] != repository
+        ):
+            raise ValueError("Expected the planned repository and an immutable digest")
         if row["state"] == "published" and row["reference"] == reference:
             return {"expires_at": row["expires_at"]}
         if (
@@ -220,6 +242,25 @@ class Retention:
             db.execute("DELETE FROM holds WHERE id=? AND bound=0", (hold,))
         return {}
 
+    def finish(self, hold: str, environment_id: str):
+        """Record a confirmed SDK stop before looking for directory absence."""
+        with self.database_session(write=True) as db:
+            db.execute(
+                "UPDATE holds SET finished=1, retry_at=0 WHERE id=? AND instance=? AND bound=1",
+                (hold, environment_id),
+            )
+        return {}
+
+    def release_stopped(self, hold: str):
+        with self.database_session() as db:
+            row = db.execute("SELECT instance FROM holds WHERE id=?", (hold,)).fetchone()
+        if row is not None:
+            if self.observe(row["instance"]) is not None:
+                raise Conflict("The sandbox is still listed in the instance directory")
+            with self.database_session(write=True) as db:
+                db.execute("DELETE FROM holds WHERE id=?", (hold,))
+        return {}
+
     @staticmethod
     def observed_reference(state: dict) -> str | None:
         image = state.get("image")
@@ -263,9 +304,9 @@ class Retention:
                 db.execute("UPDATE holds SET retry_at=? WHERE id=?", (now + 60, hold["id"]))
             try:
                 state = self.observe(hold["instance"])
-                if state is None and hold["bound"]:
+                if state is None and hold["finished"]:
                     with self.database_session(write=True) as db:
-                        db.execute("DELETE FROM holds WHERE id=? AND bound=1", (hold["id"],))
+                        db.execute("DELETE FROM holds WHERE id=? AND finished=1", (hold["id"],))
                 elif state is not None and self.observed_reference(state) == hold["reference"]:
                     with self.database_session(write=True) as db:
                         db.execute("UPDATE holds SET bound=1 WHERE id=?", (hold["id"],))
@@ -337,7 +378,10 @@ class Retention:
             ]
             holds = [
                 dict(row)
-                for row in db.execute("SELECT bound, COUNT(*) count FROM holds GROUP BY bound")
+                for row in db.execute(
+                    """SELECT bound, finished, COUNT(*) count
+                    FROM holds GROUP BY bound,finished"""
+                )
             ]
             unconfirmed = [
                 dict(row)
@@ -345,11 +389,22 @@ class Retention:
                     "SELECT id, instance, publication FROM holds WHERE bound=0 LIMIT 256"
                 )
             ]
+            awaiting_stop = [
+                dict(row)
+                for row in db.execute(
+                    """SELECT h.id, h.instance, h.publication
+                    FROM holds h JOIN publications p ON p.id=h.publication
+                    WHERE h.bound=1 AND h.finished=0 AND p.expires_at<=?
+                    ORDER BY p.expires_at LIMIT 256""",
+                    (int(time.time()),),
+                )
+            ]
         return {
             "slots": slots,
             "publications": counts,
             "holds": holds,
             "unconfirmed_holds": unconfirmed,
+            "awaiting_stop_confirmation": awaiting_stop,
         }
 
     def switch(self, slot: str):
@@ -409,6 +464,7 @@ def server_handler(retention: Retention):
         "/v1/acquire": retention.acquire,
         "/v1/bind": retention.bind,
         "/v1/cancel": retention.cancel,
+        "/v1/finish": retention.finish,
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -501,6 +557,9 @@ def main():
     cancel = subcommands.add_parser("cancel-hold")
     cancel.add_argument("hold")
     cancel.add_argument("--confirmed-absent", action="store_true", required=True)
+    release = subcommands.add_parser("release-hold")
+    release.add_argument("hold")
+    release.add_argument("--confirmed-stopped", action="store_true", required=True)
     sweep = subcommands.add_parser("sweep")
     sweep.add_argument("--apply", action="store_true")
     for command in ("switch", "seal", "ready"):
@@ -520,6 +579,8 @@ def main():
         result = retention.status()
     elif args.command == "cancel-hold":
         result = retention.cancel(args.hold)
+    elif args.command == "release-hold":
+        result = retention.release_stopped(args.hold)
     else:
         result = getattr(retention, args.command)(args.slot)
     print(json.dumps(result, indent=2))

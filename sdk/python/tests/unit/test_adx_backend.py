@@ -74,6 +74,33 @@ class AdxBackendTest(unittest.TestCase):
             token="secret",
         )
 
+    def test_temporary_deletion_requires_an_explicit_stop_response(self):
+        session = adx._Session.__new__(adx._Session)
+        session.id = "default-ephemeral"
+        session._connection = adx.AdxBackend(self.config)._connection
+        image = (
+            f"registry.test/akernel-ephemeral/{'c' * 32}/service-0@sha256:{'a' * 64}"
+        )
+
+        for status in (200, 202, 404):
+            def send(_client, request, terminal_status=status, **_kwargs):
+                if request.method == "GET":
+                    return httpx.Response(
+                        200,
+                        json=[{"id": session.id, "status": "running", "image": image}],
+                        request=request,
+                    )
+                self.assertEqual(request.method, "DELETE")
+                return httpx.Response(
+                    terminal_status, json={"code": terminal_status}, request=request
+                )
+
+            with (
+                self.subTest(status=status),
+                patch.object(httpx.Client, "send", autospec=True, side_effect=send),
+            ):
+                self.assertIs(session._delete_temporary_sandbox(image), status == 200)
+
     def test_managed_default_reserves_floor_through_native_request_encoding(self):
         key = "AKERNEL_RUNTIME_PROFILE_harbor-v1"
         requests = []

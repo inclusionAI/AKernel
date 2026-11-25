@@ -21,6 +21,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from collections.abc import Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
@@ -33,6 +34,7 @@ from adx_environment._transport import PermissionDenied as NativePermissionDenie
 from adx_environment.commands import CommandNotFound as NativeCommandNotFound
 from adx_environment.tunnel_client import TunnelClient
 
+from .._ephemeral_images import canonical_reference, temporary_reference
 from .._fork import ForkCleanupError, retain_fork_failure
 from .._resource_api import RESOURCE_PATH, parse_resource_nodes
 from .._sandboxes import SandboxQuery
@@ -671,6 +673,7 @@ class _Session:
         self._spec = spec
         self._connection = connection
         self._terminated = False
+        self._termination_confirmed: bool | None = None
         self._closed = False
         self._network_policy = spec.network_policy
         # A successful named create can return an existing environment without
@@ -697,6 +700,7 @@ class _Session:
         result._connection = connection
         result._closed = closed
         result._terminated = False
+        result._termination_confirmed = None
         result._fork_snapshot = None
         return result
 
@@ -1005,11 +1009,44 @@ class _Session:
         self.close()
         return False
 
-    def terminate(self) -> None:
+    def _delete_temporary_sandbox(self, image: str) -> bool:
+        # The native SDK accepts 404 as idempotent success. Retention needs to
+        # distinguish it from a successful DELETE of a still-observed instance.
+        client = EnvironmentClient(connection=self._connection)
+        request_id = f"delete-{uuid.uuid4()}"
+        try:
+            try:
+                record = client.environment_info(self.id)
+            except EnvironmentNotFound:
+                return False
+            observed_image = record.get("image")
+            if not isinstance(observed_image, str) or (
+                canonical_reference(observed_image) != canonical_reference(image)
+            ):
+                raise BackendOperationError("Sandbox identity changed before deletion")
+            response = client._http.delete(
+                f"{client._base}/environments/{self.id}",
+                headers={"X-Request-Id": request_id},
+                timeout=60,
+            )
+            if response.status_code in (202, 204, 404):
+                return False
+            if response.status_code != 200:
+                raise client._http_error(response, request_id=request_id)
+            data = response.json()
+            return (
+                isinstance(data, dict)
+                and data.get("code") == 200
+                and record.get("status") in {"running", "paused"}
+            )
+        finally:
+            client.close()
+
+    def terminate(self) -> bool | None:
         if self._terminated:
             if self._fork_snapshot is not None:
                 self._fork_snapshot.release(self.id)
-            return
+            return self._termination_confirmed
         # Release the native handle before deleting the remote sandbox. This
         # lets transports such as reverse tunnels close while their routes are
         # still available. The stable-ID delete still uses a fresh native
@@ -1020,7 +1057,12 @@ class _Session:
         except Exception as error:
             close_error = error
         try:
-            adx_environment.Environment.delete(self.id, connection=self._connection)
+            spec = getattr(self, "_spec", None)
+            image = spec.image if isinstance(spec, SandboxSpec) else None
+            if image is not None and temporary_reference(image):
+                self._termination_confirmed = self._delete_temporary_sandbox(image)
+            else:
+                adx_environment.Environment.delete(self.id, connection=self._connection)
         except Exception as error:
             failure = _convert_error("terminate sandbox", error)
             retain_failure_context(failure, self.id, close_error)
@@ -1036,6 +1078,7 @@ class _Session:
             self._fork_snapshot.release(self.id)
         if close_error is not None:
             raise close_error
+        return self._termination_confirmed
 
     def close(self) -> None:
         if self._closed:

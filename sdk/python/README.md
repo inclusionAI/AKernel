@@ -1797,9 +1797,9 @@ Dockerfile on a deployment with temporary image retention. The operator sets
 the default TTL and maximum. Pass `ttl_seconds` to override the default for
 one build. `artifact.expires_at` is the Unix timestamp after which new
 sandboxes must use a fresh build. A sandbox created with
-`Sandbox(image=artifact.reference)` keeps the image protected until the
-retention service confirms the instance has ended. Use a long-lived profile
-for Compose and reusable snapshots. [Operator setup and recovery](../../deploy/registry-retention/README.md)
+`Sandbox(image=artifact.reference)` keeps the image protected until the SDK
+confirms deletion and the retention service verifies that the instance is gone.
+Use a long-lived profile for Compose and reusable snapshots. [Operator setup and recovery](../../deploy/registry-retention/README.md)
 
 Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the
 temporary preparation sandbox's scheduling reservation. Its existing limits
