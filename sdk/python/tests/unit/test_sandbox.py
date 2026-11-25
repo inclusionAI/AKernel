@@ -94,6 +94,15 @@ class SandboxTest(unittest.TestCase):
             )
             self.assertEqual(rpc.call_count, 3)
 
+    def test_regular_image_in_temporary_namespace_uses_standard_lifecycle(self):
+        image = "registry.test/akernel-ephemeral/python:3.12"
+        with patch.object(sandbox_module, "Retention") as retention:
+            sandbox = Sandbox(image=image)
+            sandbox.kill()
+            retention.assert_not_called()
+        self.assertEqual(self.backend.create.call_args.args[0].image, image)
+        self.session.terminate.assert_called_once_with()
+
     def test_default_constructor_and_info(self):
         sandbox = Sandbox(cpu=2000, memory=8192)
         self.assertEqual(sandbox.id, "physical-id")

@@ -14,13 +14,15 @@ import httpx
 from ._backends.errors import BackendOperationError
 
 PROFILE = "harbor-ephemeral"
-_PREFIX = "akernel-ephemeral"
+_REPOSITORY = re.compile(r"akernel-ephemeral/[0-9a-f]{32}/service-0")
 
 
 def temporary_reference(image: str | None) -> bool:
     if image is None:
         return False
-    return canonical_reference(image).partition("/")[2].startswith(_PREFIX + "/")
+    _, _, path = canonical_reference(image).partition("/")
+    repository = path.partition("@")[0].partition(":")[0]
+    return _REPOSITORY.fullmatch(repository) is not None
 
 
 def canonical_reference(image: str) -> str:

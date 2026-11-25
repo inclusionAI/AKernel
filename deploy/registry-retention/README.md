@@ -8,35 +8,41 @@ SDK and managed tools together.
 
 ```mermaid
 flowchart LR
-    H["Harbor job<br/>temporary profile"]
-    B["build_image()<br/>profile TTL or per-build override"]
-    S["Sandbox SDK<br/>reserve image use before create"]
-    R["AKernel retention service<br/>publish receipts, instance holds and manifest deletion"]
-    D["Agent DX<br/>existing instance API"]
-    K["Shared BuildKit"]
-    N["Worker and Dragonfly"]
-    A["Registry A + PVC A<br/>read and collect"]
-    W["Registry B + PVC B<br/>accept builds"]
-    H --> B
-    B --> R
-    B --> K
-    K --> W
-    B -->|"digest"| S
-    S --> R
-    S --> D
-    R -->|"observe instance state"| D
-    D --> N
-    N --> A
-    N --> W
-    R -->|"reclaim eligible manifests"| A
-    R -->|"reclaim eligible manifests"| W
+    H["Harbor data synthesis<br/>Temporary profile"]
+    SDK["AKernel SDK<br/>build_image with TTL<br/>Reserve image use before create"]
+    R["AKernel retention service<br/>Persist digest, expiry and holds"]
+    DX["Agent DX<br/>Existing instance API"]
+    BK["Shared BuildKit"]
+    W["Worker / Dragonfly"]
+    A["Registry A + PVC A<br/>Read-only during GC"]
+    B["Registry B + PVC B<br/>Accepts new builds"]
+    O["Operator"]
+
+    H --> SDK
+    SDK -->|"Register publication and use<br/>Report confirmed stop"| R
+    SDK --> BK
+    SDK -->|"Manage sandbox lifecycle"| DX
+    R -->|"Verify instance absence"| DX
+    R -->|"Delete eligible manifests"| B
+    BK -->|"Push new images"| B
+    DX --> W
+    W -->|"Pull retained digests"| A
+    W -->|"Pull new digests"| B
+    O -.->|"Switch new builds to B"| R
+    O -.->|"Fence writers, then run GC"| A
+
     classDef sdk fill:#dbeafe,stroke:#2563eb,color:#172554,stroke-width:2px;
     classDef retention fill:#ffedd5,stroke:#ea580c,color:#431407,stroke-width:2px;
     classDef storage fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:2px;
-    class B,S sdk;
+    class SDK sdk;
     class R retention;
-    class A,W storage;
+    class A,B storage;
 ```
+
+Blue marks the SDK changes, orange marks the retention service, and purple
+marks the two independent storage endpoints. The diagram shows B active during
+A's GC window. The service can sweep eligible manifests on A before A is sealed.
+During GC, workers keep pulling retained digests from A's original endpoint.
 
 ## Configure
 
