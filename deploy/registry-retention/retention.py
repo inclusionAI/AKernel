@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
+from capacity import SCHEMA as CAPACITY_SCHEMA
+from capacity import CapacityController, CapacityPolicy, CapacityUnavailable, maintenance_lock
 from registry import DIGEST, Registry, request, trusted_url
 
 LOG = logging.getLogger(__name__)
@@ -29,13 +31,13 @@ CREATE TABLE IF NOT EXISTS slots (
 CREATE TABLE IF NOT EXISTS publications (
     id TEXT PRIMARY KEY, slot TEXT NOT NULL REFERENCES slots(name),
     ttl INTEGER NOT NULL, state TEXT NOT NULL, tag TEXT UNIQUE,
-    reference TEXT UNIQUE, expires_at INTEGER, worklist TEXT, retry_at INTEGER NOT NULL
-        DEFAULT 0
+    reference TEXT UNIQUE, expires_at INTEGER, worklist TEXT, retry_at INTEGER NOT NULL DEFAULT 0,
+    pressure_evictable INTEGER NOT NULL DEFAULT 0, last_used_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS holds (
     id TEXT PRIMARY KEY, publication TEXT NOT NULL REFERENCES publications(id),
     instance TEXT NOT NULL, bound INTEGER NOT NULL DEFAULT 0,
-    finished INTEGER NOT NULL DEFAULT 0,
+    finished INTEGER NOT NULL DEFAULT 0, finished_at INTEGER,
     retry_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS publication_expiry ON publications(state, expires_at);
@@ -77,12 +79,27 @@ class Retention:
         self.auto_delete = config.get("auto_delete", False)
         if type(self.auto_delete) is not bool:
             raise ValueError("auto_delete must be true or false")
+        self.capacity = None
+        if config.get("capacity") is not None:
+            self.capacity = CapacityPolicy(**config["capacity"])
+            self.capacity.validate(set(self.registries))
         with self.database_session() as db:
             db.execute("PRAGMA journal_mode=WAL")
-            db.executescript(SCHEMA)
+            db.executescript(SCHEMA + CAPACITY_SCHEMA)
         with self.database_session(write=True) as db:
-            if "finished" not in {row["name"] for row in db.execute("PRAGMA table_info(holds)")}:
+            hold_columns = {row["name"] for row in db.execute("PRAGMA table_info(holds)")}
+            if "finished" not in hold_columns:
                 db.execute("ALTER TABLE holds ADD COLUMN finished INTEGER NOT NULL DEFAULT 0")
+            if "finished_at" not in hold_columns:
+                db.execute("ALTER TABLE holds ADD COLUMN finished_at INTEGER")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(publications)")}
+            if "pressure_evictable" not in columns:
+                db.execute("ALTER TABLE publications ADD COLUMN pressure_evictable INTEGER NOT NULL DEFAULT 0")
+            if "last_used_at" not in columns:
+                db.execute("ALTER TABLE publications ADD COLUMN last_used_at INTEGER")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS publication_slot_state ON publications(slot, state)"
+            )
             db.executemany(
                 "INSERT OR IGNORE INTO slots VALUES (?, ?, ?, ?)",
                 [
@@ -101,6 +118,19 @@ class Retention:
             ]
             if set(persisted) != {(n, r.origin, r.profile) for n, r in self.registries.items()}:
                 raise ValueError("Registry slot identity differs from durable state")
+            if self.capacity is not None:
+                db.executemany(
+                    """INSERT OR IGNORE INTO registry_capacity
+                    VALUES (?,?,-1,0,0,0,0)""",
+                    self.capacity.storage_ids.items(),
+                )
+                identities = dict(db.execute("SELECT slot,storage_id FROM registry_capacity"))
+                if identities != self.capacity.storage_ids:
+                    raise ValueError("Registry capacity volume differs from durable state")
+                db.execute(
+                    "INSERT OR IGNORE INTO registry_maintenance(id,completed_at) VALUES (1,?)",
+                    (int(time.time()),),
+                )
 
     @staticmethod
     def read_token(path: str) -> str:
@@ -129,11 +159,29 @@ class Retention:
         publication = uuid.uuid4().hex
         with self.database_session(write=True) as db:
             slot = db.execute("SELECT * FROM slots WHERE state='active'").fetchone()
+            self.require_build_capacity(db, slot["name"])
             db.execute(
-                "INSERT INTO publications(id, slot, ttl, state) VALUES (?, ?, ?, 'new')",
-                (publication, slot["name"], ttl),
+                """INSERT INTO publications(id, slot, ttl, state, pressure_evictable)
+                VALUES (?, ?, ?, 'new', ?)""",
+                (publication, slot["name"], ttl, self.lru_enabled),
             )
         return {"id": publication, "tag": "build-" + publication, "profile": slot["profile"]}
+
+    @property
+    def lru_enabled(self) -> bool:
+        return self.capacity is not None and self.capacity.lru_idle_seconds is not None
+
+    def require_build_capacity(self, db, slot: str):
+        if self.capacity is None:
+            return
+        sample = db.execute("SELECT * FROM registry_capacity WHERE slot=?", (slot,)).fetchone()
+        if not self.capacity.available(sample, int(time.time())):
+            raise CapacityUnavailable("Temporary Registry has no verified write headroom; retry later")
+        planned = db.execute(
+            "SELECT COUNT(*) FROM publications WHERE slot=? AND state='planned'", (slot,)
+        ).fetchone()[0]
+        if planned >= self.capacity.max_in_flight_builds:
+            raise CapacityUnavailable("Temporary Registry is at its concurrent build limit; retry later")
 
     @staticmethod
     def publication(db, identity: str):
@@ -154,6 +202,7 @@ class Retention:
             slot = db.execute("SELECT state FROM slots WHERE name=?", (row["slot"],)).fetchone()
             if row["state"] != "new" or slot["state"] != "active":
                 raise Conflict("Registry is draining; submit a new build")
+            self.require_build_capacity(db, row["slot"])
             existing = db.execute(
                 """SELECT id FROM publications WHERE tag IS NOT NULL
                 AND substr(tag, 1, instr(tag, ':build-') - 1)=?""",
@@ -177,7 +226,7 @@ class Retention:
         ):
             raise ValueError("Expected the planned repository and an immutable digest")
         if row["state"] == "published" and row["reference"] == reference:
-            return {"expires_at": row["expires_at"]}
+            return self.receipt(row)
         if (
             row["state"] != "planned"
             or self.registries[row["slot"]].resolve(row["tag"]) != reference
@@ -189,7 +238,7 @@ class Retention:
         with self.database_session(write=True) as db:
             row = self.publication(db, publication)
             if row["state"] == "published" and row["reference"] == reference:
-                return {"expires_at": row["expires_at"]}
+                return self.receipt(row)
             if row["state"] != "planned":
                 raise Conflict("Publication is no longer awaiting a digest")
             expires_at = math.ceil(time.time()) + row["ttl"]
@@ -197,7 +246,11 @@ class Retention:
                 "UPDATE publications SET state='published', reference=?, expires_at=? WHERE id=?",
                 (reference, expires_at, publication),
             )
-        return {"expires_at": expires_at}
+        return {"expires_at": expires_at, "pressure_evictable": bool(row["pressure_evictable"])}
+
+    @staticmethod
+    def receipt(row):
+        return {"expires_at": row["expires_at"], "pressure_evictable": bool(row["pressure_evictable"])}
 
     def acquire(self, reference: str, name: str):
         reference = reference.removeprefix("https://").removeprefix("http://")
@@ -246,8 +299,9 @@ class Retention:
         """Record a confirmed SDK stop before looking for directory absence."""
         with self.database_session(write=True) as db:
             db.execute(
-                "UPDATE holds SET finished=1, retry_at=0 WHERE id=? AND instance=? AND bound=1",
-                (hold, environment_id),
+                """UPDATE holds SET finished=1, finished_at=COALESCE(finished_at,?), retry_at=0
+                WHERE id=? AND instance=? AND bound=1""",
+                (math.ceil(time.time()), hold, environment_id),
             )
         return {}
 
@@ -258,8 +312,19 @@ class Retention:
             if self.observe(row["instance"]) is not None:
                 raise Conflict("The sandbox is still listed in the instance directory")
             with self.database_session(write=True) as db:
-                db.execute("DELETE FROM holds WHERE id=?", (hold,))
+                self.release_hold(db, hold)
         return {}
+
+    @staticmethod
+    def release_hold(db, hold: str):
+        row = db.execute("SELECT publication,finished_at FROM holds WHERE id=?", (hold,)).fetchone()
+        if row is not None:
+            db.execute(
+                """UPDATE publications SET last_used_at=MAX(COALESCE(last_used_at,0),?)
+                WHERE id=?""",
+                (row["finished_at"] or math.ceil(time.time()), row["publication"]),
+            )
+            db.execute("DELETE FROM holds WHERE id=?", (hold,))
 
     @staticmethod
     def observed_reference(state: dict) -> str | None:
@@ -290,14 +355,15 @@ class Retention:
                 return response[0]
         raise ValueError(f"Instance status could not be confirmed (HTTP {status})")
 
-    def reconcile_holds(self):
+    def reconcile_holds(self, slot: str | None = None):
         now = int(time.time())
         with self.database_session() as db:
             holds = db.execute(
                 """SELECT h.*, p.reference FROM holds h JOIN publications p
-                ON h.publication=p.id WHERE p.expires_at<=? AND h.retry_at<=?
-                ORDER BY h.retry_at LIMIT 256""",
-                (now, now),
+                ON h.publication=p.id WHERE (p.expires_at<=? OR h.finished=1) AND h.retry_at<=?
+                AND (? IS NULL OR p.slot=?)
+                ORDER BY h.finished DESC, h.retry_at LIMIT 256""",
+                (now, now, slot, slot),
             ).fetchall()
         for hold in holds:
             with self.database_session(write=True) as db:
@@ -306,36 +372,48 @@ class Retention:
                 state = self.observe(hold["instance"])
                 if state is None and hold["finished"]:
                     with self.database_session(write=True) as db:
-                        db.execute("DELETE FROM holds WHERE id=? AND finished=1", (hold["id"],))
+                        self.release_hold(db, hold["id"])
                 elif state is not None and self.observed_reference(state) == hold["reference"]:
                     with self.database_session(write=True) as db:
                         db.execute("UPDATE holds SET bound=1 WHERE id=?", (hold["id"],))
             except (ValueError, OSError, AttributeError, TypeError) as exc:
                 LOG.warning("Deferring hold %s (%s)", hold["id"], type(exc).__name__)
 
-    def candidates(self):
+    def candidates(self, slot: str | None = None, idle_before: int | None = None):
         now = int(time.time())
         with self.database_session() as db:
             return db.execute(
                 """SELECT p.* FROM publications p JOIN slots s ON s.name=p.slot
-                WHERE (p.state='deleting' OR (p.state='published' AND p.expires_at<=?))
+                WHERE (p.state='deleting' OR (p.state='published' AND (
+                    p.expires_at<=? OR
+                    (s.state='draining' AND p.pressure_evictable=1 AND p.last_used_at<=?)
+                )))
                 AND s.state!='sealed'
+                AND (? IS NULL OR p.slot=?)
                 AND p.retry_at<=?
                 AND NOT EXISTS(SELECT 1 FROM holds h WHERE h.publication=p.id)
-                ORDER BY p.expires_at LIMIT 256""",
-                (now, now),
+                ORDER BY CASE WHEN p.state='deleting' OR p.expires_at<=? THEN 0 ELSE 1 END,
+                CASE WHEN p.expires_at<=? THEN p.expires_at ELSE p.last_used_at END, p.id LIMIT 256""",
+                (now, idle_before, slot, slot, now, now, now),
             ).fetchall()
 
-    def reclaim(self, row):
+    def reclaim(self, row, idle_before: int | None = None):
         registry = self.registries[row["slot"]]
         if row["state"] == "published":
             worklist = registry.worklist(row["tag"], row["reference"])
             with self.database_session(write=True) as db:
                 claim = db.execute(
                     """UPDATE publications SET state='deleting', worklist=?
-                    WHERE id=? AND state='published' AND expires_at<=?
+                    WHERE id=? AND state='published' AND (
+                        expires_at<=? OR (
+                            pressure_evictable=1 AND last_used_at<=? AND last_used_at IS ?
+                            AND EXISTS(SELECT 1 FROM slots WHERE name=publications.slot AND state='draining')
+                        )
+                    )
+                    AND EXISTS(SELECT 1 FROM slots WHERE name=publications.slot AND state!='sealed')
                     AND NOT EXISTS(SELECT 1 FROM holds WHERE publication=?)""",
-                    (json.dumps(worklist), row["id"], int(time.time()), row["id"]),
+                    (json.dumps(worklist), row["id"], int(time.time()), idle_before,
+                     row["last_used_at"], row["id"]),
                 )
                 if claim.rowcount != 1:
                     return
@@ -348,16 +426,21 @@ class Retention:
             db.execute("UPDATE publications SET state='deleted' WHERE id=?", (row["id"],))
         LOG.info("Reclaimed manifests for %s in slot %s", row["id"], row["slot"])
 
-    def sweep(self, *, apply: bool):
+    def sweep(self, *, apply: bool, slot: str | None = None, pressure: bool = False):
         if apply and not self.auto_delete:
             raise ValueError("Manifest deletion is disabled in configuration")
-        self.reconcile_holds()
-        candidates = self.candidates()
+        idle_before = None
+        if pressure and slot is not None and self.capacity is not None:
+            idle = self.capacity.lru_idle_seconds
+            if idle is not None:
+                idle_before = int(time.time()) - idle
+        self.reconcile_holds(slot)
+        candidates = self.candidates(slot, idle_before)
         for row in candidates:
             if not apply:
                 continue
             try:
-                self.reclaim(row)
+                self.reclaim(row, idle_before)
             except (ValueError, OSError, KeyError, AttributeError, TypeError) as exc:
                 LOG.warning("Deferring publication %s (%s)", row["id"], type(exc).__name__)
                 with self.database_session(write=True) as db:
@@ -399,26 +482,39 @@ class Retention:
                     (int(time.time()),),
                 )
             ]
-        return {
+            capacity = [dict(row) for row in db.execute("SELECT * FROM registry_capacity ORDER BY slot")]
+            maintenance = db.execute("SELECT * FROM registry_maintenance WHERE id=1").fetchone()
+        result = {
             "slots": slots,
             "publications": counts,
             "holds": holds,
             "unconfirmed_holds": unconfirmed,
             "awaiting_stop_confirmation": awaiting_stop,
         }
+        if self.capacity is not None:
+            result["capacity"] = capacity
+            result["maintenance"] = dict(maintenance)
+        return result
 
     def switch(self, slot: str):
         with self.database_session(write=True) as db:
-            selected = db.execute("SELECT state FROM slots WHERE name=?", (slot,)).fetchone()
-            if selected is None or selected["state"] != "ready":
-                raise Conflict("The next Registry must be marked ready")
-            db.execute("UPDATE slots SET state='draining' WHERE state='active'")
-            db.execute("UPDATE slots SET state='active' WHERE name=?", (slot,))
-            db.execute(
-                """UPDATE publications SET state='abandoned' WHERE state='new' AND
-                slot IN (SELECT name FROM slots WHERE state='draining')"""
-            )
+            self.switch_slot(db, slot, int(time.time()))
         return self.status()
+
+    def switch_slot(self, db, slot: str, now: int):
+        selected = db.execute("SELECT state FROM slots WHERE name=?", (slot,)).fetchone()
+        if selected is None or selected["state"] != "ready":
+            raise Conflict("The next Registry must be marked ready")
+        if self.capacity is not None:
+            sample = db.execute("SELECT * FROM registry_capacity WHERE slot=?", (slot,)).fetchone()
+            if not self.capacity.available(sample, now):
+                raise CapacityUnavailable("The standby Registry has no verified write headroom")
+        db.execute("UPDATE slots SET state='draining' WHERE state='active'")
+        db.execute("UPDATE slots SET state='active' WHERE name=?", (slot,))
+        db.execute(
+            """UPDATE publications SET state='abandoned' WHERE state='new' AND
+            slot IN (SELECT name FROM slots WHERE state='draining')"""
+        )
 
     def seal(self, slot: str):
         with self.database_session(write=True) as db:
@@ -446,14 +542,18 @@ class Retention:
 
     def ready(self, slot: str):
         with self.database_session(write=True) as db:
-            result = db.execute(
-                """UPDATE slots SET state='ready' WHERE name=? AND state='sealed'
-                AND NOT EXISTS(SELECT 1 FROM publications WHERE slot=? AND state='planned')""",
-                (slot, slot),
-            )
-            if result.rowcount != 1:
-                raise Conflict("Seal and reconcile the Registry before making it ready")
+            self.ready_slot(db, slot)
         return self.status()
+
+    @staticmethod
+    def ready_slot(db, slot: str):
+        result = db.execute(
+            """UPDATE slots SET state='ready' WHERE name=? AND state='sealed'
+            AND NOT EXISTS(SELECT 1 FROM publications WHERE slot=? AND state='planned')""",
+            (slot, slot),
+        )
+        if result.rowcount != 1:
+            raise Conflict("Seal and reconcile the Registry before making it ready")
 
 
 def server_handler(retention: Retention):
@@ -502,6 +602,8 @@ def server_handler(retention: Retention):
                 result = action(**payload)
             except Conflict as exc:
                 self.send(409, {"error": str(exc)})
+            except CapacityUnavailable as exc:
+                self.send(503, {"error": str(exc), "code": "REGISTRY_CAPACITY_UNAVAILABLE"})
             except (TypeError, KeyError, AttributeError):
                 self.send(400, {"error": "Invalid image retention request fields"})
             except ValueError as exc:
@@ -554,6 +656,8 @@ def main():
     endpoint.add_argument("--tls-cert")
     endpoint.add_argument("--tls-key")
     subcommands.add_parser("status")
+    maintain = subcommands.add_parser("maintain")
+    maintain.add_argument("--once", action="store_true")
     cancel = subcommands.add_parser("cancel-hold")
     cancel.add_argument("hold")
     cancel.add_argument("--confirmed-absent", action="store_true", required=True)
@@ -573,6 +677,9 @@ def main():
     if args.command == "serve":
         serve(retention, args)
         return
+    if args.command == "maintain":
+        CapacityController(retention).run(once=args.once)
+        return
     if args.command == "sweep":
         result = retention.sweep(apply=args.apply)
     elif args.command == "status":
@@ -581,8 +688,13 @@ def main():
         result = retention.cancel(args.hold)
     elif args.command == "release-hold":
         result = retention.release_stopped(args.hold)
-    else:
+    elif retention.capacity is None:
         result = getattr(retention, args.command)(args.slot)
+    else:
+        with maintenance_lock(retention.database):
+            if retention.status()["maintenance"]["slot"] is not None:
+                raise ValueError("Resume the queued Registry maintenance before manual rotation")
+            result = getattr(retention, args.command)(args.slot)
     print(json.dumps(result, indent=2))
 
 

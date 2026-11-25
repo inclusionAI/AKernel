@@ -5,7 +5,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
-from akernel_sdk import DockerRuntime, TimeoutException, build_image
+import httpx
+
+from akernel_sdk import (
+    DockerRuntime,
+    ServiceBusyException,
+    TimeoutException,
+    build_image,
+)
 from akernel_sdk._managed_build import upload_context
 from akernel_sdk.types import CommandResult
 
@@ -166,7 +173,7 @@ class ManagedProfileContract(unittest.TestCase):
         retention.request.side_effect = [
             {"id": "e" * 32, "tag": tag, "profile": "harbor-ephemeral-b"},
             {},
-            {"expires_at": 1750},
+            {"expires_at": 1750, "pressure_evictable": True},
         ]
         files = iter([{"tag": repository + ":" + tag}, {"reference": reference}])
 
@@ -188,6 +195,7 @@ class ManagedProfileContract(unittest.TestCase):
             (root / "Dockerfile").write_text("FROM scratch\n")
             result = build_image(root, profile="harbor-ephemeral", ttl_seconds=750)
         self.assertEqual(result.expires_at, 1750)
+        self.assertTrue(result.pressure_evictable)
         self.assertEqual(
             factory.call_args.kwargs["extra_config"],
             {"managedRuntimeProfile": "harbor-ephemeral-b"},
@@ -201,6 +209,34 @@ class ManagedProfileContract(unittest.TestCase):
             ],
         )
         builder.kill.assert_called_once()
+
+    def test_capacity_rejection_precedes_preparation_sandbox(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            token = root / "token"
+            token.write_text("fixture-token")
+            response = httpx.Response(
+                503, json={
+                    "error": "Registry is busy",
+                    "code": "REGISTRY_CAPACITY_UNAVAILABLE",
+                },
+            )
+            with (
+                patch.dict("os.environ", {
+                    "AKERNEL_IMAGE_RETENTION_URL": "http://127.0.0.1:8098",
+                    "AKERNEL_IMAGE_RETENTION_TOKEN_FILE": str(token),
+                }),
+                patch(
+                    "akernel_sdk._ephemeral_images.httpx.post", return_value=response
+                ),
+                patch("akernel_sdk.sandbox.Sandbox") as builder,
+                self.assertRaises(ServiceBusyException) as caught,
+            ):
+                build_image(root, profile="harbor-ephemeral")
+        self.assertEqual(caught.exception.outcome, "not_started")
+        self.assertEqual(caught.exception.code, "REGISTRY_CAPACITY_UNAVAILABLE")
+        builder.assert_not_called()
 
     def test_effective_empty_and_nonempty_image_startup(self):
         for process, expected in [

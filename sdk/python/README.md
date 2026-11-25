@@ -1799,6 +1799,11 @@ one build. `artifact.expires_at` is the Unix timestamp after which new
 sandboxes must use a fresh build. A sandbox created with
 `Sandbox(image=artifact.reference)` keeps the image protected until the SDK
 confirms deletion and the retention service verifies that the instance is gone.
+A publication with `artifact.pressure_evictable` set can be retired earlier
+under disk pressure once a consumer has finished and the idle grace has passed.
+When capacity admission is enabled, a busy Registry returns
+`ServiceBusyException` with code `REGISTRY_CAPACITY_UNAVAILABLE` and outcome
+`not_started`. Queue or retry that build after capacity becomes available.
 Use a long-lived profile for Compose and reusable snapshots. [Operator setup and recovery](../../deploy/registry-retention/README.md)
 
 Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the

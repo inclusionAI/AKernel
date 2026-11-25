@@ -16,7 +16,7 @@ flowchart LR
     W["Worker / Dragonfly"]
     A["Registry A + PVC A<br/>Read-only during GC"]
     B["Registry B + PVC B<br/>Accepts new builds"]
-    O["Operator"]
+    O["Operator or capacity controller<br/>Volume measurements and rotation"]
 
     H --> SDK
     SDK -->|"Register publication and use<br/>Report confirmed stop"| R
@@ -55,7 +55,7 @@ During GC, workers keep pulling retained digests from A's original endpoint.
   86400 seconds and the default maximum is 604800 seconds. New publications use
   the policy at admission, and their expiry starts when the Registry digest is
   verified. Leave `auto_delete` false to inspect candidates during rollout.
-- Run one service replica with `retention.py` and `registry.py` on a private
+- Run one service replica with `retention.py`, `registry.py` and `capacity.py` on a private
   HTTPS endpoint. Mount the SQLite directory on an independent persistent
   volume. Mount separate credentials for the trusted Harbor runner, the ADX
   instance observer, and the Registry token issuers. The ADX observer must be
@@ -85,9 +85,87 @@ for a create known never to have started. An operator who verifies physical
 teardown of an existing sandbox can use `release-hold --confirmed-stopped`.
 The latter also checks that the instance is absent from ADX.
 
+## Capacity management
+
+For bursty builds, enable the optional `capacity` configuration and run one
+maintenance process alongside the service. Both processes use the same
+configuration and SQLite volume. Set `auto_delete` to enable rotation and
+manifest deletion. The capacity process measures both Registry volumes even
+while a GC command is running. Start it before sending builds to the profile.
+
+```json
+"capacity": {
+  "driver": "/etc/retention/registry-maintenance",
+  "storage_ids": {"a": "registry-a-volume-uid", "b": "registry-b-volume-uid"},
+  "high_watermark_percent": 80,
+  "low_watermark_percent": 65,
+  "max_in_flight_builds": 16,
+  "poll_seconds": 10,
+  "max_sample_age_seconds": 60,
+  "rotation_interval_seconds": 21600,
+  "drain_seconds": 1800,
+  "driver_timeout_seconds": 3600,
+  "lru_idle_seconds": null
+}
+```
+
+```sh
+python3 retention.py --config /etc/retention/config.json \
+  --database /var/lib/retention/state.sqlite maintain
+```
+
+Admission stops at the high watermark and resumes at the low watermark. Both
+publication reservation and permission to push check volume measurements and
+the per-writer limit on in-flight builds. A missing or stale measurement closes
+admission for that slot. A rejected request returns HTTP 503 with code
+`REGISTRY_CAPACITY_UNAVAILABLE`. Size the headroom and concurrency limit for the
+largest concurrent builds because the registry learns blob sizes during upload.
+
+The controller rotates at the high watermark or on the configured interval.
+Set `rotation_interval_seconds` to zero for pressure-triggered rotation alone.
+Rotation starts new builds on a healthy standby and gives planned builds on the
+retiring slot up to `drain_seconds` to finish before fencing. Set that window
+for the build time you want to allow during rotation. The controller can reclaim
+a full standby first when both slots are above their watermarks. If neither
+slot has room, callers wait for maintenance or capacity to recover. Inspect
+`status` for the measurements, queued maintenance, and publication states.
+
+Set `lru_idle_seconds` to a positive idle grace to allow early eviction of
+temporary images published with that policy. The receipt exposes
+`pressure_evictable`. Pressure maintenance first sweeps expired publications,
+then considers opted-in publications in order of their last confirmed sandbox
+stop. Never-used images keep their TTL. A hold still protects any live or
+uncertain sandbox, including an instance occasionally reading a Nydus blob.
+Scheduled rotation uses the TTL policy. Each sweep considers up to 256
+publications, with space usage remeasured after physical GC.
+
+### Maintenance driver
+
+Supply a deployment-owned executable at `capacity.driver`. The controller runs
+it directly with three arguments, `<action> <slot> <storage-id>`. Bind each slot
+to its existing endpoint and independent filesystem or PVC, and verify the
+provided storage identity on every action. Use the Registry volume's measured
+filesystem capacity. All actions must be safe to retry after a timeout or a
+restart.
+
+| Action | Required behavior |
+| --- | --- |
+| `measure` | Write a JSON object to stdout with `storage_id`, `total_bytes`, `available_bytes` and `writable` (boolean). Verify the mounted volume, reachable Registry and effective write mode. This action may run during another action. |
+| `fence` | Drain or stop outstanding writers for this slot, keep the original read endpoint, put the Registry in read-only mode and disable the upload purger. Keep this fence in effect throughout GC, including across driver restarts. |
+| `gc` | Recheck the identity and write fence, then dry-run and run Distribution GC with the same Registry version and configuration. Serialize the GC process on that volume and return success only when it has completed. |
+| `restore` | Verify that GC has stopped, restore the writable Registry and pass a push/read smoke check on the same endpoint before reporting success. |
+
+Run the driver with the permissions scoped to these two Registries. Its
+`measure` loss or a failed step keeps the affected slot out of new build
+selection. The controller keeps the maintenance job in SQLite and retries it.
+When providing the driver for Kubernetes, validate it against the dedicated
+namespace and the actual PVC identities before enabling it for that deployment.
+
 ## Reclaim and rotate
 
 Use the same configuration and database when running operator commands.
+`switch`, `seal` and `ready` can be used for manual rotation when the
+maintenance process is stopped and its queue is empty.
 `sweep` lists expired and unreferenced manifest candidates. With `auto_delete`
 enabled, the service periodically applies those candidates. It verifies the
 original tag and manifest graph and records the deletion worklist before

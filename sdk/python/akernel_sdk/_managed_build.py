@@ -33,6 +33,7 @@ class BuiltImage:
     user: str | None = None
     has_startup_command: bool = True
     expires_at: int | None = None
+    pressure_evictable: bool = False
 
 
 def upload_context(sandbox: Sandbox, source: Path, destination: str) -> None:
@@ -76,7 +77,8 @@ def build_image(
     the preparation Sandbox identity. The temporary profile allows an optional
     positive `ttl_seconds` override within the operator's limit. The reported
     `expires_at` is the Unix timestamp after which new consumers are rejected.
-    Running consumers keep the image protected. Timeouts are seconds.
+    If `pressure_evictable` is true, capacity maintenance can retire a consumed,
+    idle image sooner. Running consumers keep the image protected. Timeouts are seconds.
 
     Optional preparation CPU/memory requests use millicores/MiB. The existing
     preparation limits remain 1000 millicores and 2048 MiB; these settings do
@@ -173,10 +175,13 @@ def build_image(
         ):
             raise ValueError("Runtime returned an invalid artifact reference")
         expires_at = None
+        pressure_evictable = False
         if retention is not None and publication is not None:
-            expires_at = retention.request(
+            receipt = retention.request(
                 "commit", publication=publication["id"], reference=reference
-            )["expires_at"]
+            )
+            expires_at = receipt["expires_at"]
+            pressure_evictable = receipt.get("pressure_evictable") is True
         process = handle.get("image_process", {})
         return BuiltImage(
             reference=reference,
@@ -187,6 +192,7 @@ def build_image(
             user=process.get("User") or None,
             has_startup_command=bool(process.get("Entrypoint") or process.get("Cmd")),
             expires_at=expires_at,
+            pressure_evictable=pressure_evictable,
         )
     except BaseException as error:
         failure = error
