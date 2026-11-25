@@ -280,6 +280,75 @@ class CapacityTests(TestCase):
         self.assertEqual(self.calls.count(("restore", "a")), 2)
         self.assertIsNone(self.retention.status()["maintenance"]["slot"])
 
+    def test_failed_standby_restore_does_not_block_active_reclamation(self):
+        self.capacity.update(a=100, b=0)
+        self.clock.return_value += 300
+        self.controller.refresh()
+
+        def full_standby(action, slot, *, payload=None):
+            if action == "restore" and slot == "b" and self.capacity["b"] == 0:
+                self.calls.append((action, slot))
+                raise OSError("No space for the standby write probe")
+            if action == "gc" and slot == "a":
+                with self.assertRaisesRegex(CapacityUnavailable, "paused"):
+                    self.retention.begin()
+            result = self.driver(action, slot, payload=payload)
+            if action == "gc" and slot == "b":
+                self.capacity["b"] = 0
+            return result
+
+        self.controller.driver = full_standby
+        with self.assertRaisesRegex(OSError, "standby write probe"):
+            self.controller.cycle()
+        self.assertEqual(self.retention.status()["pending_restores"], [{"slot": "b", "attempted_at": 1300}])
+        self.assertEqual(self.retention.status()["slots"][1]["state"], "sealed")
+
+        # The SQLite checkpoint must survive a controller restart.
+        self.open()
+        self.controller.driver = full_standby
+        self.controller.refresh()
+        self.controller.cycle()
+        self.assertEqual(self.retention.begin()["profile"], "harbor-ephemeral-a")
+        self.assertEqual([slot for action, slot in self.calls if action == "gc"], ["b", "a"])
+        self.controller.cycle()
+        self.assertEqual(self.calls.count(("restore", "b")), 1)
+
+        self.capacity["b"] = 600
+        self.controller.refresh()
+        self.controller.cycle()
+        self.assertEqual(self.calls[-1], ("restore", "b"))
+        self.assertEqual(self.calls.count(("gc", "b")), 1)
+        self.assertEqual(self.retention.status()["pending_restores"], [])
+        self.assertEqual(self.retention.status()["slots"][1]["state"], "ready")
+
+    def test_failed_restores_retry_both_completed_collections(self):
+        self.capacity.update(a=100, b=100)
+
+        def full_volumes(action, slot, *, payload=None):
+            if action == "restore":
+                self.calls.append((action, slot))
+                raise OSError("No space for the write probe")
+            result = self.driver(action, slot, payload=payload)
+            if action == "gc":
+                self.capacity[slot] = 100
+            return result
+
+        for now in range(1300, 1304):
+            self.clock.return_value = now
+            self.open()
+            self.controller.driver = full_volumes
+            self.controller.refresh()
+            with self.assertRaisesRegex(OSError, "write probe"):
+                self.controller.cycle()
+        self.assertEqual([slot for action, slot in self.calls if action == "gc"], ["b", "a"])
+        self.assertEqual([slot for action, slot in self.calls if action == "restore"], ["b", "a", "b", "a"])
+        self.assertEqual(
+            self.retention.status()["pending_restores"],
+            [{"slot": "b", "attempted_at": 1302}, {"slot": "a", "attempted_at": 1303}],
+        )
+        with self.assertRaisesRegex(CapacityUnavailable, "paused"):
+            self.retention.begin()
+
     def test_fence_must_be_observed_before_gc(self):
         self.controller.refresh()
         self.capacity["a"] = 200
@@ -338,6 +407,30 @@ class CapacityTests(TestCase):
                 self.assertRaisesRegex(ValueError, "queued Registry maintenance"),
             ):
                 retention_cli()
+
+    def test_manual_cli_defers_to_pending_restore_after_completed_gc(self):
+        self.capacity["a"] = 200
+        self.controller.refresh()
+
+        def lost_restore(action, slot, *, payload=None):
+            if action == "restore":
+                raise OSError("lost restore response")
+            return self.driver(action, slot, payload=payload)
+
+        self.controller.driver = lost_restore
+        with self.assertRaisesRegex(OSError, "lost restore response"):
+            self.controller.cycle()
+        self.assertIsNone(self.retention.status()["maintenance"]["slot"])
+        path = self.database.with_name("config.json")
+        path.write_text(json.dumps({**self.config, "capacity": None}))
+        with (
+            patch("sys.argv", [
+                "retention.py", "--config", str(path), "--database", str(self.database),
+                "ready", "a",
+            ]),
+            self.assertRaisesRegex(ValueError, "queued Registry maintenance"),
+        ):
+            retention_cli()
 
     def test_plan_replay_is_rejected_after_automatic_drain_window(self):
         self.controller.refresh()

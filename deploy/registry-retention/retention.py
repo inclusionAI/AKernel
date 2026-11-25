@@ -614,6 +614,11 @@ class Retention:
             ]
             capacity = [dict(row) for row in db.execute("SELECT * FROM registry_capacity ORDER BY slot")]
             maintenance = db.execute("SELECT * FROM registry_maintenance WHERE id=1").fetchone()
+            pending_restores = [
+                dict(row) for row in db.execute(
+                    "SELECT slot, attempted_at FROM registry_restore_pending ORDER BY attempted_at, slot"
+                )
+            ]
         result = {
             "slots": slots,
             "publications": counts,
@@ -625,6 +630,7 @@ class Retention:
         if maintenance is not None:
             result["capacity"] = capacity
             result["maintenance"] = dict(maintenance)
+            result["pending_restores"] = pending_restores
         return result
 
     def switch(self, slot: str):
@@ -831,7 +837,8 @@ def main():
         with maintenance_lock(retention.database):
             with retention.database_session() as db:
                 if db.execute(
-                    "SELECT 1 FROM registry_maintenance WHERE slot IS NOT NULL"
+                    """SELECT 1 FROM registry_maintenance WHERE slot IS NOT NULL
+                    UNION ALL SELECT 1 FROM registry_restore_pending LIMIT 1"""
                 ).fetchone():
                     raise ValueError("Resume the queued Registry maintenance before manual rotation")
             result = getattr(retention, args.command)(args.slot)

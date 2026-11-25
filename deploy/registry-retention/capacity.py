@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS registry_maintenance (
     gc_complete INTEGER NOT NULL DEFAULT 0, completed_at INTEGER NOT NULL,
     last_blocked_gc_slot TEXT REFERENCES slots(name)
 );
+CREATE TABLE IF NOT EXISTS registry_restore_pending (
+    slot TEXT PRIMARY KEY REFERENCES slots(name),
+    pressure INTEGER NOT NULL, attempted_at INTEGER NOT NULL
+);
 """
 
 
@@ -190,36 +194,55 @@ class CapacityController:
                 return job
             slots = dict(db.execute("SELECT name,state FROM slots ORDER BY name"))
             samples = {row["slot"]: row for row in db.execute("SELECT * FROM registry_capacity")}
+            restores = db.execute(
+                "SELECT * FROM registry_restore_pending ORDER BY attempted_at, slot"
+            ).fetchall()
             active = next((slot for slot, state in slots.items() if state == "active"), None)
             ready = [slot for slot, state in slots.items() if state == "ready"]
+            retired, pressure = None, False
             if active is None:
                 for slot in ready:
                     if self.policy.available(samples.get(slot), now):
                         self.retention.switch_slot(db, slot, now)
                         db.execute("UPDATE registry_maintenance SET last_blocked_gc_slot=NULL WHERE id=1")
                         return None
-                if now - job["completed_at"] < BLOCKED_RETRY_SECONDS:
-                    return None
-                # A paused pair tries the other volume first on the next pass.
-                ready.sort(key=lambda slot: slot == job["last_blocked_gc_slot"])
-                retired = next((slot for slot in ready if self.policy.blocked(samples.get(slot), now)), None)
-                if retired is not None:
-                    self.retention.retire_slot(db, retired, now)
-                pressure = True
-            elif ready and self.policy.fresh(samples.get(active), now):
-                retired, pressure = self.choose_rotation(db, job, active, ready[0], samples, now)
-            else:
-                return None
+                if now - job["completed_at"] >= BLOCKED_RETRY_SECONDS:
+                    # A paused pair tries the other volume first on the next pass.
+                    ready.sort(key=lambda slot: slot == job["last_blocked_gc_slot"])
+                    retired = next(
+                        (slot for slot in ready if self.policy.blocked(samples.get(slot), now)), None
+                    )
+                    if retired is not None:
+                        self.retention.retire_slot(db, retired, now)
+                        pressure = True
+            elif self.policy.fresh(samples.get(active), now):
+                retired, pressure = self.choose_rotation(
+                    db, job, active, ready[0] if ready else None, bool(restores), samples, now
+                )
+            gc_complete = False
+            drain_until = now + self.policy.drain_seconds
             if retired is None:
-                return None
+                restore = next(
+                    (
+                        row for row in restores
+                        if not self.policy.fresh(samples.get(row["slot"]), now)
+                        or samples[row["slot"]]["available_bytes"] > 0
+                    ),
+                    None,
+                )
+                if restore is None:
+                    return None
+                retired, pressure = restore["slot"], restore["pressure"]
+                gc_complete = True
+                drain_until = 0
             db.execute(
-                "UPDATE registry_maintenance SET slot=?, pressure=?, drain_until=?, gc_complete=0 WHERE id=1",
-                (retired, pressure, now + self.policy.drain_seconds),
+                "UPDATE registry_maintenance SET slot=?, pressure=?, drain_until=?, gc_complete=? WHERE id=1",
+                (retired, pressure, drain_until, gc_complete),
             )
-            LOG.info("Scheduled Registry GC for %s (pressure=%s)", retired, pressure)
+            LOG.info("Scheduled Registry %s for %s", "restore" if gc_complete else "GC", retired)
             return db.execute("SELECT * FROM registry_maintenance WHERE id=1").fetchone()
 
-    def choose_rotation(self, db, job, active, standby, samples, now):
+    def choose_rotation(self, db, job, active, standby, restore_pending, samples, now):
         pressure = self.policy.blocked(samples.get(active), now)
         elapsed = now - job["completed_at"]
         periodic = self.policy.rotation_interval_seconds and elapsed >= self.policy.rotation_interval_seconds
@@ -234,6 +257,11 @@ class CapacityController:
             and in_flight["newest"] + self.policy.drain_seconds <= now
         )
         if not pressure and not periodic and not stalled:
+            return None, False
+        if standby is None:
+            if restore_pending and (pressure or stalled):
+                self.retention.retire_slot(db, active, now)
+                return active, True
             return None, False
         if self.policy.available(samples.get(standby), now):
             self.retention.switch_slot(db, standby, now)
@@ -272,6 +300,18 @@ class CapacityController:
             self.retention.record_abandoned_gc(db, abandoned, cleaned)
             db.execute("UPDATE registry_maintenance SET gc_complete=1 WHERE id=1")
 
+    def defer_restore(self, slot: str, pressure: bool):
+        with self.retention.database_session(write=True) as db:
+            db.execute(
+                """INSERT INTO registry_restore_pending(slot, pressure, attempted_at) VALUES (?,?,?)
+                ON CONFLICT(slot) DO UPDATE SET attempted_at=excluded.attempted_at""",
+                (slot, pressure, int(time.time())),
+            )
+            db.execute(
+                """UPDATE registry_maintenance SET slot=NULL, pressure=0, drain_until=0,
+                gc_complete=0 WHERE id=1"""
+            )
+
     def cycle(self):
         if not self.retention.auto_delete:
             return
@@ -304,11 +344,17 @@ class CapacityController:
                 raise ValueError("Registry writers must be fenced before GC")
             self.retention.seal(slot)
             self.collect(slot)
-        self.driver("restore", slot)
-        if not self.measure(slot):
-            raise ValueError("Registry is still read-only after maintenance")
+        try:
+            self.driver("restore", slot)
+            if not self.measure(slot):
+                raise ValueError("Registry is still read-only after maintenance")
+        except (OSError, ValueError):
+            # Retain the completed GC checkpoint while the other volume can progress.
+            self.defer_restore(slot, bool(job["pressure"]))
+            raise
         with self.retention.database_session(write=True) as db:
             self.retention.ready_slot(db, slot)
+            db.execute("DELETE FROM registry_restore_pending WHERE slot=?", (slot,))
             now = int(time.time())
             sample = db.execute("SELECT * FROM registry_capacity WHERE slot=?", (slot,)).fetchone()
             if self.policy.available(sample, now) and not db.execute(

@@ -144,7 +144,11 @@ the former writer for its own maintenance. Each restore must pass the write
 check and the capacity threshold before it can reopen admission. If both
 volumes remain blocked, maintenance retries alternate after a five-minute
 cooldown. Existing sandboxes keep reading their original digest and endpoint.
-Inspect `status` for measurements, queued maintenance, publication states,
+If a write check fails after GC, the controller records a pending restore and
+keeps that slot sealed. A blocked writer can then drain and collect its own
+volume. Future attempts resume at restore and wait when a fresh measurement
+shows zero available bytes. Inspect `status` for measurements, queued
+maintenance, pending restores, publication states,
 and the per-slot count of abandoned repositories awaiting cleanup.
 
 Set `lru_idle_seconds` to a positive idle grace to allow early eviction of
@@ -203,7 +207,7 @@ Any unconfirmed paths stay pending for a later fenced maintenance pass.
 
 Use the same configuration and database when running operator commands.
 `switch`, `seal` and `ready` can be used for manual rotation when the
-maintenance process is stopped and its queue is empty.
+maintenance process is stopped and all queued maintenance and restores are complete.
 `sweep` lists expired and unreferenced manifest candidates. With `auto_delete`
 enabled, the service periodically applies those candidates. It verifies the
 original tag and manifest graph and records the deletion worklist before
