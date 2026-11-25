@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_PREPARATION_CPU_MILLICORES = 1000
+_PREPARATION_MEMORY_MIB = 2048
+
 
 @dataclass(frozen=True)
 class BuiltImage:
@@ -83,9 +86,10 @@ def build_image(
     If `pressure_evictable` is true, capacity maintenance can retire a consumed,
     idle image sooner. Running consumers keep the image protected. Timeouts are seconds.
 
-    Optional preparation CPU/memory requests use millicores/MiB. The existing
-    preparation limits remain 1000 millicores and 2048 MiB; these settings do
-    not change task resources or pretend the builder can use unlimited memory.
+    Optional preparation CPU and memory requests are positive integers in
+    millicores and MiB. The SDK caps each request at the preparation sandbox's
+    execution limit of 1000 millicores or 2048 MiB. Omitted requests use those
+    limits as their defaults.
     """
     from ._docker_runtime import DockerRuntime
     from .sandbox import Sandbox
@@ -95,16 +99,16 @@ def build_image(
         raise ValueError("Native build requires a context containing Dockerfile")
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
         raise ValueError("Build timeout must be a positive integer")
-    for name, request, limit in (
-        ("cpu_request", cpu_request, 1000),
-        ("memory_request", memory_request, 2048),
+    for name, request in (
+        ("cpu_request", cpu_request),
+        ("memory_request", memory_request),
     ):
         if request is not None and (
             isinstance(request, bool)
             or not isinstance(request, int)
-            or not 1 <= request <= limit
+            or request < 1
         ):
-            raise ValueError(f"{name} must be an integer between 1 and {limit}")
+            raise ValueError(f"{name} must be a positive integer")
     retention = None
     publication = None
     if profile == PROFILE:
@@ -125,10 +129,14 @@ def build_image(
     try:
         options = DockerRuntime(profile=profile).sandbox_options()
         builder = Sandbox(
-            cpu=1000 if cpu_request is None else cpu_request,
-            memory=2048 if memory_request is None else memory_request,
-            cpu_limit=1000,
-            mem_limit=2048,
+            cpu=min(
+                cpu_request or _PREPARATION_CPU_MILLICORES, _PREPARATION_CPU_MILLICORES
+            ),
+            memory=min(
+                memory_request or _PREPARATION_MEMORY_MIB, _PREPARATION_MEMORY_MIB
+            ),
+            cpu_limit=_PREPARATION_CPU_MILLICORES,
+            mem_limit=_PREPARATION_MEMORY_MIB,
             idle_timeout=max(300, timeout + 60),
             schedule_timeout=schedule_timeout,
             **options,

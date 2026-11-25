@@ -1807,10 +1807,12 @@ When capacity admission is enabled, a busy Registry returns
 Use a long-lived profile for Compose and reusable snapshots. [Operator setup and recovery](../../deploy/registry-retention/README.md)
 
 Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the
-temporary preparation sandbox's scheduling reservation. Its existing limits
-remain 1000 millicores and 2048 MiB; each request must be positive and no greater
-than its limit. Omit these options to preserve the default reservations. Lower
-requests do not provide additional physical capacity for concurrent workloads.
+temporary preparation sandbox's scheduling reservation. Each request must be a
+positive integer and is capped at the corresponding execution limit of 1000
+millicores or 2048 MiB. Omitted requests use those limits as their defaults.
+Harbor can forward larger task requests through this interface, and the task
+sandbox is scheduled separately with its own resource configuration. Concurrent
+workloads share the node's physical capacity.
 The managed resource-geometry probe coalesces concurrent reads within one
 authenticated SDK backend and reuses successful views for at most one second.
 Errors are not cached. Creation still reaches the scheduler individually, and
