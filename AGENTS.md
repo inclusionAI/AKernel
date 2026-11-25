@@ -842,7 +842,9 @@ make sdk-test
 Temporary managed builds use the `harbor-ephemeral` SDK alias. Keep publication
 retention and usage holds in AKernel and query instance state through the
 existing ADX API. Use independent Registry storage for the write and
-maintenance targets. [Temporary image retention](deploy/registry-retention/README.md)
+maintenance targets. Capacity maintenance fences the retired volume through
+the deployment driver before GC. Pressure eviction covers only opted-in
+publications after confirmed use and the idle grace. [Temporary image retention](deploy/registry-retention/README.md)
 
 Run syntax checks for the tracked Bash deployment scripts, Terraform shell
 templates, and Python deployment helpers with:

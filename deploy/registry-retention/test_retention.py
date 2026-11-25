@@ -141,6 +141,61 @@ class RetentionTests(TestCase):
         with self.retention.database_session() as db:
             self.assertEqual(self.retention.publication(db, build["id"])["state"], "deleted")
 
+    def test_terminal_receipts_expire_in_batches_without_removing_live_state(self):
+        self.config["terminal_receipt_seconds"] = 60
+        self.retention = Retention(self.config, self.database)
+        for _ in range(257):
+            self.retention.cancel_build(self.retention.begin()["id"])
+        deleted, _, expires = self.publication()
+        self.clock.return_value = expires
+        with (
+            patch.object(self.retention.registries["a"], "worklist", return_value=["sha256:" + "b" * 64]),
+            patch.object(self.retention.registries["a"], "delete"),
+        ):
+            self.retention.sweep(apply=True)
+        self.retention.switch("b")
+        live, reference, _ = self.publication()
+        hold_id = self.retention.acquire(reference, "reader")["id"]
+        pending = self.retention.begin()
+        repo = self.retention.registries["b"].authority + "/akernel-ephemeral/" + "c" * 32 + "/service-0"
+        self.retention.plan(pending["id"], repo + ":" + pending["tag"])
+
+        self.clock.return_value = 1059
+        self.assertEqual(self.retention.prune_terminal(), 0)
+        self.clock.return_value = 1060
+        self.assertEqual(self.retention.prune_terminal(), 256)
+        self.assertEqual(self.retention.prune_terminal(), 1)
+        self.clock.return_value = expires + 60
+        self.assertEqual(self.retention.prune_terminal(), 1)
+        with self.retention.database_session() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM publications WHERE id=?", (deleted["id"],)).fetchone())
+            self.assertEqual(self.retention.publication(db, pending["id"])["state"], "planned")
+            self.assertEqual(self.retention.publication(db, live["id"])["state"], "published")
+            self.assertIsNotNone(db.execute("SELECT 1 FROM holds WHERE id=?", (hold_id,)).fetchone())
+
+    def test_migration_starts_terminal_grace_and_preserves_unconfirmed_abandonment(self):
+        cancelled = self.retention.begin()
+        self.retention.cancel_build(cancelled["id"])
+        pending = self.retention.begin()
+        repo = self.retention.registries["a"].authority + "/akernel-ephemeral/" + "a" * 32 + "/service-0"
+        self.retention.plan(pending["id"], repo + ":" + pending["tag"])
+        self.retention.switch("b")
+        with patch.object(self.retention.registries["a"], "resolve", return_value=None):
+            self.retention.seal("a")
+        with self.retention.database_session(write=True) as db:
+            db.execute("DROP INDEX publication_terminal")
+            db.execute("DROP INDEX publication_abandoned_gc")
+            db.execute("ALTER TABLE publications DROP COLUMN terminal_at")
+        self.config["terminal_receipt_seconds"] = 10
+        self.clock.return_value = 5000
+        self.retention = Retention(self.config, self.database)
+        self.assertEqual(self.retention.prune_terminal(), 0)
+        self.clock.return_value = 5010
+        self.retention = Retention(self.config, self.database)
+        self.assertEqual(self.retention.prune_terminal(), 1)
+        with self.retention.database_session() as db:
+            self.assertEqual(self.retention.publication(db, pending["id"])["state"], "abandoned")
+
     def test_switch_drains_old_publications_without_rebinding(self):
         stale = self.retention.begin()
         self.retention.switch("b")

@@ -12,6 +12,8 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 PREFIX = "akernel-ephemeral"
+TEMPORARY_REPOSITORY = re.compile(PREFIX + r"/[0-9a-f]{32}/service-0")
+ABANDONED_BATCH_SIZE = 256
 DIGEST = r"sha256:[0-9a-f]{64}"
 ACCEPT = ", ".join(
     (
@@ -78,9 +80,7 @@ class Registry:
 
     def repository(self, value: str) -> str:
         authority, _, repository = value.partition("/")
-        if authority != self.authority or not re.fullmatch(
-            PREFIX + r"/[0-9a-f]{32}/service-0", repository
-        ):
+        if authority != self.authority or not TEMPORARY_REPOSITORY.fullmatch(repository):
             raise ValueError("Image is outside this Registry's temporary build scope")
         return repository
 

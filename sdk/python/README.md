@@ -1799,13 +1799,20 @@ one build. `artifact.expires_at` is the Unix timestamp after which new
 sandboxes must use a fresh build. A sandbox created with
 `Sandbox(image=artifact.reference)` keeps the image protected until the SDK
 confirms deletion and the retention service verifies that the instance is gone.
+A publication with `artifact.pressure_evictable` set can be retired earlier
+under disk pressure once a consumer has finished and the idle grace has passed.
+When capacity admission is enabled, a busy Registry returns
+`ServiceBusyException` with code `REGISTRY_CAPACITY_UNAVAILABLE` and outcome
+`not_started`. Queue or retry that build after capacity becomes available.
 Use a long-lived profile for Compose and reusable snapshots. [Operator setup and recovery](../../deploy/registry-retention/README.md)
 
 Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the
-temporary preparation sandbox's scheduling reservation. Its existing limits
-remain 1000 millicores and 2048 MiB; each request must be positive and no greater
-than its limit. Omit these options to preserve the default reservations. Lower
-requests do not provide additional physical capacity for concurrent workloads.
+temporary preparation sandbox's scheduling reservation. Each request must be a
+positive integer and is capped at the corresponding execution limit of 1000
+millicores or 2048 MiB. Omitted requests use those limits as their defaults.
+Harbor can forward larger task requests through this interface, and the task
+sandbox is scheduled separately with its own resource configuration. Concurrent
+workloads share the node's physical capacity.
 The managed resource-geometry probe coalesces concurrent reads within one
 authenticated SDK backend and reuses successful views for at most one second.
 Errors are not cached. Creation still reaches the scheduler individually, and

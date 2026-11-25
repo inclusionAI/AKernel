@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 import tarfile
@@ -16,6 +17,11 @@ from ._ephemeral_images import PROFILE, Retention
 
 if TYPE_CHECKING:
     from .sandbox import Sandbox
+
+logger = logging.getLogger(__name__)
+
+_PREPARATION_CPU_MILLICORES = 1000
+_PREPARATION_MEMORY_MIB = 2048
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,7 @@ class BuiltImage:
     user: str | None = None
     has_startup_command: bool = True
     expires_at: int | None = None
+    pressure_evictable: bool = False
 
 
 def upload_context(sandbox: Sandbox, source: Path, destination: str) -> None:
@@ -76,11 +83,13 @@ def build_image(
     the preparation Sandbox identity. The temporary profile allows an optional
     positive `ttl_seconds` override within the operator's limit. The reported
     `expires_at` is the Unix timestamp after which new consumers are rejected.
-    Running consumers keep the image protected. Timeouts are seconds.
+    If `pressure_evictable` is true, capacity maintenance can retire a consumed,
+    idle image sooner. Running consumers keep the image protected. Timeouts are seconds.
 
-    Optional preparation CPU/memory requests use millicores/MiB. The existing
-    preparation limits remain 1000 millicores and 2048 MiB; these settings do
-    not change task resources or pretend the builder can use unlimited memory.
+    Optional preparation CPU and memory requests are positive integers in
+    millicores and MiB. The SDK caps each request at the preparation sandbox's
+    execution limit of 1000 millicores or 2048 MiB. Omitted requests use those
+    limits as their defaults.
     """
     from ._docker_runtime import DockerRuntime
     from .sandbox import Sandbox
@@ -90,16 +99,16 @@ def build_image(
         raise ValueError("Native build requires a context containing Dockerfile")
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
         raise ValueError("Build timeout must be a positive integer")
-    for name, request, limit in (
-        ("cpu_request", cpu_request, 1000),
-        ("memory_request", memory_request, 2048),
+    for name, request in (
+        ("cpu_request", cpu_request),
+        ("memory_request", memory_request),
     ):
         if request is not None and (
             isinstance(request, bool)
             or not isinstance(request, int)
-            or not 1 <= request <= limit
+            or request < 1
         ):
-            raise ValueError(f"{name} must be an integer between 1 and {limit}")
+            raise ValueError(f"{name} must be a positive integer")
     retention = None
     publication = None
     if profile == PROFILE:
@@ -114,18 +123,24 @@ def build_image(
         raise ValueError(f"Temporary Registry slots are selected through {PROFILE!r}")
     elif ttl_seconds is not None:
         raise ValueError(f"ttl_seconds requires profile={PROFILE!r}")
-    options = DockerRuntime(profile=profile).sandbox_options()
     failure: BaseException | None = None
-    builder = Sandbox(
-        cpu=1000 if cpu_request is None else cpu_request,
-        memory=2048 if memory_request is None else memory_request,
-        cpu_limit=1000,
-        mem_limit=2048,
-        idle_timeout=max(300, timeout + 60),
-        schedule_timeout=schedule_timeout,
-        **options,
-    )
+    builder = None
+    publication_planned = False
     try:
+        options = DockerRuntime(profile=profile).sandbox_options()
+        builder = Sandbox(
+            cpu=min(
+                cpu_request or _PREPARATION_CPU_MILLICORES, _PREPARATION_CPU_MILLICORES
+            ),
+            memory=min(
+                memory_request or _PREPARATION_MEMORY_MIB, _PREPARATION_MEMORY_MIB
+            ),
+            cpu_limit=_PREPARATION_CPU_MILLICORES,
+            mem_limit=_PREPARATION_MEMORY_MIB,
+            idle_timeout=max(300, timeout + 60),
+            schedule_timeout=schedule_timeout,
+            **options,
+        )
         upload_context(builder, source, "/work/context")
         command = [
             "python3",
@@ -150,6 +165,7 @@ def build_image(
             retention.request(
                 "plan", publication=publication["id"], tag=planned["tag"]
             )
+            publication_planned = True
         result = builder.commands.run(
             shlex.join(command),
             timeout=timeout,
@@ -173,10 +189,13 @@ def build_image(
         ):
             raise ValueError("Runtime returned an invalid artifact reference")
         expires_at = None
+        pressure_evictable = False
         if retention is not None and publication is not None:
-            expires_at = retention.request(
+            receipt = retention.request(
                 "commit", publication=publication["id"], reference=reference
-            )["expires_at"]
+            )
+            expires_at = receipt["expires_at"]
+            pressure_evictable = receipt.get("pressure_evictable") is True
         process = handle.get("image_process", {})
         return BuiltImage(
             reference=reference,
@@ -187,9 +206,20 @@ def build_image(
             user=process.get("User") or None,
             has_startup_command=bool(process.get("Entrypoint") or process.get("Cmd")),
             expires_at=expires_at,
+            pressure_evictable=pressure_evictable,
         )
     except BaseException as error:
         failure = error
+        if (
+            retention is not None
+            and publication is not None
+            and "prepare_until" in publication
+            and not publication_planned
+        ):
+            try:
+                retention.request("cancel-build", publication=publication["id"])
+            except Exception:
+                logger.warning("Could not release the build reservation", exc_info=True)
         if (
             isinstance(error, BackendOperationError)
             and error.command_result is not None
@@ -209,15 +239,16 @@ def build_image(
                     )
         raise
     finally:
-        try:
-            builder.kill()
-        except BaseException as cleanup:
-            if failure is not None:
-                retain_failure_context(failure, builder.id, cleanup)
-            else:
-                cleanup_failure = BackendOperationError(
-                    "Managed build preparation cleanup failed",
-                    environment_id=builder.id,
-                )
-                retain_failure_context(cleanup_failure, builder.id, cleanup)
-                raise cleanup_failure from cleanup
+        if builder is not None:
+            try:
+                builder.kill()
+            except BaseException as cleanup:
+                if failure is not None:
+                    retain_failure_context(failure, builder.id, cleanup)
+                else:
+                    cleanup_failure = BackendOperationError(
+                        "Managed build preparation cleanup failed",
+                        environment_id=builder.id,
+                    )
+                    retain_failure_context(cleanup_failure, builder.id, cleanup)
+                    raise cleanup_failure from cleanup

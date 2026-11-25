@@ -5,7 +5,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
-from akernel_sdk import DockerRuntime, TimeoutException, build_image
+import httpx
+
+from akernel_sdk import (
+    DockerRuntime,
+    ServiceBusyException,
+    TimeoutException,
+    build_image,
+)
 from akernel_sdk._managed_build import upload_context
 from akernel_sdk.types import CommandResult
 
@@ -62,33 +69,56 @@ class ManagedProfileContract(unittest.TestCase):
             for options in (
                 {"cpu_request": 0},
                 {"cpu_request": True},
-                {"cpu_request": 1001},
-                {"memory_request": 2049},
+                {"memory_request": -1},
+                {"memory_request": False},
                 {"memory_request": 1.5},
             ):
                 with (
                     self.subTest(options=options),
                     patch("akernel_sdk.sandbox.Sandbox") as factory,
-                    self.assertRaisesRegex(ValueError, "request must be an integer"),
+                    patch("akernel_sdk._managed_build.Retention") as retention,
                 ):
-                    build_image(root, profile="harbor-v1", **options)
-                factory.assert_not_called()
+                    with self.assertRaisesRegex(
+                        ValueError, "request must be a positive integer"
+                    ):
+                        build_image(root, profile="harbor-ephemeral", **options)
+                    factory.assert_not_called()
+                    retention.assert_not_called()
 
-    def test_preparation_requests_preserve_existing_limits(self):
+    def test_preparation_requests_are_bounded_by_execution_limits(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "Dockerfile").write_text("FROM scratch\n")
-            sandbox = MagicMock()
-            sandbox.commands.run.side_effect = RuntimeError("stop after admission")
-            with patch("akernel_sdk.sandbox.Sandbox", return_value=sandbox) as factory:
-                with self.assertRaisesRegex(RuntimeError, "stop after admission"):
-                    build_image(
-                        root, profile="harbor-v1", cpu_request=10, memory_request=64
+            for cpu_request, memory_request, expected in (
+                (None, None, (1000, 2048)),
+                (10, 64, (10, 64)),
+                (2000, 64, (1000, 64)),
+                (10, 4096, (10, 2048)),
+                (2000, 4096, (1000, 2048)),
+            ):
+                sandbox = MagicMock()
+                sandbox.commands.run.side_effect = RuntimeError("stop after admission")
+                with self.subTest(
+                    cpu_request=cpu_request, memory_request=memory_request
+                ):
+                    with (
+                        patch(
+                            "akernel_sdk.sandbox.Sandbox", return_value=sandbox
+                        ) as factory,
+                        self.assertRaisesRegex(RuntimeError, "stop after admission"),
+                    ):
+                        build_image(
+                            root,
+                            profile="harbor-v1",
+                            cpu_request=cpu_request,
+                            memory_request=memory_request,
+                        )
+                    options = factory.call_args.kwargs
+                    self.assertEqual((options["cpu"], options["memory"]), expected)
+                    self.assertEqual(
+                        (options["cpu_limit"], options["mem_limit"]), (1000, 2048)
                     )
-            options = factory.call_args.kwargs
-            self.assertEqual((options["cpu"], options["memory"]), (10, 64))
-            self.assertEqual((options["cpu_limit"], options["mem_limit"]), (1000, 2048))
-            sandbox.kill.assert_called_once()
+                    sandbox.kill.assert_called_once()
 
     def test_only_capability_name_is_submitted(self):
         options = DockerRuntime(profile="harbor-v1").sandbox_options()
@@ -166,7 +196,7 @@ class ManagedProfileContract(unittest.TestCase):
         retention.request.side_effect = [
             {"id": "e" * 32, "tag": tag, "profile": "harbor-ephemeral-b"},
             {},
-            {"expires_at": 1750},
+            {"expires_at": 1750, "pressure_evictable": True},
         ]
         files = iter([{"tag": repository + ":" + tag}, {"reference": reference}])
 
@@ -186,8 +216,19 @@ class ManagedProfileContract(unittest.TestCase):
         ):
             root = Path(directory)
             (root / "Dockerfile").write_text("FROM scratch\n")
-            result = build_image(root, profile="harbor-ephemeral", ttl_seconds=750)
+            result = build_image(
+                root,
+                profile="harbor-ephemeral",
+                ttl_seconds=750,
+                cpu_request=2000,
+                memory_request=4096,
+            )
         self.assertEqual(result.expires_at, 1750)
+        self.assertTrue(result.pressure_evictable)
+        self.assertEqual(
+            (factory.call_args.kwargs["cpu"], factory.call_args.kwargs["memory"]),
+            (1000, 2048),
+        )
         self.assertEqual(
             factory.call_args.kwargs["extra_config"],
             {"managedRuntimeProfile": "harbor-ephemeral-b"},
@@ -201,6 +242,64 @@ class ManagedProfileContract(unittest.TestCase):
             ],
         )
         builder.kill.assert_called_once()
+
+    def test_capacity_rejection_precedes_preparation_sandbox(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            token = root / "token"
+            token.write_text("fixture-token")
+            response = httpx.Response(
+                503, json={
+                    "error": "Registry is busy",
+                    "code": "REGISTRY_CAPACITY_UNAVAILABLE",
+                },
+            )
+            with (
+                patch.dict("os.environ", {
+                    "AKERNEL_IMAGE_RETENTION_URL": "http://127.0.0.1:8098",
+                    "AKERNEL_IMAGE_RETENTION_TOKEN_FILE": str(token),
+                }),
+                patch(
+                    "akernel_sdk._ephemeral_images.httpx.post", return_value=response
+                ),
+                patch("akernel_sdk.sandbox.Sandbox") as builder,
+                self.assertRaises(ServiceBusyException) as caught,
+            ):
+                build_image(root, profile="harbor-ephemeral")
+        self.assertEqual(caught.exception.outcome, "not_started")
+        self.assertEqual(caught.exception.code, "REGISTRY_CAPACITY_UNAVAILABLE")
+        builder.assert_not_called()
+
+    def test_preparation_failure_releases_reservation_and_preserves_error(self):
+        publication = "e" * 32
+        retention = MagicMock()
+        retention.request.side_effect = [
+            {
+                "id": publication,
+                "profile": "harbor-ephemeral-a",
+                "prepare_until": 1500,
+            },
+            {},
+        ]
+        failed = TimeoutException("preparation timed out")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("akernel_sdk._managed_build.Retention", return_value=retention),
+            patch("akernel_sdk.sandbox.Sandbox", side_effect=failed),
+            self.assertRaises(TimeoutException) as caught,
+        ):
+            root = Path(directory)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            build_image(root, profile="harbor-ephemeral")
+        self.assertIs(caught.exception, failed)
+        self.assertEqual(
+            retention.request.call_args_list,
+            [
+                call("begin", ttl_seconds=None),
+                call("cancel-build", publication=publication),
+            ],
+        )
 
     def test_effective_empty_and_nonempty_image_startup(self):
         for process, expected in [

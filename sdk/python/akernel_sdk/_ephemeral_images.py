@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from ._backends.errors import BackendOperationError
+from ._backends.errors import BackendOperationError, ServiceBusyException
 
 PROFILE = "harbor-ephemeral"
 _REPOSITORY = re.compile(r"akernel-ephemeral/[0-9a-f]{32}/service-0")
@@ -78,5 +78,15 @@ class Retention:
             message = body.get("error")
             if not isinstance(message, str):
                 message = "Image retention request failed"
+            if (
+                response.status_code == 503
+                and body.get("code") == "REGISTRY_CAPACITY_UNAVAILABLE"
+            ):
+                raise ServiceBusyException(
+                    message,
+                    code="REGISTRY_CAPACITY_UNAVAILABLE",
+                    status_code=503,
+                    outcome="not_started",
+                )
             raise BackendOperationError(message)
         return body
