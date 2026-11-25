@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS publications (
     id TEXT PRIMARY KEY, slot TEXT NOT NULL REFERENCES slots(name),
     ttl INTEGER NOT NULL, state TEXT NOT NULL, tag TEXT UNIQUE,
     reference TEXT UNIQUE, expires_at INTEGER, worklist TEXT, retry_at INTEGER NOT NULL DEFAULT 0,
-    pressure_evictable INTEGER NOT NULL DEFAULT 0, last_used_at INTEGER
+    pressure_evictable INTEGER NOT NULL DEFAULT 0, last_used_at INTEGER, planned_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS holds (
     id TEXT PRIMARY KEY, publication TEXT NOT NULL REFERENCES publications(id),
@@ -97,6 +97,12 @@ class Retention:
                 db.execute("ALTER TABLE publications ADD COLUMN pressure_evictable INTEGER NOT NULL DEFAULT 0")
             if "last_used_at" not in columns:
                 db.execute("ALTER TABLE publications ADD COLUMN last_used_at INTEGER")
+            if "planned_at" not in columns:
+                db.execute("ALTER TABLE publications ADD COLUMN planned_at INTEGER")
+                db.execute(
+                    "UPDATE publications SET planned_at=? WHERE state='planned'",
+                    (math.ceil(time.time()),),
+                )
             db.execute(
                 "CREATE INDEX IF NOT EXISTS publication_slot_state ON publications(slot, state)"
             )
@@ -211,7 +217,8 @@ class Retention:
             if existing:
                 raise Conflict("Publication repository is already reserved")
             db.execute(
-                "UPDATE publications SET state='planned', tag=? WHERE id=?", (tag, publication)
+                "UPDATE publications SET state='planned', tag=?, planned_at=? WHERE id=?",
+                (tag, math.ceil(time.time()), publication),
             )
         return {}
 

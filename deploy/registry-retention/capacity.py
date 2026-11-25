@@ -180,18 +180,29 @@ class CapacityController:
             pressure = bool(current["blocked"])
             elapsed = now - job["completed_at"]
             periodic = self.policy.rotation_interval_seconds and elapsed >= self.policy.rotation_interval_seconds
-            if not pressure and not periodic:
+            in_flight = db.execute(
+                """SELECT COUNT(*) AS count, MIN(planned_at) AS oldest
+                FROM publications WHERE slot=? AND state='planned'""",
+                (active,),
+            ).fetchone()
+            stalled = (
+                in_flight["count"] >= self.policy.max_in_flight_builds
+                and in_flight["oldest"] is not None
+                and in_flight["oldest"] + self.policy.drain_seconds <= now
+            )
+            if not pressure and not periodic and not stalled:
                 return None
             if self.policy.available(next_sample, now):
                 self.retention.switch_slot(db, standby, now)
                 retired = active
             elif (
-                pressure and next_sample is not None and self.policy.fresh(next_sample, now)
+                (pressure or stalled) and next_sample is not None and self.policy.fresh(next_sample, now)
                 and next_sample["blocked"] and elapsed >= 300
             ):
                 # Clear a saturated standby first so pressure cannot deadlock both slots.
                 db.execute("UPDATE slots SET state='draining' WHERE name=?", (standby,))
                 retired = standby
+                pressure = True
             else:
                 return None
             db.execute(

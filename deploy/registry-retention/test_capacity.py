@@ -271,6 +271,27 @@ class CapacityTests(TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(self.retention.status()["slots"][0]["state"], "draining")
 
+    def test_stalled_build_limit_rotates_even_below_watermark(self):
+        self.config["capacity"]["rotation_interval_seconds"] = 0
+        self.open()
+        self.controller.refresh()
+        for _ in range(3):
+            self.plan(self.retention.begin())
+        self.controller.cycle()
+        self.assertIsNone(self.retention.status()["maintenance"]["slot"])
+        self.clock.return_value += 30
+        self.controller.refresh()
+        self.controller.cycle()
+        self.assertEqual(self.retention.begin()["profile"], "harbor-ephemeral-b")
+        self.assertFalse(self.retention.status()["maintenance"]["pressure"])
+        self.assertEqual(self.calls, [])
+        self.clock.return_value += 30
+        registry = self.retention.registries["a"]
+        with patch.object(registry, "resolve", return_value=None):
+            self.controller.cycle()
+        self.assertEqual(self.calls.count(("gc", "a")), 1)
+        self.assertEqual(self.retention.status()["publications"][0]["state"], "abandoned")
+
     def test_periodic_maintenance_and_recovery_when_both_volumes_are_full(self):
         self.controller.refresh()
         self.clock.return_value += 3600

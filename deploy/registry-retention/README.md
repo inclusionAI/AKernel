@@ -122,7 +122,9 @@ admission for that slot. A rejected request returns HTTP 503 with code
 largest concurrent builds because the registry learns blob sizes during upload.
 
 The controller rotates at the high watermark or on the configured interval.
-Set `rotation_interval_seconds` to zero for pressure-triggered rotation alone.
+It also rotates when the build limit stays occupied by stale plans, so an
+interrupted publication can be reconciled after fencing. Set
+`rotation_interval_seconds` to zero to disable periodic rotation.
 Rotation starts new builds on a healthy standby and gives planned builds on the
 retiring slot up to `drain_seconds` to finish before fencing. Set that window
 for the build time you want to allow during rotation. The controller can reclaim
