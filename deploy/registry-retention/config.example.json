@@ -2,6 +2,7 @@
   "initial_slot": "a",
   "default_ttl_seconds": 86400,
   "max_ttl_seconds": 604800,
+  "terminal_receipt_seconds": 604800,
   "auto_delete": false,
   "capacity": null,
   "runner_token_file": "/etc/retention/keys/runner",

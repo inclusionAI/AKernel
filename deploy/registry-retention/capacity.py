@@ -118,7 +118,7 @@ class CapacityController:
         self.policy = retention.capacity
         self.probe_locks = {slot: threading.Lock() for slot in retention.registries}
 
-    def driver(self, action: str, slot: str) -> str:
+    def driver(self, action: str, slot: str, *, payload: dict | None = None) -> str:
         command = [self.policy.driver, action, slot, self.policy.storage_ids[slot]]
         timeout = min(10, self.policy.max_sample_age_seconds) if action == "measure" else (
             self.policy.driver_timeout_seconds
@@ -126,6 +126,7 @@ class CapacityController:
         try:
             return subprocess.run(
                 command, check=True, capture_output=True, text=True, timeout=timeout,
+                input=json.dumps(payload) if payload is not None else "",
             ).stdout
         except (subprocess.SubprocessError, OSError) as exc:
             raise OSError(f"Registry maintenance driver {action} failed for {slot}") from exc
@@ -203,7 +204,7 @@ class CapacityController:
                 ready.sort(key=lambda slot: slot == job["last_blocked_gc_slot"])
                 retired = next((slot for slot in ready if self.policy.blocked(samples.get(slot), now)), None)
                 if retired is not None:
-                    self.retention.retire_slot(db, retired)
+                    self.retention.retire_slot(db, retired, now)
                 pressure = True
             elif ready and self.policy.fresh(samples.get(active), now):
                 retired, pressure = self.choose_rotation(db, job, active, ready[0], samples, now)
@@ -241,12 +242,35 @@ class CapacityController:
             if job["last_blocked_gc_slot"] == standby:
                 # The standby was still saturated after GC. Pause admission
                 # and drain the former writer before trying its volume.
-                self.retention.retire_slot(db, active)
+                self.retention.retire_slot(db, active, now)
                 return active, True
             if elapsed >= BLOCKED_RETRY_SECONDS:
-                self.retention.retire_slot(db, standby)
+                self.retention.retire_slot(db, standby, now)
                 return standby, True
         return None, False
+
+    def collect(self, slot: str):
+        abandoned = self.retention.abandoned_repositories(slot)
+        cleaned = set()
+        if abandoned:
+            output = self.driver("gc", slot, payload={"abandoned_repositories": list(abandoned)})
+            try:
+                reply = json.loads(output)
+                repositories = reply.get("cleaned_repositories") if isinstance(reply, dict) else None
+                if not isinstance(repositories, list) or any(
+                    not isinstance(repo, str) or repo not in abandoned for repo in repositories
+                ) or len(repositories) != len(set(repositories)):
+                    raise ValueError
+                cleaned = set(repositories)
+            except ValueError as exc:
+                raise ValueError("Registry GC driver did not confirm abandoned repository cleanup") from exc
+            if len(cleaned) < len(abandoned):
+                LOG.warning("Registry GC deferred %d abandoned repositories in %s", len(abandoned) - len(cleaned), slot)
+        else:
+            self.driver("gc", slot)
+        with self.retention.database_session(write=True) as db:
+            self.retention.record_abandoned_gc(db, abandoned, cleaned)
+            db.execute("UPDATE registry_maintenance SET gc_complete=1 WHERE id=1")
 
     def cycle(self):
         if not self.retention.auto_delete:
@@ -279,9 +303,7 @@ class CapacityController:
             if self.measure(slot):
                 raise ValueError("Registry writers must be fenced before GC")
             self.retention.seal(slot)
-            self.driver("gc", slot)
-            with self.retention.database_session(write=True) as db:
-                db.execute("UPDATE registry_maintenance SET gc_complete=1 WHERE id=1")
+            self.collect(slot)
         self.driver("restore", slot)
         if not self.measure(slot):
             raise ValueError("Registry is still read-only after maintenance")

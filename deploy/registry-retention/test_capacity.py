@@ -55,7 +55,7 @@ class CapacityTests(TestCase):
         self.controller = CapacityController(self.retention)
         self.controller.driver = self.driver
 
-    def driver(self, action, slot):
+    def driver(self, action, slot, *, payload=None):
         if action == "measure":
             return json.dumps({
                 "storage_id": "volume-" + slot,
@@ -71,6 +71,8 @@ class CapacityTests(TestCase):
             self.capacity[slot] = 600
         elif action == "restore":
             self.writable[slot] = True
+        if payload is not None:
+            return json.dumps({"cleaned_repositories": payload["abandoned_repositories"]})
         return ""
 
     def repository(self, build):
@@ -490,3 +492,53 @@ class CapacityTests(TestCase):
         self.controller.refresh()
         self.controller.cycle()
         self.assertEqual(self.retention.begin()["profile"], "harbor-ephemeral-b")
+
+    def test_abandoned_gc_requires_a_scoped_receipt_and_survives_restart(self):
+        self.controller.refresh()
+        cleaned, deferred, completed = [self.retention.begin() for _ in range(3)]
+        for build in (cleaned, deferred, completed):
+            self.plan(build)
+        cleaned_repo, deferred_repo, completed_repo = (
+            self.retention.registries["a"].repository(self.repository(build))
+            for build in (cleaned, deferred, completed)
+        )
+        completed_reference = self.repository(completed) + "@sha256:" + "b" * 64
+        self.capacity["a"] = 100
+        self.controller.refresh()
+        job = self.controller.reserve_rotation()
+        self.assertEqual(job["slot"], "a")
+        self.clock.return_value = job["drain_until"]
+
+        def driver_with_reply(reply):
+            def run(action, slot, *, payload=None):
+                if action != "gc":
+                    return self.driver(action, slot)
+                self.assertFalse(self.writable[slot])
+                self.assertEqual(set(payload["abandoned_repositories"]), {cleaned_repo, deferred_repo})
+                return json.dumps({"cleaned_repositories": reply})
+
+            return run
+
+        def resolve(tag):
+            return completed_reference if tag.endswith(completed["tag"]) else None
+
+        self.controller.driver = driver_with_reply([completed_repo])
+        with (
+            patch.object(self.retention.registries["a"], "resolve", side_effect=resolve),
+            self.assertRaisesRegex(ValueError, "did not confirm"),
+        ):
+            self.controller.cycle()
+        self.assertEqual(self.retention.status()["abandoned_repositories_pending_gc"], [{"slot": "a", "count": 2}])
+        self.assertFalse(self.retention.status()["maintenance"]["gc_complete"])
+        self.assertNotIn(("restore", "a"), self.calls)
+
+        self.open()
+        self.controller.driver = driver_with_reply([cleaned_repo])
+        self.controller.cycle()
+        self.assertEqual(self.retention.status()["abandoned_repositories_pending_gc"], [{"slot": "a", "count": 1}])
+        self.clock.return_value += self.retention.terminal_receipt_seconds
+        self.assertEqual(self.retention.prune_terminal(), 1)
+        with self.retention.database_session() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM publications WHERE id=?", (cleaned["id"],)).fetchone())
+            self.assertEqual(self.retention.publication(db, deferred["id"])["state"], "abandoned")
+            self.assertEqual(self.retention.publication(db, completed["id"])["reference"], completed_reference)

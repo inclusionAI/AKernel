@@ -54,7 +54,12 @@ During GC, workers keep pulling retained digests from A's original endpoint.
 - Copy [the example configuration](config.example.json). The default TTL is
   86400 seconds and the default maximum is 604800 seconds. New publications use
   the policy at admission, and their expiry starts when the Registry digest is
-  verified. Leave `auto_delete` false to inspect candidates during rollout.
+  verified. The service keeps completed ledger entries for
+  `terminal_receipt_seconds` (604800 seconds by default), measured from
+  cancellation, manifest deletion, or confirmed cleanup of an abandoned push.
+  It prunes eligible entries in batches and SQLite reuses the space. Live
+  holds, pending writes and unconfirmed cleanups stay in the ledger.
+  Leave `auto_delete` false to inspect candidates during rollout.
 - Run one service replica with `retention.py`, `registry.py` and `capacity.py` on a private
   HTTPS endpoint. Mount the SQLite directory on an independent persistent
   volume. Mount separate credentials for the trusted Harbor runner, the ADX
@@ -132,10 +137,15 @@ interrupted publication can be reconciled after fencing. Set
 `rotation_interval_seconds` to zero to disable periodic rotation.
 Rotation starts new builds on a healthy standby and gives planned builds on the
 retiring slot up to `drain_seconds` to finish before fencing. Set that window
-for the build time you want to allow during rotation. The controller can reclaim
-a full standby first when both slots are above their watermarks. If neither
-slot has room, callers wait for maintenance or capacity to recover. Inspect
-`status` for the measurements, queued maintenance, and publication states.
+for the build time you want to allow during rotation. When both volumes are
+blocked, the controller first tries to reclaim the standby. If it comes back
+without enough headroom, the controller pauses new build admission and drains
+the former writer for its own maintenance. Each restore must pass the write
+check and the capacity threshold before it can reopen admission. If both
+volumes remain blocked, maintenance retries alternate after a five-minute
+cooldown. Existing sandboxes keep reading their original digest and endpoint.
+Inspect `status` for measurements, queued maintenance, publication states,
+and the per-slot count of abandoned repositories awaiting cleanup.
 
 Set `lru_idle_seconds` to a positive idle grace to allow early eviction of
 temporary images published with that policy. The receipt exposes
@@ -159,7 +169,7 @@ restart.
 | --- | --- |
 | `measure` | Write a JSON object to stdout with `storage_id`, `total_bytes`, `available_bytes` and `writable` (boolean). Verify the mounted volume, reachable Registry and effective write mode. This action may run during another action. |
 | `fence` | Drain or stop outstanding writers for this slot, keep the original read endpoint, put the Registry in read-only mode and disable the upload purger. Keep this fence in effect throughout GC, including across driver restarts. Ensure stopped builds cannot resume an upload when the endpoint is writable again. The controller calls this action before GC even if the Registry already reports read-only mode. |
-| `gc` | Recheck the identity and write fence, then dry-run and run Distribution GC with the same Registry version and configuration. Serialize the GC process on that volume and return success only when it has completed. |
+| `gc` | Recheck the identity and write fence. Apply the abandoned-repository plan on stdin when present, then dry-run and run Distribution GC with the same Registry version and configuration. Serialize this work on the volume and report success only after GC completes. |
 | `restore` | Verify that GC has stopped, restore the writable Registry and pass a push/read smoke check on the same endpoint before reporting success. |
 
 Run the driver with the permissions scoped to these two Registries. Its
@@ -167,6 +177,27 @@ Run the driver with the permissions scoped to these two Registries. Its
 selection. The controller keeps the maintenance job in SQLite and retries it.
 When providing the driver for Kubernetes, validate it against the dedicated
 namespace and the actual PVC identities before enabling it for that deployment.
+
+After fencing, the controller reconciles each exact planned tag. A tag that
+resolves to a digest is recorded as a publication. For plans whose tag is
+absent, the `gc` driver receives a JSON object on stdin with an
+`abandoned_repositories` array of up to 256 repository paths. It receives empty
+stdin when that batch is empty. Scope cleanup to the listed, private
+per-build repositories. Keep tag-bearing repositories and report them as
+deferred by leaving them out of the receipt.
+
+For the filesystem backend, run
+`python3 cleanup_abandoned.py --rootdirectory <rootdirectory> --writers-fenced`
+with the received JSON. Ship `registry.py` alongside the helper. Use the
+effective filesystem rootdirectory from the fenced Registry configuration,
+mounted for the helper at a verified absolute path without nested mounts.
+The helper rechecks for current tags and removes the repository metadata and
+staged upload files only within the listed paths. Distribution's default GC
+then reclaims unreferenced shared blob data. Keep the fence through both steps.
+After GC completes, forward the helper's JSON `cleaned_repositories` receipt
+to stdout. Send operational output to stderr when returning a receipt. A missing
+path counts as already cleaned so the driver can retry after an interruption.
+Any unconfirmed paths stay pending for a later fenced maintenance pass.
 
 ## Reclaim and rotate
 
@@ -190,7 +221,8 @@ deleting. Interrupted deletions resume that exact worklist.
    with its exact Registry version and configuration. Keep its read path
    available. Use the default mark-and-sweep options, which retain manifests
    addressable only by digest. Record actual bytes freed and verify retained
-   digests before resuming writes.
+   digests before resuming writes. The capacity controller handles the
+   scoped cleanup of abandoned pushes during automatic maintenance.
 4. Restore the retired Registry's writable configuration. After it passes
    write and read smoke checks, run `ready <old>` to make it eligible for a
    later switch.

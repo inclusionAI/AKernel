@@ -20,7 +20,7 @@ from urllib.parse import urlencode, urlsplit
 
 from capacity import SCHEMA as CAPACITY_SCHEMA
 from capacity import CapacityController, CapacityPolicy, CapacityUnavailable, maintenance_lock
-from registry import DIGEST, Registry, request, trusted_url
+from registry import ABANDONED_BATCH_SIZE, DIGEST, Registry, request, trusted_url
 
 LOG = logging.getLogger(__name__)
 SCHEMA = """
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS publications (
     ttl INTEGER NOT NULL, state TEXT NOT NULL, tag TEXT UNIQUE,
     reference TEXT UNIQUE, expires_at INTEGER, worklist TEXT, retry_at INTEGER NOT NULL DEFAULT 0,
     pressure_evictable INTEGER NOT NULL DEFAULT 0, last_used_at INTEGER,
-    planned_at INTEGER, prepare_until INTEGER
+    planned_at INTEGER, prepare_until INTEGER, terminal_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS holds (
     id TEXT PRIMARY KEY, publication TEXT NOT NULL REFERENCES publications(id),
@@ -71,6 +71,9 @@ class Retention:
             or not 1 <= self.default_ttl <= self.max_ttl
         ):
             raise ValueError("Invalid default or maximum retention TTL")
+        self.terminal_receipt_seconds = config.get("terminal_receipt_seconds", 604800)
+        if type(self.terminal_receipt_seconds) is not int or not 1 <= self.terminal_receipt_seconds < 2**63:
+            raise ValueError("terminal_receipt_seconds must be a positive integer")
         self.runner_token = self.read_token(config["runner_token_file"])
         self.adx_origin = trusted_url(config["adx_origin"], origin=True)
         observer = urlsplit(self.adx_origin)
@@ -106,11 +109,27 @@ class Retention:
                 )
             if "prepare_until" not in columns:
                 db.execute("ALTER TABLE publications ADD COLUMN prepare_until INTEGER")
+            if "terminal_at" not in columns:
+                db.execute("ALTER TABLE publications ADD COLUMN terminal_at INTEGER")
+                db.execute(
+                    """UPDATE publications SET terminal_at=?
+                    WHERE state='deleted' OR (state='abandoned' AND tag IS NULL)""",
+                    (math.ceil(time.time()),),
+                )
             maintenance_columns = {row["name"] for row in db.execute("PRAGMA table_info(registry_maintenance)")}
             if "last_blocked_gc_slot" not in maintenance_columns:
                 db.execute("ALTER TABLE registry_maintenance ADD COLUMN last_blocked_gc_slot TEXT REFERENCES slots(name)")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS publication_slot_state ON publications(slot, state)"
+            )
+            db.execute(
+                """CREATE INDEX IF NOT EXISTS publication_terminal
+                ON publications(terminal_at) WHERE terminal_at IS NOT NULL"""
+            )
+            db.execute(
+                """CREATE INDEX IF NOT EXISTS publication_abandoned_gc
+                ON publications(slot, retry_at, planned_at, id)
+                WHERE state='abandoned' AND tag IS NOT NULL AND terminal_at IS NULL"""
             )
             db.executemany(
                 "INSERT OR IGNORE INTO slots VALUES (?, ?, ?, ?)",
@@ -183,9 +202,9 @@ class Retention:
             if self.capacity is not None:
                 now = time.time()
                 db.execute(
-                    """UPDATE publications SET state='abandoned'
+                    """UPDATE publications SET state='abandoned', terminal_at=?
                     WHERE slot=? AND state='new' AND prepare_until<=?""",
-                    (slot["name"], now),
+                    (math.ceil(now), slot["name"], now),
                 )
                 in_flight = db.execute(
                     "SELECT COUNT(*) FROM publications WHERE slot=? AND state IN ('new','planned')",
@@ -271,8 +290,8 @@ class Retention:
     def cancel_build(self, publication: str):
         with self.database_session(write=True) as db:
             db.execute(
-                "UPDATE publications SET state='abandoned' WHERE id=? AND state='new'",
-                (publication,),
+                "UPDATE publications SET state='abandoned', terminal_at=? WHERE id=? AND state='new'",
+                (math.ceil(time.time()), publication),
             )
         return {}
 
@@ -484,7 +503,11 @@ class Retention:
         for digest in worklist:
             registry.delete(repository, digest)
         with self.database_session(write=True) as db:
-            db.execute("UPDATE publications SET state='deleted' WHERE id=?", (row["id"],))
+            db.execute(
+                """UPDATE publications SET state='deleted', terminal_at=?, worklist=NULL
+                WHERE id=? AND state='deleting'""",
+                (math.ceil(time.time()), row["id"]),
+            )
         LOG.info("Reclaimed manifests for %s in slot %s", row["id"], row["slot"])
 
     def sweep(self, *, apply: bool, slot: str | None = None, pressure: bool = False):
@@ -510,6 +533,44 @@ class Retention:
                         (int(time.time()) + 60, row["id"]),
                     )
         return [{"id": r["id"], "slot": r["slot"], "reference": r["reference"]} for r in candidates]
+
+    def prune_terminal(self):
+        cutoff = int(time.time()) - self.terminal_receipt_seconds
+        with self.database_session(write=True) as db:
+            return db.execute(
+                """DELETE FROM publications WHERE id IN (
+                    SELECT p.id FROM publications p WHERE p.terminal_at<=?
+                    AND p.state IN ('deleted','abandoned')
+                    AND NOT EXISTS(SELECT 1 FROM holds h WHERE h.publication=p.id)
+                    ORDER BY p.terminal_at, p.id LIMIT 256
+                )""",
+                (cutoff,),
+            ).rowcount
+
+    def abandoned_repositories(self, slot: str) -> dict[str, str]:
+        with self.database_session() as db:
+            rows = db.execute(
+                """SELECT p.id, p.tag FROM publications p JOIN slots s ON p.slot=s.name
+                WHERE p.slot=? AND s.state='sealed' AND p.state='abandoned' AND p.tag IS NOT NULL
+                AND p.reference IS NULL AND p.terminal_at IS NULL AND p.retry_at<=?
+                AND NOT EXISTS(SELECT 1 FROM holds h WHERE h.publication=p.id)
+                ORDER BY p.retry_at, p.planned_at, p.id LIMIT ?""",
+                (slot, int(time.time()), ABANDONED_BATCH_SIZE),
+            ).fetchall()
+        registry = self.registries[slot]
+        return {registry.repository(row["tag"].rsplit(":", 1)[0]): row["id"] for row in rows}
+
+    @staticmethod
+    def record_abandoned_gc(db, abandoned: dict[str, str], cleaned: set[str]):
+        now = math.ceil(time.time())
+        db.executemany(
+            """UPDATE publications SET terminal_at=?, retry_at=?
+            WHERE id=? AND state='abandoned' AND terminal_at IS NULL""",
+            [
+                (now, 0, publication) if repo in cleaned else (None, now + 300, publication)
+                for repo, publication in abandoned.items()
+            ],
+        )
 
     def status(self):
         with self.database_session() as db:
@@ -543,6 +604,14 @@ class Retention:
                     (int(time.time()),),
                 )
             ]
+            abandoned = [
+                dict(row)
+                for row in db.execute(
+                    """SELECT slot, COUNT(*) AS count FROM publications
+                    WHERE state='abandoned' AND tag IS NOT NULL AND terminal_at IS NULL
+                    GROUP BY slot"""
+                )
+            ]
             capacity = [dict(row) for row in db.execute("SELECT * FROM registry_capacity ORDER BY slot")]
             maintenance = db.execute("SELECT * FROM registry_maintenance WHERE id=1").fetchone()
         result = {
@@ -551,6 +620,7 @@ class Retention:
             "holds": holds,
             "unconfirmed_holds": unconfirmed,
             "awaiting_stop_confirmation": awaiting_stop,
+            "abandoned_repositories_pending_gc": abandoned,
         }
         if maintenance is not None:
             result["capacity"] = capacity
@@ -572,15 +642,15 @@ class Retention:
                 raise CapacityUnavailable("The standby Registry has no verified write headroom")
         active = db.execute("SELECT name FROM slots WHERE state='active'").fetchone()
         if active is not None:
-            self.retire_slot(db, active["name"])
+            self.retire_slot(db, active["name"], now)
         db.execute("UPDATE slots SET state='active' WHERE name=?", (slot,))
 
     @staticmethod
-    def retire_slot(db, slot: str):
+    def retire_slot(db, slot: str, now: int):
         db.execute("UPDATE slots SET state='draining' WHERE name=?", (slot,))
         db.execute(
-            "UPDATE publications SET state='abandoned' WHERE slot=? AND state='new'",
-            (slot,),
+            "UPDATE publications SET state='abandoned', terminal_at=? WHERE slot=? AND state='new'",
+            (now, slot),
         )
 
     def seal(self, slot: str):
@@ -701,6 +771,7 @@ def serve(retention: Retention, args):
         def sweep():
             while not stopped.wait(30):
                 try:
+                    retention.prune_terminal()
                     retention.sweep(apply=retention.auto_delete)
                 except sqlite3.Error as exc:
                     LOG.error("Image retention sweep failed (%s)", type(exc).__name__)
