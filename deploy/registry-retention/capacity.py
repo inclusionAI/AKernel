@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from retention import Retention
 
 LOG = logging.getLogger(__name__)
+BLOCKED_RETRY_SECONDS = 300
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS registry_capacity (
     slot TEXT PRIMARY KEY REFERENCES slots(name), storage_id TEXT NOT NULL, sampled_at INTEGER NOT NULL,
@@ -26,7 +27,8 @@ CREATE TABLE IF NOT EXISTS registry_capacity (
 CREATE TABLE IF NOT EXISTS registry_maintenance (
     id INTEGER PRIMARY KEY CHECK(id=1), slot TEXT REFERENCES slots(name),
     pressure INTEGER NOT NULL DEFAULT 0, drain_until INTEGER NOT NULL DEFAULT 0,
-    gc_complete INTEGER NOT NULL DEFAULT 0, completed_at INTEGER NOT NULL
+    gc_complete INTEGER NOT NULL DEFAULT 0, completed_at INTEGER NOT NULL,
+    last_blocked_gc_slot TEXT REFERENCES slots(name)
 );
 """
 
@@ -90,6 +92,9 @@ class CapacityPolicy:
             sample is not None and self.fresh(sample, now)
             and bool(sample["writable"]) and not sample["blocked"]
         )
+
+    def blocked(self, sample: sqlite3.Row | None, now: int) -> bool:
+        return sample is not None and self.fresh(sample, now) and bool(sample["blocked"])
 
 
 @contextmanager
@@ -182,42 +187,29 @@ class CapacityController:
             job = db.execute("SELECT * FROM registry_maintenance WHERE id=1").fetchone()
             if job["slot"] is not None:
                 return job
-            slots = {row["state"]: row["name"] for row in db.execute("SELECT name,state FROM slots")}
-            active, standby = slots.get("active"), slots.get("ready")
-            if active is None or standby is None:
-                return None
+            slots = dict(db.execute("SELECT name,state FROM slots ORDER BY name"))
             samples = {row["slot"]: row for row in db.execute("SELECT * FROM registry_capacity")}
-            current = samples.get(active)
-            next_sample = samples.get(standby)
-            if current is None or not self.policy.fresh(current, now):
-                return None
-            pressure = bool(current["blocked"])
-            elapsed = now - job["completed_at"]
-            periodic = self.policy.rotation_interval_seconds and elapsed >= self.policy.rotation_interval_seconds
-            in_flight = db.execute(
-                """SELECT COUNT(*) AS count, MAX(planned_at) AS newest
-                FROM publications WHERE slot=? AND state='planned'""",
-                (active,),
-            ).fetchone()
-            stalled = (
-                in_flight["count"] >= self.policy.max_in_flight_builds
-                and in_flight["newest"] is not None
-                and in_flight["newest"] + self.policy.drain_seconds <= now
-            )
-            if not pressure and not periodic and not stalled:
-                return None
-            if self.policy.available(next_sample, now):
-                self.retention.switch_slot(db, standby, now)
-                retired = active
-            elif (
-                (pressure or stalled) and next_sample is not None and self.policy.fresh(next_sample, now)
-                and next_sample["blocked"] and elapsed >= 300
-            ):
-                # Clear a saturated standby first so pressure cannot deadlock both slots.
-                db.execute("UPDATE slots SET state='draining' WHERE name=?", (standby,))
-                retired = standby
+            active = next((slot for slot, state in slots.items() if state == "active"), None)
+            ready = [slot for slot, state in slots.items() if state == "ready"]
+            if active is None:
+                for slot in ready:
+                    if self.policy.available(samples.get(slot), now):
+                        self.retention.switch_slot(db, slot, now)
+                        db.execute("UPDATE registry_maintenance SET last_blocked_gc_slot=NULL WHERE id=1")
+                        return None
+                if now - job["completed_at"] < BLOCKED_RETRY_SECONDS:
+                    return None
+                # A paused pair tries the other volume first on the next pass.
+                ready.sort(key=lambda slot: slot == job["last_blocked_gc_slot"])
+                retired = next((slot for slot in ready if self.policy.blocked(samples.get(slot), now)), None)
+                if retired is not None:
+                    self.retention.retire_slot(db, retired)
                 pressure = True
+            elif ready and self.policy.fresh(samples.get(active), now):
+                retired, pressure = self.choose_rotation(db, job, active, ready[0], samples, now)
             else:
+                return None
+            if retired is None:
                 return None
             db.execute(
                 "UPDATE registry_maintenance SET slot=?, pressure=?, drain_until=?, gc_complete=0 WHERE id=1",
@@ -225,6 +217,36 @@ class CapacityController:
             )
             LOG.info("Scheduled Registry GC for %s (pressure=%s)", retired, pressure)
             return db.execute("SELECT * FROM registry_maintenance WHERE id=1").fetchone()
+
+    def choose_rotation(self, db, job, active, standby, samples, now):
+        pressure = self.policy.blocked(samples.get(active), now)
+        elapsed = now - job["completed_at"]
+        periodic = self.policy.rotation_interval_seconds and elapsed >= self.policy.rotation_interval_seconds
+        in_flight = db.execute(
+            """SELECT COUNT(*) AS count, MAX(planned_at) AS newest
+            FROM publications WHERE slot=? AND state='planned'""",
+            (active,),
+        ).fetchone()
+        stalled = (
+            in_flight["count"] >= self.policy.max_in_flight_builds
+            and in_flight["newest"] is not None
+            and in_flight["newest"] + self.policy.drain_seconds <= now
+        )
+        if not pressure and not periodic and not stalled:
+            return None, False
+        if self.policy.available(samples.get(standby), now):
+            self.retention.switch_slot(db, standby, now)
+            return active, pressure
+        if (pressure or stalled) and self.policy.blocked(samples.get(standby), now):
+            if job["last_blocked_gc_slot"] == standby:
+                # The standby was still saturated after GC. Pause admission
+                # and drain the former writer before trying its volume.
+                self.retention.retire_slot(db, active)
+                return active, True
+            if elapsed >= BLOCKED_RETRY_SECONDS:
+                self.retention.retire_slot(db, standby)
+                return standby, True
+        return None, False
 
     def cycle(self):
         if not self.retention.auto_delete:
@@ -265,10 +287,16 @@ class CapacityController:
             raise ValueError("Registry is still read-only after maintenance")
         with self.retention.database_session(write=True) as db:
             self.retention.ready_slot(db, slot)
+            now = int(time.time())
+            sample = db.execute("SELECT * FROM registry_capacity WHERE slot=?", (slot,)).fetchone()
+            if self.policy.available(sample, now) and not db.execute(
+                "SELECT 1 FROM slots WHERE state='active'"
+            ).fetchone():
+                self.retention.switch_slot(db, slot, now)
             db.execute(
                 """UPDATE registry_maintenance SET slot=NULL, pressure=0,
-                drain_until=0, gc_complete=0, completed_at=? WHERE id=1""",
-                (int(time.time()),),
+                drain_until=0, gc_complete=0, completed_at=?, last_blocked_gc_slot=? WHERE id=1""",
+                (now, slot if job["pressure"] and sample["blocked"] else None),
             )
         LOG.info("Completed Registry GC for %s", slot)
 

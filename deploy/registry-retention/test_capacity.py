@@ -415,3 +415,78 @@ class CapacityTests(TestCase):
         self.controller.cycle()
         self.assertEqual(self.calls.count(("gc", "b")), 1)
         self.assertEqual(self.retention.begin()["profile"], "harbor-ephemeral-a")
+
+    def test_blocked_standby_gc_falls_back_to_active_after_restart(self):
+        self.controller.refresh()
+        live = self.retention.begin()
+        self.plan(live)
+        reference, _ = self.publish(live)
+        hold = self.retention.acquire(reference, "current-reader")["id"]
+        pending = self.retention.begin()
+        self.plan(pending)
+        self.capacity = {"a": 100, "b": 100}
+        self.clock.return_value += 300
+        self.controller.refresh()
+
+        def gc_standby_without_space(action, slot):
+            result = self.driver(action, slot)
+            if action == "gc" and slot == "b":
+                self.capacity["b"] = 100
+            return result
+
+        self.controller.driver = gc_standby_without_space
+        self.controller.cycle()
+        self.assertEqual(self.retention.status()["maintenance"]["last_blocked_gc_slot"], "b")
+        self.open()
+        self.controller.refresh()
+        self.controller.cycle()
+        job = self.retention.status()["maintenance"]
+        self.assertEqual(job["slot"], "a")
+        self.assertNotIn("active", {slot["state"] for slot in self.retention.status()["slots"]})
+        with self.assertRaisesRegex(CapacityUnavailable, "paused"):
+            self.retention.begin()
+        self.assertNotIn(("fence", "a"), self.calls)
+
+        # A previously admitted build may still finish within the drain window.
+        self.plan(pending)
+        self.publish(pending)
+        self.open()
+        self.controller.refresh()
+        self.controller.cycle()
+        self.assertEqual(
+            self.calls, [(action, slot) for slot in ("b", "a") for action in ("fence", "gc", "restore")]
+        )
+        self.assertEqual(self.retention.begin()["profile"], "harbor-ephemeral-a")
+        with self.retention.database_session() as db:
+            self.assertIsNotNone(db.execute("SELECT 1 FROM holds WHERE id=?", (hold,)).fetchone())
+
+    def test_paused_pair_alternates_with_cooldown_and_requires_headroom(self):
+        self.capacity = {"a": 100, "b": 100}
+        self.clock.return_value += 300
+        self.controller.refresh()
+
+        def gc_without_usable_space(action, slot):
+            result = self.driver(action, slot)
+            if action == "gc":
+                self.capacity[slot] = 300
+            return result
+
+        self.controller.driver = gc_without_usable_space
+        self.controller.cycle()
+        self.controller.cycle()
+        self.controller.cycle()
+        self.assertEqual([slot for action, slot in self.calls if action == "gc"], ["b", "a"])
+        with self.assertRaisesRegex(CapacityUnavailable, "paused"):
+            self.retention.begin()
+        self.clock.return_value += 300
+        self.controller.refresh()
+        self.controller.cycle()
+        self.clock.return_value += 300
+        self.controller.refresh()
+        self.controller.cycle()
+        self.assertEqual([slot for action, slot in self.calls if action == "gc"], ["b", "a", "b", "a"])
+
+        self.capacity["b"] = 350
+        self.controller.refresh()
+        self.controller.cycle()
+        self.assertEqual(self.retention.begin()["profile"], "harbor-ephemeral-b")

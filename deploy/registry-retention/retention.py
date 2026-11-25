@@ -106,6 +106,9 @@ class Retention:
                 )
             if "prepare_until" not in columns:
                 db.execute("ALTER TABLE publications ADD COLUMN prepare_until INTEGER")
+            maintenance_columns = {row["name"] for row in db.execute("PRAGMA table_info(registry_maintenance)")}
+            if "last_blocked_gc_slot" not in maintenance_columns:
+                db.execute("ALTER TABLE registry_maintenance ADD COLUMN last_blocked_gc_slot TEXT REFERENCES slots(name)")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS publication_slot_state ON publications(slot, state)"
             )
@@ -173,6 +176,8 @@ class Retention:
         publication = uuid.uuid4().hex
         with self.database_session(write=True) as db:
             slot = db.execute("SELECT * FROM slots WHERE state='active'").fetchone()
+            if slot is None:
+                raise CapacityUnavailable("Temporary Registries are paused for capacity maintenance; retry later")
             self.require_write_headroom(db, slot["name"])
             prepare_until = None
             if self.capacity is not None:
@@ -565,11 +570,17 @@ class Retention:
             sample = db.execute("SELECT * FROM registry_capacity WHERE slot=?", (slot,)).fetchone()
             if not self.capacity.available(sample, now):
                 raise CapacityUnavailable("The standby Registry has no verified write headroom")
-        db.execute("UPDATE slots SET state='draining' WHERE state='active'")
+        active = db.execute("SELECT name FROM slots WHERE state='active'").fetchone()
+        if active is not None:
+            self.retire_slot(db, active["name"])
         db.execute("UPDATE slots SET state='active' WHERE name=?", (slot,))
+
+    @staticmethod
+    def retire_slot(db, slot: str):
+        db.execute("UPDATE slots SET state='draining' WHERE name=?", (slot,))
         db.execute(
-            """UPDATE publications SET state='abandoned' WHERE state='new' AND
-            slot IN (SELECT name FROM slots WHERE state='draining')"""
+            "UPDATE publications SET state='abandoned' WHERE slot=? AND state='new'",
+            (slot,),
         )
 
     def seal(self, slot: str):
