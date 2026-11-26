@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
-    "adx-environment==0.1.0rc12",
+    "adx-environment==0.1.0rc13",
     "idna>=3,<4",
     "httpx>=0.27,<1",
     "PyYAML>=6,<7",
