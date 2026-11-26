@@ -12,7 +12,7 @@ PTYs, port forwarding, and reverse tunnels.
   - [Navigation](#navigation)
   - [Install and configure](#install-and-configure)
   - [Create a sandbox](#create-a-sandbox)
-    - [Experimental GPU and writable storage](#experimental-gpu-and-writable-storage)
+    - [Experimental accelerators and writable storage](#experimental-accelerators-and-writable-storage)
     - [Network ACLs](#network-acls)
   - [Sandbox runtimes](#sandbox-runtimes)
   - [Commands](#commands)
@@ -208,7 +208,7 @@ Sandbox(
 )
 ```
 
-### Experimental GPU and writable storage
+### Experimental accelerators and writable storage
 
 Request a whole NVIDIA GPU by type, exact product model, and count:
 
@@ -217,11 +217,19 @@ with Sandbox(xpu="gpu:l20:1") as sandbox:
     print(sandbox.commands.run("nvidia-smi -L").stdout)
 ```
 
-The `type:model:count` value is case-insensitive and canonicalized to lower
-case. The model is required and matched exactly; wildcard models are not
-supported. The bundled backend currently requires the gVisor `runsc` runtime
-and a node configured for gVisor nvproxy. Runtime compatibility is validated
-by the backend rather than the SDK.
+GPU sandboxes use gVisor `runsc` with nvproxy or native `runc` on compatible
+NVIDIA nodes. Physical Ascend 310P and 910 A2/A3 use `runc` on configured
+Linux/amd64 nodes.
+
+```python
+with Sandbox(runtime="runc", xpu="npu:ascend910:1") as sandbox:
+    print(sandbox.commands.run("npu-smi info").stdout)
+```
+
+The SDK normalizes `type:model:count` to lowercase. Use the exact model
+reported by the worker's driver inventory. The backend validates runtime
+support and assigns whole devices. See the
+[accelerator worker setup](../../deploy/README.md#accelerator-workers).
 
 Set the storage scheduling quota and actual writable root filesystem hard limit
 in MiB:
@@ -426,9 +434,9 @@ with Sandbox(
 
 `enableKVM` is owned by the runc backend and requires a usable `/dev/kvm` on
 the selected node. Runc supports OCI/EROFS root filesystems, read-only mounts,
-networking, command execution, and the default writable overlay. Experimental
-GPU requests remain runsc-only; explicit `storage_mb` quotas are supported by
-runsc and Firecracker. See the
+networking, command execution, the default writable overlay, and experimental
+whole-device GPU and NPU requests on compatible workers. Explicit
+`storage_mb` quotas are supported by runsc and Firecracker. See the
 [sandbox runtime comparison](../../src/sandboxd/doc/runtime.md) for the
 runtime capability boundaries.
 

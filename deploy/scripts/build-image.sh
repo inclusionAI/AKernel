@@ -23,6 +23,8 @@ adx_execd_url="${ADX_EXECD_URL:-}"
 adx_execd_sha256="${ADX_EXECD_SHA256:-}"
 otelcol_contrib_url="${OTELCOL_CONTRIB_URL:-}"
 otelcol_contrib_sha256="${OTELCOL_CONTRIB_SHA256:-}"
+ascend_adapter_url="${ASCEND_ADAPTER_AMD64_URL:-}"
+ascend_adapter_sha256="${ASCEND_ADAPTER_AMD64_SHA256:-}"
 # Download routing is caller-local, independent of cloud profiles.
 build_mirror="${AKERNEL_BUILD_MIRROR-official}"
 apt_ubuntu_mirror="${AKERNEL_APT_UBUNTU_MIRROR-}"
@@ -35,6 +37,8 @@ print_component_versions=0
 # Explicit caller values take precedence over values saved in an environment.
 caller_runc_set="${AKERNEL_ENABLE_RUNC+x}"
 caller_runc="${AKERNEL_ENABLE_RUNC-}"
+caller_ascend_set="${AKERNEL_ENABLE_ASCEND+x}"
+caller_ascend="${AKERNEL_ENABLE_ASCEND-}"
 caller_kata_set="${AKERNEL_ENABLE_KATA+x}"
 caller_kata="${AKERNEL_ENABLE_KATA-}"
 caller_firecracker_set="${AKERNEL_ENABLE_FIRECRACKER+x}"
@@ -149,17 +153,22 @@ if [[ -n "${env_name}" && -f "$(state_dir "${env_name}")/config.env" ]]; then
 fi
 
 if [[ -n "${caller_runc_set}" ]]; then AKERNEL_ENABLE_RUNC="${caller_runc}"; fi
+if [[ -n "${caller_ascend_set}" ]]; then AKERNEL_ENABLE_ASCEND="${caller_ascend}"; fi
 if [[ -n "${caller_kata_set}" ]]; then AKERNEL_ENABLE_KATA="${caller_kata}"; fi
 if [[ -n "${caller_firecracker_set}" ]]; then AKERNEL_ENABLE_FIRECRACKER="${caller_firecracker}"; fi
 AKERNEL_ENABLE_RUNC="${AKERNEL_ENABLE_RUNC-false}"
+AKERNEL_ENABLE_ASCEND="${AKERNEL_ENABLE_ASCEND-false}"
 AKERNEL_ENABLE_KATA="${AKERNEL_ENABLE_KATA-true}"
 AKERNEL_ENABLE_FIRECRACKER="${AKERNEL_ENABLE_FIRECRACKER-true}"
-for flag in AKERNEL_ENABLE_RUNC AKERNEL_ENABLE_KATA AKERNEL_ENABLE_FIRECRACKER; do
+for flag in AKERNEL_ENABLE_RUNC AKERNEL_ENABLE_ASCEND AKERNEL_ENABLE_KATA AKERNEL_ENABLE_FIRECRACKER; do
   case "${!flag}" in
     true|false) ;;
     *) die "${flag} must be true or false" ;;
   esac
 done
+if [[ "${AKERNEL_ENABLE_ASCEND}" == true && "${AKERNEL_ENABLE_RUNC}" != true ]]; then
+  die "AKERNEL_ENABLE_ASCEND=true requires AKERNEL_ENABLE_RUNC=true"
+fi
 
 # The manifests, not caller or profile variables, are the release-pin source of
 # truth. Missing fields must stay missing so the preflight checks reject them.
@@ -258,6 +267,9 @@ if [[ "${DOCKER_BUILDKIT-}" == 0 ]]; then
 fi
 
 if [[ "${target_arch}" == arm64 ]]; then
+  if [[ "${AKERNEL_ENABLE_ASCEND}" == true ]]; then
+    die "AKERNEL_ENABLE_ASCEND requires linux/amd64"
+  fi
   if [[ "${firecracker_kernel_profile}" == pvm ]]; then
     die "the PVM guest profile requires linux/amd64"
   fi
@@ -334,6 +346,7 @@ case "${enable_e2b}" in
   *) die "AKERNEL_ENABLE_E2B must be true or false" ;;
 esac
 validate_override OTELCOL_CONTRIB "${otelcol_contrib_url}" "${otelcol_contrib_sha256}"
+validate_override ASCEND_ADAPTER_AMD64 "${ascend_adapter_url}" "${ascend_adapter_sha256}"
 
 case "${build_mirror}" in
   official) ;;
@@ -417,6 +430,7 @@ node_build_args=(
   --build-arg "AKERNEL_RUNTIME_PROFILE=${runtime_profile}"
   --build-arg "AKERNEL_ENABLE_KATA=${AKERNEL_ENABLE_KATA}"
   --build-arg "AKERNEL_ENABLE_RUNC=${AKERNEL_ENABLE_RUNC}"
+  --build-arg "AKERNEL_ENABLE_ASCEND=${AKERNEL_ENABLE_ASCEND}"
   --build-arg "AKERNEL_ENABLE_FIRECRACKER=${AKERNEL_ENABLE_FIRECRACKER}"
   --build-arg "AKERNEL_VERSION=${akernel_version}"
   --build-arg "AKERNEL_REVISION=${akernel_revision}"
@@ -453,6 +467,12 @@ if [[ -n "${otelcol_contrib_url}" || -n "${otelcol_contrib_sha256}" ]]; then
 fi
 if [[ -n "${adx_release_url}" ]]; then
   node_build_args+=(--build-arg "ADX_RELEASE_URL=${adx_release_url}" --build-arg "ADX_RELEASE_SHA256=${adx_release_sha256}")
+fi
+if [[ "${AKERNEL_ENABLE_ASCEND}" == true && -n "${ascend_adapter_url}" ]]; then
+  node_build_args+=(
+    --build-arg "ASCEND_ADAPTER_AMD64_URL=${ascend_adapter_url}"
+    --build-arg "ASCEND_ADAPTER_AMD64_SHA256=${ascend_adapter_sha256}"
+  )
 fi
 docker build \
   --platform "linux/${target_arch}" \

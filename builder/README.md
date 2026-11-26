@@ -169,6 +169,13 @@ The default ADX archives are pinned for AMD64. ARM64 builds require both ADX URL
 
 Each pair is validated before either image build; downloads retain checksum and native ELF architecture checks. A mirror of the same release must use its existing pinned checksum. Runtime versions and gVisor, runc, Firecracker and distill-fs pins continue to come from their existing manifests.
 
+Set `AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true` to include
+[ascend-oci-adapter v0.1.0-rc.4](https://github.com/openYuanrong-mirror/ascend-oci-adapter/releases/tag/v0.1.0-rc.4)
+in a Linux/amd64 image. The image verifies the archive SHA-256 and the
+executable's amd64 ELF header and installs the pinned sandboxd mount profile.
+For an explicit mirror of this release, set both `ASCEND_ADAPTER_AMD64_URL`
+and `ASCEND_ADAPTER_AMD64_SHA256`. Keep the archive layout and pinned version.
+
 Source version/revision labels and artifact URL overrides are declared near their uses so changing those inputs preserves preceding dependency layers.
 
 ### Environment API source builds

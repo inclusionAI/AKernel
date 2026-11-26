@@ -41,6 +41,7 @@ class LocalBackend:
         self.component_dirty = ""
         self.root_dirty = ""
         self.build_failure = False
+        self.ascend_host_failure = False
         self.start_failure = False
         self.stop_failure = False
         self.image_architecture = None
@@ -98,6 +99,10 @@ class LocalBackend:
 
     def run(self, *args):
         self.record("run", args)
+        if Path(args[1]).name == "check-ascend-host.sh":
+            if self.ascend_host_failure:
+                raise manage.Failure("fixture host lacks Ascend drivers")
+            return
         if Path(args[1]).name == "build-image.sh":
             if self.build_failure:
                 raise manage.Failure("fixture build failed")
@@ -292,13 +297,31 @@ class ManageTest(unittest.TestCase):
         self.manager.up()
         build = self.backend.runs("build-image.sh")[0]
         self.assertNotIn("--env", build["args"])
-        for runtime in ("KATA", "FIRECRACKER", "RUNC", "GPU"):
+        for runtime in ("KATA", "FIRECRACKER", "RUNC", "GPU", "ASCEND"):
             self.assertEqual(build["env"][f"AKERNEL_ENABLE_{runtime}"], "false")
         self.assertEqual(build["env"]["AKERNEL_TARGETARCH"], "amd64")
         self.assertNotIn("--runtime-profile", build["args"])
         self.assertNotIn("fixture-private-registry", " ".join(build["args"]))
         self.assertEqual(cloud.read_text(), content)
         self.assertEqual(self.saved_state()["status"], "ready")
+
+    def test_ascend_source_build_requires_runc_amd64_and_host_drivers(self):
+        self.manager.env["AKERNEL_ENABLE_ASCEND"] = "true"
+        with self.assertRaisesRegex(manage.Failure, "requires AKERNEL_ENABLE_RUNC=true"):
+            self.manager.up()
+        self.assert_up_untouched()
+
+        self.manager.env["AKERNEL_ENABLE_RUNC"] = "true"
+        self.backend.info["Architecture"] = "arm64"
+        with self.assertRaisesRegex(manage.Failure, "requires a linux/amd64 Docker engine"):
+            self.manager.up()
+        self.assert_up_untouched()
+
+        self.backend.info["Architecture"] = "x86_64"
+        self.backend.ascend_host_failure = True
+        with self.assertRaisesRegex(manage.Failure, "lacks Ascend drivers"):
+            self.manager.up()
+        self.assert_up_untouched()
 
     def test_explicit_runc_is_forwarded_without_enabling_vm_payloads(self):
         self.manager.env["AKERNEL_ENABLE_RUNC"] = "true"

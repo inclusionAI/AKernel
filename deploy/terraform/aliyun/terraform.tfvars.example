@@ -150,6 +150,9 @@ node_secret_create = true
 # Optional host-kernel runc runtime. The node image must be built with the
 # matching AKERNEL_ENABLE_RUNC=true profile setting.
 enable_runc = false
+# Opt in only after preparing Linux amd64 Ascend workers and labeling them akernel.io/ascend=true.
+enable_ascend = false
+mount_ascend_queue_schedule = false
 
 # Explicit opt-in after qualifying cgroup v2 and the effective memory budget.
 # Standard AliyunLinux3 defaults to cgroup v1; select a qualified v2 node image.

@@ -534,6 +534,10 @@ node:
       # The node image must also be built with AKERNEL_ENABLE_RUNC=true.
       # Sandboxd probes runc and runc-shim before advertising the runtime.
       enableRunc: false
+      # Requires runc, an Ascend image, and Linux amd64 nodes labeled akernel.io/ascend=true.
+      enableAscend: false
+      # Mount FlowGW's existing queue directory on every selected worker.
+      mountAscendQueueSchedule: false
       # pvm selects firecracker-pvm and removes Kata from this node profile.
       # The image must contain the validated PVM guest bundle.
       firecrackerBackend: kvm
@@ -636,3 +640,5 @@ node:
         [plugin.node_resource]
         provider="kubernetes"
         sock_path="/var/run/resource.sock"
+
+        # AKERNEL_XPU_ASCEND

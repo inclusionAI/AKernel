@@ -251,6 +251,38 @@ sampling; Collector rate queries override it to 30 seconds. The 200-point target
 is approximate because Grafana rounds query steps to standard durations. Rate
 windows cover the actual step so wide views preserve bursts between samples.
 
+### Accelerator workers
+
+Experimental NVIDIA GPU sandboxes support runsc with a driver compatible with
+gVisor nvproxy, or native runc with the NVIDIA OCI hook. The Linux/amd64 node
+container needs access to the host NVIDIA devices and driver libraries. The
+amd64 image includes the NVIDIA Container Toolkit hook.
+
+Physical Ascend 310P and 910 A2/A3 use the native runc runtime. Build the
+Linux/amd64 worker image with
+`make build AKERNEL_ENABLE_RUNC=true AKERNEL_ENABLE_ASCEND=true`. The image
+includes the pinned Ascend adapter and sandboxd's trusted mount profile.
+
+Install the Ascend driver on Linux/amd64 hosts with the supported devices
+and the standard `/usr/local/Ascend/driver`, `/usr/local/dcmi`, and
+`/usr/local/bin/npu-smi` paths. Verify `npu-smi info` on each host, then label
+only the prepared nodes `akernel.io/ascend=true`. The Ascend worker DaemonSet
+requires that label and Linux/amd64. Its driver mounts are read-only.
+
+In Helm, set `node.config.sandboxd.enableRunc=true` and
+`node.config.sandboxd.enableAscend=true`. Prefix both keys with `core.` in the
+umbrella chart. Custom sandboxd TOML retains the `# AKERNEL_XPU_ASCEND` marker.
+For Terraform on Aliyun or Huawei Cloud, set `enable_runc = true` and
+`enable_ascend = true` and select the Ascend node image. Guided configuration
+uses `make config ENABLE_RUNC=true ENABLE_ASCEND=true`. Use node-pool labels
+or label qualified existing nodes before rolling out the chart.
+
+When FlowGW supplies `/var/queue_schedule` on every selected node, enable the
+read-only mount with `node.config.sandboxd.mountAscendQueueSchedule=true` in
+Helm or `mount_ascend_queue_schedule = true` in Terraform. Guided profiles
+expose `MOUNT_ASCEND_QUEUE_SCHEDULE=true`. ADX obtains the accelerator inventory
+from the sandboxd resource socket on each worker.
+
 ### Runc worker preparation and recovery
 
 With `node.config.sandboxd.enableRunc=true`

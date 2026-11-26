@@ -39,6 +39,10 @@ case "${role}" in
                 ;;
             *) echo "AKERNEL_FIRECRACKER_BACKEND must be kvm or pvm" >&2; exit 1 ;;
         esac
+        # Refresh the loader cache after the read-only host driver mounts are available.
+        if [[ -f /etc/ld.so.conf.d/akernel-ascend.conf && -d /usr/local/Ascend/driver/lib64 ]]; then
+            ldconfig -X
+        fi
         ;;
 esac
 

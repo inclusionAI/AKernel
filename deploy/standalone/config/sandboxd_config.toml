@@ -98,3 +98,5 @@ cgroup_memory_limit="64GiB"
 [plugin.node_resource]
 provider="cgroup"
 sock_path="/var/run/resource.sock"
+
+# AKERNEL_XPU_ASCEND

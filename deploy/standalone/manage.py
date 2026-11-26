@@ -116,13 +116,19 @@ class Manager:
         return revision, actual
 
     def configure(self, arch):
-        for name in ("RUNC", "KATA", "FIRECRACKER", "GPU"):
+        for name in ("RUNC", "KATA", "FIRECRACKER", "GPU", "ASCEND"):
             key = f"AKERNEL_ENABLE_{name}"
             self.env.setdefault(key, "false")
             if self.env[key] not in ("true", "false"):
                 raise Failure(f"{key} must be true or false")
         if arch == "arm64" and any(self.env[f"AKERNEL_ENABLE_{name}"] != "false" for name in ("KATA", "FIRECRACKER", "GPU")):
             raise Failure("ARM64 requires Kata, Firecracker and GPU disabled")
+        if self.env["AKERNEL_ENABLE_ASCEND"] == "true":
+            if self.env["AKERNEL_ENABLE_RUNC"] != "true":
+                raise Failure("AKERNEL_ENABLE_ASCEND=true requires AKERNEL_ENABLE_RUNC=true")
+            if arch != "amd64":
+                raise Failure("AKERNEL_ENABLE_ASCEND requires a linux/amd64 Docker engine")
+            self.run("bash", str(self.directory / "check-ascend-host.sh"))
         if self.env.get("RUNTIME_PROFILE", "execd") != "execd":
             raise Failure("source standalone uses the Execd runtime profile")
         # Keep pulls and launches native as well as the source image build.
