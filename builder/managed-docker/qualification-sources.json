@@ -32,9 +32,9 @@
   },
   "native_adx_sdk": {
     "package": "adx-environment",
-    "version": "0.1.0rc12",
-    "publication_commit": "88ef14a81ecfb8d676d91c4006ef85eb2430a13d",
-    "package_source_commit": "88ef14a81ecfb8d676d91c4006ef85eb2430a13d",
+    "version": "0.1.0rc13",
+    "publication_commit": "b739839e00e15c15dc7a42ff70b5682d4c5d3cdb",
+    "package_source_commit": "b739839e00e15c15dc7a42ff70b5682d4c5d3cdb",
     "note": "The package index dependency is pinned in sdk/python/pyproject.toml."
   },
   "afs_enabled": true,
