@@ -60,7 +60,8 @@ During GC, workers keep pulling retained digests from A's original endpoint.
   It prunes eligible entries in batches and SQLite reuses the space. Live
   holds, pending writes and unconfirmed cleanups stay in the ledger.
   Leave `auto_delete` false to inspect candidates during rollout.
-- Run one service replica with `retention.py`, `registry.py` and `capacity.py` on a private
+- Run one service replica with `retention.py`, `registry.py`, `capacity.py` and
+  `checkpoint_archive.py` on a private
   HTTPS endpoint. Mount the SQLite directory on an independent persistent
   volume. Mount separate credentials for the trusted Harbor runner, the ADX
   instance observer, and the Registry token issuers. The ADX observer must be
@@ -71,7 +72,8 @@ During GC, workers keep pulling retained digests from A's original endpoint.
   `AKERNEL_IMAGE_RETENTION_TOKEN_FILE` in the runner's environment with the
   trusted CA installed. Keep temporary references within that runner's
   AKernel SDK admission path. Use the ordinary durable profile for Compose,
-  reusable snapshots, and independent image consumers.
+  independent image consumers, and reusable snapshots on deployments without
+  the checkpoint archive.
 
 ```sh
 python3 retention.py --config /etc/retention/config.json \
@@ -89,6 +91,125 @@ Inspect `status` for unresolved holds. Use `cancel-hold --confirmed-absent`
 for a create known never to have started. An operator who verifies physical
 teardown of an existing sandbox can use `release-hold --confirmed-stopped`.
 The latter also checks that the instance is absent from ADX.
+
+## Harbor single-Dockerfile checkpoints
+
+Existing Harbor jobs can keep `managed_runtime_profile: harbor-v1`. Upgrade the
+centrally managed runner SDK and set `AKERNEL_HARBOR_V1_TEMPORARY_IMAGES=1`
+alongside its existing retention origin and dedicated runner token file. The
+SDK selects the current writable A/B profile for single-Dockerfile
+`build_image` calls. The shared BuildKit endpoint and tools image stay the
+same. The service defaults to a 24-hour TTL, and operators can set
+`default_ttl_seconds` and `max_ttl_seconds`. SDK callers can supply
+`ttl_seconds` for individual builds. Capacity LRU continues to follow the
+temporary Registry policy below.
+
+Compose uses its managed runtime profile directly and keeps its existing
+publication path. A running Compose collection uses node-local immutable
+image roots and checkpoint pins. Cross-worker recovery of those collections
+is outside this archive. Unmodified runners and `harbor-v2` continue to use
+their configured persistent path. This rollout only covers checkpoints
+created with the archive enabled. Historical images and checkpoints require
+an independent cleanup decision.
+
+Before a new checkpoint can become Ready, sandboxd coordinates an archive
+copy while the temporary publication is pinned. The service preserves
+original OCI index, manifest, config and blob bytes, verifies every object's
+size and SHA-256, and checks each Nydus bootstrap blob table against the
+archived descriptors with `nydus-image inspect --request blobs`. It writes
+`akernel-image-archive.json` into the staged checkpoint on JuiceFS. Agent DX
+seals and publishes that directory through the existing snapshot API.
+Restoration uses the receipt and a worker-scoped runtime lease to read the
+verified image through the private read-only Registry API, including Nydus
+byte ranges. It can use the archive after both temporary Registry endpoints
+and worker caches lose the original image.
+
+```mermaid
+flowchart LR
+    H["Harbor runner<br/>harbor-v1"]
+    B["Shared BuildKit"]
+    T["Temporary Registry A/B<br/>TTL and LRU"]
+    W["sandboxd<br/>capture and restore"]
+    R["Checkpoint image archive<br/>verified OCI and Nydus objects"]
+    J["JuiceFS<br/>OCI objects and checkpoint receipt"]
+    D["Agent DX<br/>checkpoint Ready"]
+    H --> B --> T
+    H --> W
+    T -->|"Original digest, pinned during copy"| R
+    W -->|"Request archive before capture returns"| R
+    R --> J
+    J -->|"Seal checkpoint directory"| D
+    W -->|"Cold restore by digest"| R
+    classDef archive fill:#ffedd5,stroke:#ea580c,color:#431407
+    classDef entry fill:#dbeafe,stroke:#2563eb,color:#172554
+    class R,J archive
+    class H,W entry
+```
+
+Configure this optional block in the retention service JSON.
+
+```json
+{
+  "checkpoint_archive": {
+    "mount": "/mnt/akernel-shared",
+    "checkpoint_artifacts": "/mnt/akernel-shared/akernel/checkpoints/artifacts",
+    "root": "/mnt/akernel-shared/akernel/checkpoint-images",
+    "volume_identity": "hk-checkpoint-archive-01",
+    "registry_origin": "https://image-retention.private.example",
+    "worker_token_file": "/etc/retention/worker-token",
+    "registry_token_file": "/etc/retention/archive-pull-token",
+    "nydus_image": "/usr/local/bin/nydus-image",
+    "auto_delete": false
+  }
+}
+```
+
+- Mount the same JuiceFS dataset on the service, worker and Coordinator.
+  The service verifies the `fuse.juicefs` mount and the value in
+  `.akernel-checkpoint-archive-volume` at its root. Create this marker on the
+  mounted dataset. The service needs permission to read and write the ADX
+  checkpoint artifact directories. Use a Nydus inspector compatible with
+  the BuildKit exporter and allow private HTTPS from workers to this origin.
+  Trust its CA in sandboxd and the Nydus client. Populate the exact archive
+  Registry authority in each worker's existing `registry_auths.json`. Use
+  username `akernel-checkpoint` and the password from `registry_token_file`,
+  with the Docker `auth` field set to base64 of username and password joined
+  with a colon. Keep the pull credential distinct from the worker control
+  token, the runner token and ADX credentials. Archive pulls use the private
+  origin directly, with TLS verification and the exact authority's
+  credentials. Normal Registries keep their separate proxy policy.
+- Run a single writable archive service replica on the existing SQLite PVC.
+  Mount and initialize the native distributed checkpoint store before
+  starting the archive service. Back up the archive ledger and JuiceFS
+  dataset together. The ledger binds to the native checkpoint store scope
+  and the archive volume identity. Keep the local sandboxd lease directory
+  beside its store on the worker's persistent disk so it survives pod
+  replacement. An unreachable worker or missing disk requires confirmed
+  decommissioning before an unresolved archive lease can be removed.
+- Set `adx.checkpointStorage.kind=distributed_fs` and enable
+  `adx.checkpointImageArchive` with its private `origin` and a worker-only
+  `existingSecret` containing the configured `tokenKey`. Use runsc full
+  checkpoint mode for JuiceFS. The chart's worker init container verifies that
+  the pinned sandboxd binary supports the archive. Grant A/B build profiles
+  to the approved runner tenant. Deploy the archive service and update the
+  complete eligible worker pool before enabling temporary routing on the
+  runner.
+- Canary the runner using its existing `harbor-v1` job configuration and a
+  short TTL in an isolated deployment. Verify a post-TTL read, Ready checkpoint
+  creation, actual temporary Registry GC, and cold-worker restoration. After
+  proving reference cleanup, set archive `auto_delete` to true. An archive
+  object is unlinked only after ADX removes the referenced checkpoint artifacts
+  and sandboxd confirms deletion of its last runtime users. Shared objects
+  remain until all referring digests are gone. JuiceFS trash retention and
+  chunk cleanup determine when those unlinks return backend storage bytes.
+- To revert publication, remove the runner flag or roll back the runner.
+  Newly submitted `harbor-v1` jobs use the original persistent profile again.
+  Keep the worker integration, same private origin and JuiceFS/SQLite storage
+  available for archive-backed checkpoints and running restores until their
+  references have been released. Existing archive-capable SDKs can still
+  capture or restore these checkpoints while new builds use durable images.
+  Keep A/B available while in-flight builds and original temporary image
+  uses drain.
 
 ## Capacity management
 

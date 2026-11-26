@@ -140,6 +140,12 @@ spec:
           volumeMounts:
             - {name: runc-host-modules, mountPath: /host/lib, readOnly: true}
         {{- end }}
+        {{- if .Values.adx.checkpointImageArchive.enabled }}
+        - name: verify-checkpoint-image-archive
+          image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
+          imagePullPolicy: {{ include "core.image.pullPolicy" (dict "root" . "image" .Values.node.image) }}
+          command: [/usr/local/bin/sandboxd, -supports-checkpoint-image-archive]
+        {{- end }}
         {{- if or (has .Values.adx.checkpointStorage.kind (list "s3" "distributed_fs")) (eq .Values.node.config.sandboxd.runscCheckpointMode "reflink") }}
         - name: prepare-checkpoint-storage
           image: "{{ include "core.image" (dict "root" . "image" .Values.node.image) }}"
@@ -350,6 +356,11 @@ spec:
         {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
         - {{ include "core.checkpointMount" . | nindent 10 | trim }}
         {{- end }}
+        {{- if .Values.adx.checkpointImageArchive.enabled }}
+        - name: checkpoint-image-archive
+          mountPath: /etc/akernel/checkpoint-image-archive
+          readOnly: true
+        {{- end }}
         - mountPath: /home/akernel
           name: home-disk
           {{- if not .Values.node.homeDisk.useEphemeralPVC }}
@@ -390,6 +401,15 @@ spec:
       {{- end }}
       {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
       - {{ include "core.checkpointVolume" . | nindent 8 | trim }}
+      {{- end }}
+      {{- if .Values.adx.checkpointImageArchive.enabled }}
+      - name: checkpoint-image-archive
+        secret:
+          secretName: {{ .Values.adx.checkpointImageArchive.existingSecret | quote }}
+          defaultMode: 0400
+          items:
+            - key: {{ .Values.adx.checkpointImageArchive.tokenKey | quote }}
+              path: worker-token
       {{- end }}
       - name: akernel-secrets
         secret:

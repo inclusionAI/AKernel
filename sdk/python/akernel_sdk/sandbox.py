@@ -507,7 +507,17 @@ class Sandbox:
         if self._closed or self._session is None:
             raise RuntimeError("cannot snapshot a closed sandbox")
         if temporary_reference(self._image):
-            raise ValueError("Snapshots require a long-lived image")
+            message = (
+                "The checkpoint image archive is unavailable. "
+                "Snapshots require a long-lived image or a configured archive."
+            )
+            try:
+                retention = self._image_hold[0] if self._image_hold else Retention()
+            except (OSError, ValueError) as exc:
+                raise ValueError(message) from exc
+            capabilities = retention.request("archive-capabilities")
+            if capabilities.get("checkpoint_archive") is not True:
+                raise ValueError(message)
         return self._session.create_snapshot(name, timeout)
 
     def fork(

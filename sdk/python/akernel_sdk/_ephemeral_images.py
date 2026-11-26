@@ -14,7 +14,12 @@ import httpx
 from ._backends.errors import BackendOperationError, ServiceBusyException
 
 PROFILE = "harbor-ephemeral"
+HARBOR_PROFILE = "harbor-v1"
 _REPOSITORY = re.compile(r"akernel-ephemeral/[0-9a-f]{32}/service-0")
+
+
+def harbor_uses_checkpoint_archive() -> bool:
+    return os.environ.get("AKERNEL_HARBOR_V1_TEMPORARY_IMAGES") == "1"
 
 
 def temporary_reference(image: str | None) -> bool:
@@ -69,6 +74,8 @@ class Retention:
                 trust_env=False,
                 timeout=15,
             )
+            if action == "archive-capabilities" and response.status_code == 404:
+                return {"checkpoint_archive": False}
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise BackendOperationError("Image retention request failed") from exc

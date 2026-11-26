@@ -92,7 +92,29 @@ class SandboxTest(unittest.TestCase):
                 rpc.call_args.kwargs,
                 {"hold": "use-1", "environment_id": sandbox.id},
             )
-            self.assertEqual(rpc.call_count, 3)
+            self.assertEqual(rpc.call_count, 4)
+
+    def test_temporary_image_snapshot_requires_archive_capability(self):
+        reference = (
+            f"registry.test/akernel-ephemeral/{'c' * 32}/service-0@sha256:{'a' * 64}"
+        )
+        with (
+            patch.dict(os.environ, {"AKERNEL_HARBOR_V1_TEMPORARY_IMAGES": "0"}),
+            patch.object(sandbox_module, "Retention") as retention,
+        ):
+            rpc = retention.return_value.request
+            rpc.return_value = {"id": "use-1"}
+            sandbox = Sandbox(image=reference)
+            rpc.return_value = {"checkpoint_archive": False}
+            with self.assertRaisesRegex(ValueError, "archive is unavailable"):
+                sandbox.create_snapshot()
+            self.session.create_snapshot.assert_not_called()
+            rpc.return_value = {"checkpoint_archive": True}
+            self.assertIs(
+                sandbox.create_snapshot("build", timeout=120),
+                self.session.create_snapshot.return_value,
+            )
+            self.session.create_snapshot.assert_called_once_with("build", 120)
 
     def test_regular_image_in_temporary_namespace_uses_standard_lifecycle(self):
         image = "registry.test/akernel-ephemeral/python:3.12"

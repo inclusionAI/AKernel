@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._backends.errors import BackendOperationError, retain_failure_context
-from ._ephemeral_images import PROFILE, Retention
+from ._ephemeral_images import (
+    HARBOR_PROFILE,
+    PROFILE,
+    Retention,
+    harbor_uses_checkpoint_archive,
+)
 
 if TYPE_CHECKING:
     from .sandbox import Sandbox
@@ -111,12 +116,19 @@ def build_image(
             raise ValueError(f"{name} must be a positive integer")
     retention = None
     publication = None
-    if profile == PROFILE:
+    unified = profile == HARBOR_PROFILE and harbor_uses_checkpoint_archive()
+    if profile == PROFILE or unified:
         if ttl_seconds is not None and (
             type(ttl_seconds) is not int or ttl_seconds < 1
         ):
             raise ValueError("ttl_seconds must be a positive integer")
         retention = Retention()
+        if (
+            unified
+            and retention.request("archive-capabilities").get("checkpoint_archive")
+            is not True
+        ):
+            raise BackendOperationError("The harbor-v1 image archive is unavailable")
         publication = retention.request("begin", ttl_seconds=ttl_seconds)
         profile = publication["profile"]
     elif isinstance(profile, str) and profile.startswith(PROFILE + "-"):
