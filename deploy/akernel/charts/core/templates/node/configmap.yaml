@@ -53,6 +53,7 @@ data:
 {{- end }}
 {{- $sandboxdConfig = regexReplaceAll "(?m)^([\\t ]*)filestore_dir_size=.*# AKERNEL_NATIVE_FILESTORE$" $sandboxdConfig "${1}filestore_dir_size=\"\" # Native node filesystem" }}
 {{- end }}
+{{- $sandboxdConfig = include "akernel.sandboxdRuntimeTuning" (dict "config" $sandboxdConfig "tuning" .Values.node.config.sandboxd.runtimeTuning) }}
 {{- $firecrackerBackend := .Values.node.config.sandboxd.firecrackerBackend | default "kvm" }}
 {{- if not (has $firecrackerBackend (list "kvm" "pvm")) }}
 {{- fail "node.config.sandboxd.firecrackerBackend must be kvm or pvm" }}

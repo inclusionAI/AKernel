@@ -278,6 +278,16 @@ stricter cap is retained. This aggregate sandbox cap does not bound all node
 components or guarantee avoidance of host OOM.
 See `deploy/README.md#aggregate-sandbox-memory-budget` for migration and scope.
 
+The optional native Firecracker snapshot-cache budget uses standalone
+`AKERNEL_FIRECRACKER_CHECKPOINT_MEMORY_MAX_BYTES` or Helm
+`node.config.sandboxd.runtimeTuning.firecrackerCheckpointMemoryMaxBytes`.
+It requires a matching sandboxd image and cgroup v2. Include this separate
+outside-parent allowance in the selected total reserve; preserve stricter
+existing kernel limits and do not present it as a disk quota or a cap on every
+checkpoint allocation. The standalone guide owns integer/decimal-string input
+and migration details. Keep YAML byte counts exact rather than silently
+converting large float values into a different budget.
+
 The [standalone guide](./deploy/standalone/README.md) owns source startup, supported platforms, runtime selection, and SDK setup. Preserve the source launcher's native-daemon architecture selection, clean sandboxd gitlink check, occupied-name preflight, profile locking, unique source image, and node/gateway health checks. Status and stop must verify recorded container identities, images, and data mounts; stop also requires an empty sandbox inventory. Source management is independent of cloud profiles and must preserve unrelated containers.
 
 The all-in-one image and node launchers declare lowercase `container=oci`
