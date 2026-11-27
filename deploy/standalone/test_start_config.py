@@ -61,6 +61,7 @@ class StartConfigTest(unittest.TestCase):
             SANDBOXD_CONFIG_FILE=str(self.config_output),
             AKERNEL_NAT_BACKEND="iptables",
             AKERNEL_ENABLE_RUNC="true",
+            AKERNEL_ENABLE_ASCEND="false",
             AKERNEL_FIRECRACKER_BACKEND="kvm",
             AKERNEL_PVM_MEMORY_LIMIT_ENABLED="false",
             AKERNEL_RUNC_RESOLV_CONF=str(self.source),
@@ -115,6 +116,24 @@ class StartConfigTest(unittest.TestCase):
         result = self.generate(AKERNEL_ENABLE_RUNC="false")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_memory_config("false", "16GiB")
+
+    def test_ascend_is_opt_in_and_preserves_dns_and_resource_socket(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                result = self.generate(AKERNEL_ENABLE_ASCEND=str(enabled).lower())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                plugin = tomllib.loads(self.config_output.read_text())["plugin"]
+                if enabled:
+                    self.assertEqual(plugin["xpu"]["ascend"], {
+                        "enabled": True,
+                        "adapter": "/usr/local/libexec/akernel/ascend-oci-adapter",
+                        "mount_profile": "/etc/akernel/ascend/mounts.json",
+                    })
+                else:
+                    self.assertNotIn("xpu", plugin)
+                self.assertEqual(plugin["node_resource"]["sock_path"], "/var/run/resource.sock")
+                self.assertEqual(self.resolver_output.read_text(), self.resolver_content)
+                self.assertEqual(plugin["runtime"]["direct_resolv_conf_path"], DIRECT_PATH.strip('"'))
 
     def test_generated_config_preserves_explicit_memory_policy_overrides(self):
         original = self.template.read_text()

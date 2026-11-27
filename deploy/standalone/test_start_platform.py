@@ -62,6 +62,7 @@ class StartPlatformTest(unittest.TestCase):
             MOCK_ENGINE="linux/aarch64", MOCK_IMAGE="linux/arm64",
             MOCK_TRAEFIK_IMAGE="linux/arm64",
             MOCK_KATA="false", MOCK_FIRECRACKER="false", MOCK_RUNC="true",
+            MOCK_ASCEND="true", MOCK_ASCEND_HOST_STATUS="0",
             MOCK_LOCAL_IMAGE="true", MOCK_PROBE_STATUS="0",
             MOCK_CALLS=str(self.calls),
         )
@@ -79,6 +80,12 @@ log_warn() { printf '%s\n' "$1" >&2; }
 log_error() { printf '%s\n' "$1" >&2; }
 uname() { printf '%s\n' "$MOCK_HOST"; }
 hostname() { printf 'fixture-host\n'; }
+bash() {
+    if [[ "$1" == "$SCRIPT_DIR/check-ascend-host.sh" ]]; then
+        return "$MOCK_ASCEND_HOST_STATUS"
+    fi
+    command bash "$@"
+}
 id() { printf '0\n'; }
 modprobe() { record modprobe "$@"; printf 'linux-modprobe\n' >&2; return 42; }
 docker() {
@@ -107,6 +114,7 @@ docker() {
                 *org.akernel.kata.enabled*) printf '%s\n' "$MOCK_KATA" ;;
                 *org.akernel.firecracker.enabled*) printf '%s\n' "$MOCK_FIRECRACKER" ;;
                 *org.akernel.runc.enabled*) printf '%s\n' "$MOCK_RUNC" ;;
+                *org.akernel.ascend.enabled*) printf '%s\n' "$MOCK_ASCEND" ;;
                 *) return 2 ;;
             esac
             ;;
@@ -137,7 +145,7 @@ GPU_RUN_ARGS=()
             "validate_container_proxy", "configure_container_proxy",
             "validate_host_platform", "validate_image_platform",
             "validate_image_capabilities", "prepare_host_network_modules",
-            "configure_afs", "start_node_container",
+            "configure_afs", "configure_ascend", "start_node_container",
         )
         functions = "\n".join(
             function_from(STANDALONE_DIR / "start.sh", name) for name in names
@@ -182,6 +190,39 @@ show_status() { record stage show_status; }
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("AKERNEL_PVM_MEMORY_LIMIT_ENABLED must be true or false", result.stderr)
         self.assert_no_profile_mutation()
+
+    def test_invalid_ascend_opt_in_is_rejected_before_profile_mutation(self):
+        cases = (
+            ({"AKERNEL_ENABLE_ASCEND": ""}, "must be true or false"),
+            ({"AKERNEL_ENABLE_ASCEND": "yes"}, "must be true or false"),
+            ({"AKERNEL_ENABLE_RUNC": "false"}, "requires AKERNEL_ENABLE_RUNC=true"),
+            ({"MOCK_ASCEND_HOST_STATUS": "42"}, ""),
+            ({"MOCK_ENGINE": "linux/arm64"}, "requires a native linux/amd64 Docker engine"),
+            ({"MOCK_IMAGE": "linux/arm64"}, "requires a linux/amd64 image"),
+            ({"MOCK_ASCEND": "false"}, "requires an image built with the Ascend payload"),
+        )
+        for changes, message in cases:
+            with self.subTest(changes=changes):
+                self.calls.unlink(missing_ok=True)
+                environment = {
+                    "AKERNEL_ENABLE_ASCEND": "true", "MOCK_HOST": "Linux",
+                    "MOCK_ENGINE": "linux/x86_64", "MOCK_IMAGE": "linux/amd64",
+                } | changes
+                result = self.run_main(**environment)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assert_no_profile_mutation()
+
+    def test_ascend_container_mounts_driver_sources_read_only(self):
+        result = self.run_script(
+            "configure_ascend\nstart_node_container",
+            AKERNEL_ENABLE_ASCEND="true", MOCK_HOST="Linux", MOCK_ENGINE="linux/x86_64",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = next(call for call in self.recorded_calls() if call[:2] == ["docker", "run"])
+        self.assertIn("AKERNEL_ENABLE_ASCEND=true", run)
+        for path in ("/usr/local/Ascend/driver", "/usr/local/dcmi", "/usr/local/bin/npu-smi"):
+            self.assertIn(f"type=bind,src={path},dst={path},readonly", run)
 
     def test_native_runc_uses_only_disposable_capability_probe(self):
         result = self.run_script(

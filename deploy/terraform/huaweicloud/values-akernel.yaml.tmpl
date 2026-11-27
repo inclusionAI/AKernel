@@ -114,6 +114,8 @@ node:
       cpuQuota: "100%"
     sandboxd:
       enableRunc: ${enable_runc}
+      enableAscend: ${enable_ascend}
+      mountAscendQueueSchedule: ${mount_ascend_queue_schedule}
       runscCheckpointMode: ${jsonencode(runsc_checkpoint_mode)}
       nativeFilestore: ${native_filestore}
       chunkDbSize: ${jsonencode(chunk_db_size)}
@@ -208,6 +210,8 @@ node:
         [plugin.node_resource]
         provider="kubernetes"
         sock_path="/var/run/resource.sock"
+
+        # AKERNEL_XPU_ASCEND
 
 coordinator:
   image:

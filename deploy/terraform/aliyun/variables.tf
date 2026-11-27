@@ -380,6 +380,18 @@ variable "enable_runc" {
   default     = false
 }
 
+variable "enable_ascend" {
+  type        = bool
+  description = "Enable Ascend on Linux amd64 runc workers labeled akernel.io/ascend=true. Requires an Ascend-enabled node image."
+  default     = false
+}
+
+variable "mount_ascend_queue_schedule" {
+  type        = bool
+  description = "Bind-mount the existing /var/queue_schedule directory read-only on all selected Ascend workers."
+  default     = false
+}
+
 variable "node_home_use_csi_ephemeral" {
   type        = bool
   description = "Mount /home/akernel from a per-node CSI ephemeral volume instead of hostPath /home/akernel."

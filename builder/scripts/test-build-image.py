@@ -37,11 +37,53 @@ AMBIENT_BUILD_NAMES = (
 )
 AMBIENT_BUILD_PREFIXES = (
     "AKERNEL_", "ADX_EXECD_", "OPEN_YR_CORE_", "ADX_", "GVISOR_", "RUNC_",
-    "FIRECRACKER_", "DISTILL_FS_", "BASH_FUNC_",
+    "FIRECRACKER_", "DISTILL_FS_", "ASCEND_ADAPTER_", "BASH_FUNC_",
 )
 
 
 class BuildImageTests(unittest.TestCase):
+    def test_ascend_only_changes_node_build_arguments(self):
+        self.write_profile(AKERNEL_ENABLE_RUNC="true", AKERNEL_ENABLE_ASCEND="true")
+        overrides = {
+            "AKERNEL_TARGETARCH": "amd64",
+            "ASCEND_ADAPTER_AMD64_URL": "https://example.test/ascend.tar.gz",
+            "ASCEND_ADAPTER_AMD64_SHA256": "5" * 64,
+        }
+        result = self.run_helper("--env", "test", **overrides)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        runtime, node = map(self.build_arguments, self.docker_calls())
+        self.assertNotIn("AKERNEL_ENABLE_ASCEND", runtime)
+        self.assertEqual(node["AKERNEL_ENABLE_ASCEND"], "true")
+        self.assertEqual(node["AKERNEL_ENABLE_RUNC"], "true")
+        for key in ("ASCEND_ADAPTER_AMD64_URL", "ASCEND_ADAPTER_AMD64_SHA256"):
+            self.assertNotIn(key, runtime)
+            self.assertEqual(node[key], overrides[key])
+        self.calls.unlink()
+
+        result = self.run_helper("--env", "test", AKERNEL_ENABLE_ASCEND="false", **overrides)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        node = self.build_arguments(self.docker_calls()[-1])
+        self.assertEqual(node["AKERNEL_ENABLE_ASCEND"], "false")
+        self.assertNotIn("ASCEND_ADAPTER_AMD64_URL", node)
+
+    def test_invalid_ascend_build_flags_fail_before_either_build(self):
+        cases = (
+            ({"AKERNEL_ENABLE_ASCEND": ""}, "must be true or false"),
+            ({"AKERNEL_ENABLE_RUNC": "false"}, "requires AKERNEL_ENABLE_RUNC=true"),
+            ({"AKERNEL_TARGETARCH": "arm64"}, "requires linux/amd64"),
+            ({"ASCEND_ADAPTER_AMD64_URL": "https://example.test/ascend.tar.gz"},
+             "must be set together"),
+            ({"ASCEND_ADAPTER_AMD64_URL": "https://example.test/ascend.tar.gz",
+              "ASCEND_ADAPTER_AMD64_SHA256": "bad"}, "64-character hexadecimal digest"),
+        )
+        for changes, message in cases:
+            with self.subTest(changes=changes):
+                environment = {"AKERNEL_ENABLE_ASCEND": "true", "AKERNEL_TARGETARCH": "amd64"}
+                result = self.run_helper(**(environment | changes))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout)
+                self.assertFalse(self.docker_calls())
+
     def test_runtime_selection_is_forwarded_to_the_node_build(self):
         for enabled, expected, target in ((None, "execd", "runtime-execd"),
                                           ("false", "execd", "runtime-execd"),

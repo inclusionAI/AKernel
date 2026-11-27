@@ -1,4 +1,14 @@
 {{- $runtimePin := .Values.node.runtimeRootfsPin | default dict }}
+{{- $ascendPaths := list }}
+{{- if .Values.node.config.sandboxd.enableAscend }}
+{{- $ascendPaths = list
+    (dict "name" "ascend-driver" "path" "/usr/local/Ascend/driver" "type" "Directory")
+    (dict "name" "ascend-dcmi" "path" "/usr/local/dcmi" "type" "Directory")
+    (dict "name" "ascend-npu-smi" "path" "/usr/local/bin/npu-smi" "type" "File") }}
+{{- if .Values.node.config.sandboxd.mountAscendQueueSchedule }}
+{{- $ascendPaths = append $ascendPaths (dict "name" "ascend-queue-schedule" "path" "/var/queue_schedule" "type" "Directory") }}
+{{- end }}
+{{- end }}
 {{- if $runtimePin.enabled }}
 {{- if and ($runtimePin.currentExecdSha256 | default "") (not (regexMatch "^[a-f0-9]{64}$" $runtimePin.currentExecdSha256)) }}
 {{- fail "runtimeRootfsPin.currentExecdSha256 must be a separately qualified SHA256" }}
@@ -68,6 +78,14 @@ spec:
       {{- end }}
       {{- $_ := set $selector $key $value }}
       {{- end }}
+      {{- if .Values.node.config.sandboxd.enableAscend }}
+      {{- range $key, $value := dict "akernel.io/ascend" "true" "kubernetes.io/arch" "amd64" "kubernetes.io/os" "linux" }}
+      {{- if and (hasKey $selector $key) (ne (toString (index $selector $key)) $value) }}
+      {{- fail (printf "Ascend requires worker nodeSelector %s=%s" $key $value) }}
+      {{- end }}
+      {{- $_ := set $selector $key $value }}
+      {{- end }}
+      {{- end }}
       {{- with $selector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -118,6 +136,12 @@ spec:
             - /bin/sh
             - -ec
             - |
+              {{- if .Values.node.config.sandboxd.enableAscend }}
+              if [ ! -x /usr/local/libexec/akernel/ascend-oci-adapter ] || [ ! -r /etc/akernel/ascend/mounts.json ]; then
+                echo "Ascend workers require an image built with AKERNEL_ENABLE_ASCEND=true" >&2
+                exit 1
+              fi
+              {{- end }}
               for filesystem in overlay erofs; do
                 if grep -Eq "(^|[[:space:]])${filesystem}$" /proc/filesystems; then
                   continue
@@ -347,6 +371,11 @@ spec:
         - mountPath: /home/akernel/sandboxd/config.toml
           name: akernel-node-config
           subPath: sandboxd_config.toml
+        {{- range $ascendPaths }}
+        - mountPath: {{ .path }}
+          name: {{ .name }}
+          readOnly: true
+        {{- end }}
         {{- if eq .Values.adx.checkpointStorage.kind "distributed_fs" }}
         - {{ include "core.checkpointMount" . | nindent 10 | trim }}
         {{- end }}
@@ -374,6 +403,12 @@ spec:
       tolerations:
       - operator: "Exists"
       volumes:
+      {{- range $ascendPaths }}
+      - name: {{ .name }}
+        hostPath:
+          path: {{ .path }}
+          type: {{ .type }}
+      {{- end }}
       {{- if .Values.node.config.sandboxd.enableRunc }}
       - name: runc-host-modules
         hostPath: {path: /lib, type: Directory}
