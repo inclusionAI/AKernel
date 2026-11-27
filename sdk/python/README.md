@@ -1804,7 +1804,11 @@ under disk pressure once a consumer has finished and the idle grace has passed.
 When capacity admission is enabled, a busy Registry returns
 `ServiceBusyException` with code `REGISTRY_CAPACITY_UNAVAILABLE` and outcome
 `not_started`. Queue or retry that build after capacity becomes available.
-Use a long-lived profile for Compose and reusable snapshots. [Operator setup and recovery](../../deploy/registry-retention/README.md)
+Use the ordinary durable path for Compose. Operators can route existing
+`harbor-v1` single-Dockerfile builds to the temporary Registries with the
+runner's `AKERNEL_HARBOR_V1_TEMPORARY_IMAGES=1` setting. Where the checkpoint
+archive is configured, reusable snapshots can capture previously registered
+temporary images independently of that setting. [Operator setup and recovery](../../deploy/registry-retention/README.md)
 
 Optional `cpu_request` (millicores) and `memory_request` (MiB) change only the
 temporary preparation sandbox's scheduling reservation. Each request must be a

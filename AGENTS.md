@@ -846,6 +846,8 @@ maintenance targets. Capacity maintenance fences the retired volume through
 the deployment driver before GC. Pressure eviction covers only opted-in
 publications after confirmed use and the idle grace. [Temporary image retention](deploy/registry-retention/README.md)
 
+The opt-in Harbor `harbor-v1` build routing flag applies only to single-Dockerfile builds. Snapshot capture for a registered temporary image checks the archive capability independently of the runner publication flag. The archive requires matching sandboxd and AKernel changes, a private authenticated Nydus registry endpoint, and a shared JuiceFS checkpoint scope. Roll back runner routing before retiring any archive worker or storage used by a retained checkpoint.
+
 Run syntax checks for the tracked Bash deployment scripts, Terraform shell
 templates, and Python deployment helpers with:
 

@@ -13,13 +13,15 @@ import ssl
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 from capacity import SCHEMA as CAPACITY_SCHEMA
 from capacity import CapacityController, CapacityPolicy, CapacityUnavailable, maintenance_lock
+from checkpoint_archive import SCHEMA as ARCHIVE_SCHEMA
+from checkpoint_archive import CheckpointArchive
 from registry import ABANDONED_BATCH_SIZE, DIGEST, Registry, request, trusted_url
 
 LOG = logging.getLogger(__name__)
@@ -89,7 +91,7 @@ class Retention:
             self.capacity.validate(set(self.registries))
         with self.database_session() as db:
             db.execute("PRAGMA journal_mode=WAL")
-            db.executescript(SCHEMA + CAPACITY_SCHEMA)
+            db.executescript(SCHEMA + CAPACITY_SCHEMA + ARCHIVE_SCHEMA)
         with self.database_session(write=True) as db:
             hold_columns = {row["name"] for row in db.execute("PRAGMA table_info(holds)")}
             if "finished" not in hold_columns:
@@ -167,6 +169,14 @@ class Retention:
                     "INSERT OR IGNORE INTO registry_maintenance(id,completed_at) VALUES (1,?)",
                     (int(time.time()),),
                 )
+
+        archive_config = config.get("checkpoint_archive")
+        self.archive = CheckpointArchive(self, archive_config) if archive_config is not None else None
+
+    def archive_capabilities(self):
+        if self.archive is not None:
+            self.archive.verify_volume()
+        return {"checkpoint_archive": self.archive is not None}
 
     @staticmethod
     def read_token(path: str) -> str:
@@ -472,6 +482,7 @@ class Retention:
                 AND (? IS NULL OR p.slot=?)
                 AND p.retry_at<=?
                 AND NOT EXISTS(SELECT 1 FROM holds h WHERE h.publication=p.id)
+                AND NOT EXISTS(SELECT 1 FROM archive_checkpoints c WHERE c.publication=p.id)
                 ORDER BY CASE WHEN p.state='deleting' OR p.expires_at<=? THEN 0 ELSE 1 END,
                 CASE WHEN p.expires_at<=? THEN p.expires_at ELSE p.last_used_at END, p.id LIMIT 256""",
                 (now, idle_before, slot, slot, now, now, now),
@@ -491,9 +502,10 @@ class Retention:
                         )
                     )
                     AND EXISTS(SELECT 1 FROM slots WHERE name=publications.slot AND state!='sealed')
-                    AND NOT EXISTS(SELECT 1 FROM holds WHERE publication=?)""",
+                    AND NOT EXISTS(SELECT 1 FROM holds WHERE publication=publications.id)
+                    AND NOT EXISTS(SELECT 1 FROM archive_checkpoints WHERE publication=publications.id)""",
                     (json.dumps(worklist), row["id"], int(time.time()), idle_before,
-                     row["last_used_at"], row["id"]),
+                     row["last_used_at"]),
                 )
                 if claim.rowcount != 1:
                     return
@@ -554,6 +566,7 @@ class Retention:
                 WHERE p.slot=? AND s.state='sealed' AND p.state='abandoned' AND p.tag IS NOT NULL
                 AND p.reference IS NULL AND p.terminal_at IS NULL AND p.retry_at<=?
                 AND NOT EXISTS(SELECT 1 FROM holds h WHERE h.publication=p.id)
+                AND NOT EXISTS(SELECT 1 FROM archive_checkpoints c WHERE c.publication=p.id)
                 ORDER BY p.retry_at, p.planned_at, p.id LIMIT ?""",
                 (slot, int(time.time()), ABANDONED_BATCH_SIZE),
             ).fetchall()
@@ -619,6 +632,15 @@ class Retention:
                     "SELECT slot, attempted_at FROM registry_restore_pending ORDER BY attempted_at, slot"
                 )
             ]
+            archive = None
+            if self.archive is not None:
+                archive = dict(db.execute(
+                    """SELECT
+                        (SELECT COUNT(*) FROM archive_images) AS images,
+                        (SELECT COUNT(*) FROM archive_checkpoints WHERE digest IS NOT NULL) AS checkpoints,
+                        (SELECT COUNT(*) FROM archive_checkpoints WHERE publication IS NOT NULL) AS source_pins,
+                        (SELECT COUNT(*) FROM archive_runtime) AS runtime_leases"""
+                ).fetchone())
         result = {
             "slots": slots,
             "publications": counts,
@@ -627,6 +649,8 @@ class Retention:
             "awaiting_stop_confirmation": awaiting_stop,
             "abandoned_repositories_pending_gc": abandoned,
         }
+        if archive is not None:
+            result["checkpoint_archive"] = archive
         if maintenance is not None:
             result["capacity"] = capacity
             result["maintenance"] = dict(maintenance)
@@ -709,7 +733,15 @@ def server_handler(retention: Retention):
         "/v1/bind": retention.bind,
         "/v1/cancel": retention.cancel,
         "/v1/finish": retention.finish,
+        "/v1/archive-capabilities": retention.archive_capabilities,
     }
+    archive_actions = {}
+    if retention.archive is not None:
+        archive_actions = {
+            "/v1/archive/capture": retention.archive.capture,
+            "/v1/archive/restore": retention.archive.restore,
+            "/v1/archive/release": retention.archive.release,
+        }
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -727,14 +759,89 @@ def server_handler(retention: Retention):
             self.end_headers()
             self.wfile.write(body)
 
+        def do_GET(self):
+            self.serve_registry()
+
+        def do_HEAD(self):
+            self.serve_registry()
+
+        def serve_registry(self):
+            archive = retention.archive
+            if archive is None:
+                self.send_error(404)
+                return
+            if not hmac.compare_digest(
+                self.headers.get("Authorization", "").encode(), archive.registry_authorization
+            ):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="AKernel checkpoint archive"')
+                self.send_header("Docker-Distribution-API-Version", "registry/2.0")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if self.path == "/v2/" or self.path == "/v2":
+                self.send_response(200)
+                self.send_header("Docker-Distribution-API-Version", "registry/2.0")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            try:
+                result = archive.read(self.path)
+            except (OSError, sqlite3.Error):
+                self.send_error(503)
+                return
+            if result is None:
+                self.send_error(404)
+                return
+            contents, size, media, digest = result
+            with contents:
+                offset, end = 0, size - 1
+                requested = self.headers.get("Range") if self.command == "GET" else None
+                if requested:
+                    byte_range = re.fullmatch(r"bytes=([0-9]{0,20})-([0-9]{0,20})", requested)
+                    if byte_range:
+                        start, stop = byte_range.groups()
+                        if start:
+                            offset = int(start)
+                            if stop:
+                                end = min(end, int(stop))
+                        elif stop:
+                            offset = max(size - int(stop), 0)
+                    if not byte_range or not any(byte_range.groups()) or offset > end:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{size}")
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                length = end - offset + 1
+                self.send_response(206 if requested else 200)
+                self.send_header("Docker-Distribution-API-Version", "registry/2.0")
+                self.send_header("Docker-Content-Digest", digest)
+                self.send_header("Content-Type", media)
+                self.send_header("Accept-Ranges", "bytes")
+                if requested:
+                    self.send_header("Content-Range", f"bytes {offset}-{end}/{size}")
+                self.send_header("Content-Length", str(length))
+                self.end_headers()
+                if self.command == "GET":
+                    contents.seek(offset)
+                    try:
+                        while length and (data := contents.read(min(length, 1024 * 1024))):
+                            self.wfile.write(data)
+                            length -= len(data)
+                    except OSError:
+                        self.close_connection = True
+
         def do_POST(self):
             authorization = self.headers.get("Authorization", "")
+            is_archive_action = self.path in archive_actions
+            token = retention.archive.worker_token if is_archive_action else retention.runner_token
             if not hmac.compare_digest(
-                authorization.encode(), ("Bearer " + retention.runner_token).encode()
+                authorization.encode(), ("Bearer " + token).encode()
             ):
                 self.send(401, {"error": "Invalid image retention credential"})
                 return
-            action = actions.get(self.path)
+            action = archive_actions.get(self.path) if is_archive_action else actions.get(self.path)
             if action is None:
                 self.send(404, {"error": "Unknown image retention operation"})
                 return
@@ -766,7 +873,10 @@ def serve(retention: Retention, args):
         raise ValueError("TLS certificate and key must be provided together")
     if args.listen != "127.0.0.1" and not args.tls_cert:
         raise ValueError("Non-loopback retention endpoints require TLS")
-    with ThreadingHTTPServer((args.listen, args.port), server_handler(retention)) as server:
+    archive_lock = retention.archive.service_lock() if retention.archive is not None else nullcontext()
+    with archive_lock, ThreadingHTTPServer(
+        (args.listen, args.port), server_handler(retention)
+    ) as server:
         if args.tls_cert:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -781,9 +891,16 @@ def serve(retention: Retention, args):
                     retention.sweep(apply=retention.auto_delete)
                 except sqlite3.Error as exc:
                     LOG.error("Image retention sweep failed (%s)", type(exc).__name__)
+        def sweep_archive():
+            while not stopped.wait(30):
+                try:
+                    retention.archive.sweep()
+                except (OSError, sqlite3.Error, ValueError) as exc:
+                    LOG.error("Checkpoint archive sweep failed (%s)", type(exc).__name__)
 
-        worker = threading.Thread(target=sweep, daemon=True)
-        worker.start()
+        threading.Thread(target=sweep, daemon=True).start()
+        if retention.archive is not None:
+            threading.Thread(target=sweep_archive, daemon=True).start()
         try:
             server.serve_forever()
         finally:

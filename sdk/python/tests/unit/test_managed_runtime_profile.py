@@ -1,4 +1,5 @@
 import json
+import os
 import tarfile
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from unittest.mock import MagicMock, call, patch
 import httpx
 
 from akernel_sdk import (
+    BackendOperationError,
     DockerRuntime,
     ServiceBusyException,
     TimeoutException,
@@ -242,6 +244,25 @@ class ManagedProfileContract(unittest.TestCase):
             ],
         )
         builder.kill.assert_called_once()
+
+    def test_unified_profile_checks_archive_before_reserving_a_build(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, {"AKERNEL_HARBOR_V1_TEMPORARY_IMAGES": "1"}),
+            patch("akernel_sdk.sandbox.Sandbox") as builder,
+            patch("akernel_sdk._managed_build.Retention") as retention,
+        ):
+            root = Path(directory)
+            (root / "Dockerfile").write_text("FROM scratch\n")
+            retention.return_value.request.return_value = {"checkpoint_archive": False}
+            with self.assertRaisesRegex(
+                BackendOperationError, "archive is unavailable"
+            ):
+                build_image(root, profile="harbor-v1")
+            retention.return_value.request.assert_called_once_with(
+                "archive-capabilities"
+            )
+            builder.assert_not_called()
 
     def test_capacity_rejection_precedes_preparation_sandbox(self):
         with tempfile.TemporaryDirectory() as directory:

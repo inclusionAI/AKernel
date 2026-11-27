@@ -94,6 +94,20 @@ data:
 {{- /* Parse after consuming template markers. Bind fromToml only on the PVM path. */}}
 {{- $sandboxdConfig = tpl (.Files.Get "scripts/pvm-memory-limit.tpl") (dict "Template" .Template "config" $sandboxdConfig "enabled" (eq $pvmMemoryLimitEnabled "true")) }}
 {{- end }}
+{{- $archive := .Values.adx.checkpointImageArchive }}
+{{- if $archive.enabled }}
+{{- if ne .Values.adx.checkpointStorage.kind "distributed_fs" }}
+{{- fail "adx.checkpointImageArchive requires distributed_fs checkpoint storage" }}
+{{- end }}
+{{- if or (not (regexMatch "^https://[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?$" $archive.origin)) (empty $archive.existingSecret) (empty $archive.tokenKey) }}
+{{- fail "adx.checkpointImageArchive requires a private HTTPS origin and worker Secret" }}
+{{- end }}
+{{- if contains "[plugin.checkpoint_image_archive]" $sandboxdConfig }}
+{{- fail "adx.checkpointImageArchive owns the sandboxd checkpoint_image_archive section" }}
+{{- end }}
+{{- $artifacts := printf "%s/%s/artifacts" (trimSuffix "/" .Values.adx.checkpointStorage.mountPath) .Values.adx.checkpointStorage.prefix }}
+{{- $sandboxdConfig = printf "%s\n[plugin.checkpoint_image_archive]\norigin=%s\nworker_token_file=\"/etc/akernel/checkpoint-image-archive/worker-token\"\ncheckpoint_artifacts=%s\n" $sandboxdConfig ($archive.origin | quote) ($artifacts | quote) }}
+{{- end }}
 {{ $sandboxdConfig | indent 4 }}
 
   registry.json: |

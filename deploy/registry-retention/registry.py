@@ -84,8 +84,7 @@ class Registry:
             raise ValueError("Image is outside this Registry's temporary build scope")
         return repository
 
-    def call(self, qualified: str, suffix: str, *, method: str = "GET"):
-        repository = self.repository(qualified)
+    def headers(self, repository: str, method: str):
         headers = {"Accept": ACCEPT}
         if self.realm:
             credentials = json.loads(Path(self.credentials_file).read_text())
@@ -104,7 +103,28 @@ class Registry:
             if not isinstance(token, str) or not token or re.search(r"\s", token):
                 raise ValueError("Registry issued an invalid token")
             headers["Authorization"] = "Bearer " + token
-        return request(f"{self.origin}/v2/{repository}/{suffix}", headers, method=method)
+        return headers
+
+    def call(self, qualified: str, suffix: str, *, method: str = "GET"):
+        repository = self.repository(qualified)
+        return request(
+            f"{self.origin}/v2/{repository}/{suffix}",
+            self.headers(repository, method),
+            method=method,
+        )
+
+    def open_blob(self, qualified: str, digest: str):
+        repository = self.repository(qualified)
+        if not re.fullmatch(DIGEST, digest):
+            raise ValueError("Invalid Registry blob digest")
+        opener = build_opener(ProxyHandler({}), NoRedirect())
+        return opener.open(
+            Request(
+                f"{self.origin}/v2/{repository}/blobs/{digest}",
+                headers=self.headers(repository, "GET"),
+            ),
+            timeout=30,
+        )
 
     def manifest(self, repository: str, target: str):
         if not re.fullmatch(DIGEST + r"|build-[0-9a-f]{32}", target):
